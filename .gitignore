@@ -1,0 +1,7 @@
+# tooling repo — não confundir com o .gitignore do repo-alvo (que ignora .harness/runs/)
+.DS_Store
+node_modules/
+*.log
+
+# scratch local de testes do harness contra um repo-alvo
+/scratch/
