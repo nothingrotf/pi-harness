@@ -136,7 +136,8 @@ geradas-por-máquina, humano aprova; bump `version`/`sourceCommit`. Estável e d
 ## Roadmap (fatias verticais)
 
 ```
-[ ] Fatia 0: scaffolding do repo (README, docs, .gitignore, estrutura)   ← em andamento
+[x] Fatia 0: scaffolding do repo (README, docs, .gitignore, estrutura)
+[~] Fatia 0.5: extensão (chrome do modo: comando /harness + badge aboveEditor + input recolorido + status) — shell pronto, dispatch stub (ver docs/01)
 [ ] Fatia 1: setup skill + harness.md template + profile-template
 [ ] Fatia 2: gate de setup + profile.json/fingerprint + refresh reconciler (o código novo fino)
 [ ] Fatia 3: Tier 2 — converge (gray-area-policy) → contract → plan
