@@ -18,7 +18,6 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { badgeText, featureIdFromRequest, idleMode, statusText, type HarnessMode } from "../mode.ts";
-import { harnessEditorFactory } from "../harness-editor.ts";
 
 const WIDGET_KEY = "harness-mode";
 const STATUS_KEY = "harness";
@@ -27,15 +26,21 @@ function profilePath(cwd: string): string {
 	return path.join(cwd, ".harness", "profile", "profile.json");
 }
 
-function applyModeChrome(ctx: ExtensionContext, mode: HarnessMode): void {
+async function applyModeChrome(ctx: ExtensionContext, mode: HarnessMode): Promise<void> {
 	if (!ctx.hasUI) return;
 	const accent = (s: string) => ctx.ui.theme.fg("accent", s);
-	// 1. badge colado no input
+	// 1. badge colado no input (sinal PRIMÁRIO, sempre)
 	ctx.ui.setWidget(WIDGET_KEY, [accent(badgeText(mode))], { placement: "aboveEditor" });
-	// 2. input recolorido (reforço)
-	ctx.ui.setEditorComponent(harnessEditorFactory(accent));
-	// 3. status no rodapé
+	// 2. status no rodapé
 	ctx.ui.setStatus(STATUS_KEY, statusText(mode));
+	// 3. input recolorido (REFORÇO, opcional): isolado pra não derrubar o badge se
+	// o CustomEditor sumir numa versão futura do Pi.
+	try {
+		const { harnessEditorFactory } = await import("../harness-editor.ts");
+		ctx.ui.setEditorComponent(harnessEditorFactory(accent));
+	} catch {
+		// recolor indisponível — badge + status seguem valendo.
+	}
 }
 
 function clearModeChrome(ctx: ExtensionContext): void {
@@ -105,7 +110,7 @@ export default function registerHarnessExtension(pi: ExtensionAPI): void {
 			mode.active = true;
 			mode.featureId = featureIdFromRequest(request);
 			mode.phase = "converge";
-			applyModeChrome(ctx, mode);
+			await applyModeChrome(ctx, mode);
 			ctx.ui.notify(`pi-harness: feature "${mode.featureId}" — convergência ainda não conectada (Fatia 3).`);
 		},
 	});
