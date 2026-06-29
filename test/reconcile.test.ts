@@ -19,6 +19,7 @@ function authorProfile(dir: string): void {
 	write(dir, ".harness/profile/skills/w/SKILL.md", "x");
 	write(dir, ".harness/profile/library/repo-facts.md", "x");
 	write(dir, ".harness/profile/library/conventions-map.md", "x");
+	write(dir, ".harness/profile/library/coding-principles.md", "x");
 }
 
 test("buildRefreshPlan: cada parte → seus artefatos + estratégia", () => {

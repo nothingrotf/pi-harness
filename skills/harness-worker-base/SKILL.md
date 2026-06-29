@@ -53,6 +53,7 @@ Never violate the Boundaries in `harness.md`.
 - `.harness/runs/<feature-id>/feature.md` — the feature intent + scope.
 - `.harness/profile/architecture.md` — authoritative architecture (mandatory: understand how your task fits).
 - the repo's own `AGENTS.md` + `.agents/rules/` — code conventions/DoD (governs how code is written).
+- `.harness/profile/library/coding-principles.md` — generic code-quality bias the ship-gate **quality axis** scores against; internalize it before coding to avoid rework (defers to the repo's `AGENTS.md` on conflict).
 - `.harness/profile/harness.md` — operational overlay: **Boundaries you must NEVER violate**, directives, testing guidance. May be updated mid-feature — always check for latest.
 - if your task has `fulfills`, the specific assertions in `.harness/runs/<feature-id>/contract.md`.
 - `.harness/profile/services.yaml` — how to run commands/services.
@@ -84,10 +85,14 @@ Start needed services from `services.yaml` (`depends_on` first; wait for healthc
 any fails → return to orchestrator immediately.
 
 ## Code Quality Principles (non-negotiable)
-Avoid god files (split when large); create reusable components (don't duplicate); keep
-changes focused; stay in scope (note clearly-unrelated issues in `discoveredIssues` as
+**Canonical source: `.harness/profile/library/coding-principles.md`** — the generic quality bias the
+ship-gate **quality axis** scores against. Internalizing it up-front is how you avoid the
+ship → quality-finding → fix-task → re-review loop. The essentials it encodes: avoid god files
+(split when large); create reusable components (don't duplicate); minimum code that satisfies the
+assertion (no unearned abstractions/flexibility); no spaghetti branching bolted onto unrelated
+flows; keep changes focused; stay in scope (note clearly-unrelated issues in `discoveredIssues` as
 `non_blocking` prefixed "Pre-existing:" — check `harness.md` "Known Pre-Existing Issues"
-to avoid re-reporting; don't go off-track to fix them).
+to avoid re-reporting; don't go off-track to fix them). On conflict, the repo's `AGENTS.md` wins.
 
 ## Phase 2: Work (your task-specific skill)
 Invoke the skill named in your task's `skillName`. **If it doesn't exist**, do not proceed

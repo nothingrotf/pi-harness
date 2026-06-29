@@ -15,7 +15,7 @@ axis reviewers over the whole diff. Keep it that way.
 
 ## Where things live
 - **run dir** `.harness/runs/<feature-id>/`: `feature.md`, `contract.md`, `plan.json`, `handoffs/`, `validation/`
-- **profile** `.harness/profile/`: `services.yaml`, `harness.md`, `architecture.md`, `library/` (incl. **`conventions-map.md`**), `skills/`
+- **profile** `.harness/profile/`: `services.yaml`, `harness.md`, `architecture.md`, `library/` (incl. **`conventions-map.md`** + **`coding-principles.md`**), `skills/`
 - **repo root** (cwd): implementation code
 
 ## 0) Programmatic gate (deterministic, once — not LLM)
@@ -38,7 +38,7 @@ Spawn all three via the **`subagent` tool** (pi-subagents) **in the same message
 isolated fresh-context sessions and are **visible live in the UI**. Pass each the **same** scoped
 diff + file contents (`### Git / diff output` and `### Changed file contents`):
 - `harness-correctness-review` — bugs, breaking changes, security, devex regressions, feature-flag leaks. **Generic.**
-- `harness-quality-review` — maintainability, structure, file-size growth, spaghetti, abstractions, code-judo. **Generic.**
+- `harness-quality-review` — maintainability, structure, file-size growth, spaghetti, abstractions, code-judo. Scores against the cached **`.harness/profile/library/coding-principles.md`** (the same generic bias the worker read up-front — author-review symmetry), then goes beyond it. **Generic.** Tell it where the doc is.
 - `harness-conventions-review` — conformance to THIS repo's rules/ADRs via the cached
   **`.harness/profile/library/conventions-map.md`** (and the live rule/ADR files it indexes).
   Tell it where the map is. **Repo-aligned.**
@@ -60,7 +60,9 @@ project-local **lessons** via `store_lesson` (`signal: blocking_finding`, `sourc
 
 When a finding is **systemic** (a pattern the repo's guidance should encode, or a gap in the
 conventions-map), record it as `suggestedGuidanceUpdates` in the synthesis, targeting
-**`harness.md`**, a profile **worker skill**, or **`conventions-map.md`** — never the repo's own
+**`harness.md`**, a profile **worker skill**, **`conventions-map.md`**, or — for a generic
+code-quality pattern workers should preempt — **`coding-principles.md`** (closing the loop: the
+quality finding becomes a principle the next worker reads up-front) — never the repo's own
 AGENTS.md. The orchestrator acts on these (the profile-refresh loop). Factual operational fixes
 you're confident about (a `services.yaml`/`library` correction) you may apply directly and record
 as `appliedUpdates`.
@@ -74,7 +76,7 @@ Write `.harness/runs/<feature-id>/validation/harness-code-review/synthesis.json`
   "axes": { "correctness": {...}, "quality": {...}, "conventions": {...} },
   "blockingFindings": [ { "axis":"correctness|quality|conventions", "file":"...", "line":0, "finding":"...", "rule":"<rule or null>" } ],
   "appliedUpdates": [ { "target":"services.yaml|library", "description":"..." } ],
-  "suggestedGuidanceUpdates": [ { "target":"harness.md|skills|conventions-map.md", "suggestion":"...", "evidence":"...", "isSystemic":true } ],
+  "suggestedGuidanceUpdates": [ { "target":"harness.md|skills|conventions-map.md|coding-principles.md", "suggestion":"...", "evidence":"...", "isSystemic":true } ],
   "previousRound": null
 }
 ```

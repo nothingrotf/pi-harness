@@ -71,6 +71,7 @@ function authorProfile(dir: string): void {
 	write(dir, ".harness/profile/skills/w/SKILL.md", "x");
 	write(dir, ".harness/profile/library/repo-facts.md", "x");
 	write(dir, ".harness/profile/library/conventions-map.md", "x");
+	write(dir, ".harness/profile/library/coding-principles.md", "x");
 }
 
 test("ensureProfile: absent sem profile.json (gate read-only não escreve)", () => {
@@ -92,6 +93,14 @@ test("storeProfile: recusa sem conteúdo; estampa com conteúdo; ok → drift �
 	assert.equal(bad.ok, false);
 	assert.ok(!bad.ok && bad.missing.length > 0, "reporta artefatos ausentes");
 	assert.equal(readProfile(d), null, "recusa não estampa profile.json");
+
+	// coding-principles.md (genérico, lido pelo worker + pontuado pelo quality axis) é REQUERIDO
+	for (const f of ["architecture.md", "services.yaml", "init.sh", "harness.md"]) write(d, `.harness/profile/${f}`, "x");
+	write(d, ".harness/profile/skills/w/SKILL.md", "x");
+	write(d, ".harness/profile/library/conventions-map.md", "x");
+	const noPrinciples = storeProfile(d);
+	assert.ok(!noPrinciples.ok && noPrinciples.missing.includes("library/coding-principles.md"), "coding-principles.md ausente → recusa");
+	assert.equal(readProfile(d), null, "ainda não estampa sem coding-principles.md");
 
 	// autora o conteúdo → estampa
 	authorProfile(d);

@@ -14,6 +14,16 @@ Use this skill for an unusually strict review focused on implementation quality,
 
 Above all, this skill should push the reviewer to be **ambitious** about code structure. Do not merely identify local cleanup opportunities. Actively search for "code judo" moves: restructurings that preserve behavior while making the implementation dramatically simpler, smaller, more direct, and more elegant.
 
+## Shared baseline — `coding-principles.md` (author-review symmetry)
+
+Before reviewing, read `.harness/profile/library/coding-principles.md` if it exists. That file is the
+**worker-facing distillation of this very rubric** — the implementer was given it up-front, so a clean
+diff should already satisfy it. Treat it as the agreed floor: enforce every principle it states, and
+flag any violation as a finding the author was told to avoid. Then go **beyond** it — this axis is the
+ambitious one (code-judo, dramatic simplification) and is not capped by the distilled doc. If the file
+is absent (generic repo, no profile), fall back to the built-in standards below with no loss. Never
+contradict the repo's own `AGENTS.md`; on conflict, the repo wins and `coding-principles.md` defers.
+
 ## Core Prompt
 
 Start from this baseline:

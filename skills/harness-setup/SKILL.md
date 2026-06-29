@@ -141,7 +141,63 @@ run green here.**
 - `user-testing.md` — `## Validation Surface`, `## Validation Prerequisites` (how each was verified in Phase 7), `## Validation Concurrency` (max concurrent + numbers + rationale).
 - `repo-facts.md` — distilled repo facts so workers don't re-derive: identity, the gate, conventions, layout, "don't break"/"don't do" lists, **and the readiness level + weakest categories** (from `readiness.json`).
 - `conventions-map.md` — see Phase 9.
+- `coding-principles.md` — see Phase 8.1.
 - other `<topic>.md` as useful — distilled, worker-facing knowledge.
+
+### Phase 8.1 — coding-principles.md (author-side of the ship-gate quality axis)
+
+The **harness-quality-review axis** (ship-gate) enforces a rich generic rubric — file-size growth,
+spaghetti branching, unearned abstractions, code-judo simplifications, canonical-layer/reuse,
+type/boundary cleanliness, atomicity. Workers historically never saw that rubric up-front, so the
+reviewer caught quality regressions *after* the fact → fix task → re-review (rework). Close that
+asymmetry: write the **worker-facing distillation** of the quality rubric here, so workers read it
+before coding (`harness-worker-base` Phase 1) and the quality axis scores against the **same doc**
+(single source → no drift).
+
+This file is **generic and stable** — repo-agnostic behavioral bias, NOT repo-specific conventions
+(those live in `conventions-map.md` / the repo's `AGENTS.md`, enforced by the conventions axis). It
+is NOT regenerated on rules drift; it is preserved across refreshes like any `library/` file. On any
+conflict with the repo's `AGENTS.md`/`.agents/rules`, **the repo wins** — state that precedence in the
+file. Drop in this baseline (lightly tailor the examples to the repo's stack, keep the generic core):
+
+```markdown
+# Coding Principles (generic quality bias — read before implementing)
+
+Behavioral bias, not a checklist. The ship-gate **quality axis** scores against this file, so
+following it up-front means fewer blocking findings and less rework. On any conflict with the
+repo's `AGENTS.md` / `.agents/rules`, **the repo wins** — this is the generic floor, not an override.
+
+## Simplicity
+- Minimum code that satisfies the contract assertion — no features, abstractions, flexibility, or
+  error handling for impossible cases that weren't asked for.
+- Prefer deleting complexity over rearranging it. If there's a "code-judo" reframing that makes whole
+  branches/helpers/modes disappear, take it.
+- After each change ask: "would a senior engineer call this overcomplicated?" If yes, simplify first.
+
+## Structure & size
+- Don't push a file from under ~1k lines to over it without a strong reason — extract helpers/modules.
+- No random spaghetti growth: don't bolt ad-hoc conditionals / one-off branches onto unrelated flows;
+  push logic into a dedicated helper, policy, or module.
+- Keep logic in its canonical layer; reuse existing canonical helpers instead of bespoke near-duplicates.
+- No thin wrappers / identity abstractions / pass-through indirection that don't buy clarity.
+
+## Boundaries & types
+- Question unnecessary optionality, `any`/`unknown`, or cast-heavy code; prefer explicit typed contracts.
+- Don't paper over an unclear invariant with a silent fallback — make the boundary explicit.
+
+## Surgical changes
+- Touch only the files the task requires. Don't "improve" adjacent code, comments, or formatting.
+- Match existing style even if you'd do it differently. Note unrelated dead code; don't delete it.
+- Remove only the imports/vars/functions YOUR change orphaned.
+
+## Test integrity (never violate)
+- Never weaken an assertion, delete/skip a test, or use skip/pending to bypass a failing test.
+- Tests derive from the contract assertions, not from the implementation; the implementation conforms
+  to the tests. If a test is genuinely wrong, STOP and confirm before changing it.
+```
+
+If the repo's `AGENTS.md` already documents strong code-quality principles, cite them here and keep this
+file to the generic gaps the quality axis still enforces — never restate or contradict the repo.
 
 ## Phase 9 — conventions-map.md (the deep mapping the ship gate consumes)
 

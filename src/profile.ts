@@ -107,7 +107,7 @@ export function ensureProfile(cwd: string, opts: { refresh?: boolean } = {}): En
 }
 
 /** Artefatos que o profile DEVE conter pra ser considerado autorado (não-vazios). */
-export const REQUIRED_PROFILE_FILES = ["architecture.md", "services.yaml", "init.sh", "harness.md", "library/conventions-map.md"] as const;
+export const REQUIRED_PROFILE_FILES = ["architecture.md", "services.yaml", "init.sh", "harness.md", "library/conventions-map.md", "library/coding-principles.md"] as const;
 export const REQUIRED_PROFILE_DIRS = ["skills", "library"] as const;
 
 function nonEmptyFile(abs: string): boolean {
