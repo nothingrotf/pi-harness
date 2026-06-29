@@ -1,0 +1,56 @@
+/**
+ * Tool `store_plan` — o estágio "store" da convergência da feature, espelhando
+ * store_profile / store_agent_readiness_report: a `feature-converge` (LLM) autora
+ * feature.md + contract.md e CHAMA esta tool no fim com as tasks estruturadas + os
+ * ids das assertions do contract. O TS valida a INVARIANTE DE COBERTURA (cada assertion
+ * reivindicada por exatamente uma task) e persiste plan.json + status.json.
+ *
+ * Recusa (THROW) se a cobertura quebrar — o loop devolve o erro pro modelo, que corrige
+ * o plan e chama de novo.
+ */
+import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
+import { type Plan, storePlan } from "./plan.ts";
+
+const TaskSchema = Type.Object({
+	id: Type.String({ description: "Unique task id (e.g. T1)." }),
+	description: Type.String({ description: "What to build (clear, specific)." }),
+	skillName: Type.String({ description: "A profile worker skill in .harness/profile/skills/." }),
+	fulfills: Type.Array(Type.String(), { description: "Contract assertion IDs this task COMPLETES (empty for foundational tasks)." }),
+	preconditions: Type.Optional(Type.Array(Type.String())),
+	expectedBehavior: Type.Optional(Type.Array(Type.String())),
+});
+
+const PARAMS = Type.Object({
+	featureId: Type.String({ description: "The feature id (selects .harness/runs/<featureId>/)." }),
+	tasks: Type.Array(TaskSchema, { description: "Ordered tasks (foundational first). Topmost pending runs next." }),
+	assertions: Type.Array(Type.String(), { description: "ALL assertion IDs from contract.md (to enforce coverage)." }),
+});
+
+export function registerPlanStoreTool(pi: ExtensionAPI): void {
+	pi.registerTool(
+		defineTool({
+			name: "store_plan",
+			label: "Store Feature Plan",
+			description:
+				"Validates the feature plan's coverage invariant (every contract assertion claimed by exactly one task's fulfills — no orphans, no duplicates) and persists .harness/runs/<featureId>/plan.json + status.json (assertions pending). Call at the END of feature-converge. Rejects (throws) on a coverage violation — fix the plan and call again.",
+			parameters: PARAMS,
+			async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+				const plan: Plan = {
+					featureId: params.featureId,
+					tasks: params.tasks as Plan["tasks"],
+					assertions: params.assertions,
+					createdAt: new Date().toISOString(),
+				};
+				const res = storePlan(ctx.cwd, plan);
+				if (!res.ok) {
+					throw new Error(`Plan REJECTED (${res.issues.length} coverage problems):\n- ${res.issues.slice(0, 20).join("\n- ")}\nFix the plan and call store_plan again.`);
+				}
+				return {
+					content: [{ type: "text", text: `✓ plan.json + status.json written — ${res.plan.tasks.length} tasks, ${res.plan.assertions.length} assertions (coverage OK).` }],
+					details: { tasks: res.plan.tasks.length, assertions: res.plan.assertions.length },
+				};
+			},
+		}),
+	);
+}

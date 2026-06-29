@@ -1,0 +1,146 @@
+/**
+ * Plan — a fila de tasks de uma feature (o analog do features.json do modelo de referência, em escopo
+ * feature). A `feature-converge` (LLM) autora feature.md + contract.md (markdown, humano)
+ * e CHAMA `store_plan` no fim com as tasks estruturadas + os ids das assertions do
+ * contract; o TS (confiável) valida a INVARIANTE DE COBERTURA (cada assertion reivindicada
+ * por exatamente uma task) e persiste:
+ *   - plan.json   (a fila canônica que o FeatureRunner consome)
+ *   - status.json (assertions → pending; o qa-validator escreve depois)
+ *
+ * Espelha store_profile / store_agent_readiness_report: o modelo autora, a tool valida+grava.
+ */
+import * as fs from "node:fs";
+import * as path from "node:path";
+import { type FeatureRun, planFeatureRun } from "./feature-runner.ts";
+import { appendProgress, runDir } from "./handoff.ts";
+
+export interface Task {
+	id: string;
+	description: string;
+	/** worker skill do PROFILE (.harness/profile/skills/<skillName>). */
+	skillName: string;
+	/** assertion IDs do contract que esta task COMPLETA. */
+	fulfills: string[];
+	preconditions?: string[];
+	expectedBehavior?: string[];
+}
+
+export interface Plan {
+	featureId: string;
+	tasks: Task[];
+	/** todos os ids de assertion do contract.md (pra checar cobertura). */
+	assertions: string[];
+	createdAt: string;
+}
+
+export type AssertionStatus = "pending" | "passed" | "failed";
+export interface PlanStatus {
+	featureId: string;
+	assertions: Record<string, AssertionStatus>;
+}
+
+function planPath(cwd: string, featureId: string): string {
+	return path.join(runDir(cwd, featureId), "plan.json");
+}
+function statusPath(cwd: string, featureId: string): string {
+	return path.join(runDir(cwd, featureId), "status.json");
+}
+
+export interface PlanCheck {
+	ok: boolean;
+	issues: string[];
+}
+
+/**
+ * Valida a estrutura + a invariante de cobertura (a "coverage gate" do orchestrator):
+ * toda assertion do contract é reivindicada por EXATAMENTE uma task — sem órfãs, sem
+ * duplicatas. Tasks foundational podem ter fulfills vazio.
+ */
+export function validatePlan(plan: Plan): PlanCheck {
+	const issues: string[] = [];
+	if (!Array.isArray(plan.tasks) || plan.tasks.length === 0) issues.push("plan has no tasks");
+	const seen = new Set<string>();
+	for (const t of plan.tasks ?? []) {
+		if (!t.id) issues.push("a task is missing id");
+		else if (seen.has(t.id)) issues.push(`duplicate task id: ${t.id}`);
+		else seen.add(t.id);
+		if (!t.skillName) issues.push(`task ${t.id || "?"} is missing skillName`);
+		if (!t.description) issues.push(`task ${t.id || "?"} is missing description`);
+		if (!Array.isArray(t.fulfills)) issues.push(`task ${t.id || "?"} fulfills must be an array`);
+	}
+	// cobertura: cada assertion reivindicada por exatamente uma task
+	const claims = new Map<string, string[]>(); // assertionId -> taskIds
+	for (const t of plan.tasks ?? []) {
+		for (const a of t.fulfills ?? []) {
+			claims.set(a, [...(claims.get(a) ?? []), t.id]);
+		}
+	}
+	const assertionSet = new Set(plan.assertions ?? []);
+	for (const [a, tasks] of claims) {
+		if (!assertionSet.has(a)) issues.push(`task(s) ${tasks.join(",")} fulfill unknown assertion: ${a}`);
+		if (tasks.length > 1) issues.push(`assertion ${a} claimed by multiple tasks: ${tasks.join(",")}`);
+	}
+	for (const a of assertionSet) {
+		if (!claims.has(a)) issues.push(`assertion ${a} is orphaned (no task fulfills it)`);
+	}
+	return { ok: issues.length === 0, issues };
+}
+
+export type StorePlanResult = { ok: true; plan: Plan } | { ok: false; issues: string[] };
+
+/** Valida e persiste plan.json + status.json (assertions pending). Recusa (sem gravar) se inválido. */
+export function storePlan(cwd: string, plan: Plan): StorePlanResult {
+	const check = validatePlan(plan);
+	if (!check.ok) return { ok: false, issues: check.issues };
+	const dir = runDir(cwd, plan.featureId);
+	fs.mkdirSync(dir, { recursive: true });
+	fs.writeFileSync(planPath(cwd, plan.featureId), `${JSON.stringify(plan, null, 2)}\n`);
+	const status: PlanStatus = { featureId: plan.featureId, assertions: {} };
+	for (const a of plan.assertions) status.assertions[a] = "pending";
+	fs.writeFileSync(statusPath(cwd, plan.featureId), `${JSON.stringify(status, null, 2)}\n`);
+	appendProgress(cwd, plan.featureId, "plan_stored", { tasks: plan.tasks.length, assertions: plan.assertions.length });
+	return { ok: true, plan };
+}
+
+export function readPlan(cwd: string, featureId: string): Plan | null {
+	try {
+		return JSON.parse(fs.readFileSync(planPath(cwd, featureId), "utf8")) as Plan;
+	} catch {
+		return null;
+	}
+}
+
+export function readStatus(cwd: string, featureId: string): PlanStatus | null {
+	try {
+		return JSON.parse(fs.readFileSync(statusPath(cwd, featureId), "utf8")) as PlanStatus;
+	} catch {
+		return null;
+	}
+}
+
+/** A ponte converge → runner: lê plan.json e constrói o FeatureRun (a fila de steps). null se não há plan. */
+export function buildFeatureRun(cwd: string, featureId: string, now?: () => string): FeatureRun | null {
+	const plan = readPlan(cwd, featureId);
+	if (!plan) return null;
+	return planFeatureRun(
+		featureId,
+		plan.tasks.map((t) => ({ id: t.id, skillName: t.skillName, fulfills: t.fulfills })),
+		now,
+	);
+}
+
+/** Estado runtime do FeatureRunner headless (state.json analog) — persistência pro resume. */
+function featureRunPath(cwd: string, featureId: string): string {
+	return path.join(runDir(cwd, featureId), "feature-run.json");
+}
+export function writeFeatureRun(cwd: string, run: FeatureRun): void {
+	fs.mkdirSync(runDir(cwd, run.featureId), { recursive: true });
+	fs.writeFileSync(featureRunPath(cwd, run.featureId), `${JSON.stringify(run, null, 2)}\n`);
+}
+export function readFeatureRun(cwd: string, featureId: string): FeatureRun | null {
+	try {
+		return JSON.parse(fs.readFileSync(featureRunPath(cwd, featureId), "utf8")) as FeatureRun;
+	} catch {
+		return null;
+	}
+}
