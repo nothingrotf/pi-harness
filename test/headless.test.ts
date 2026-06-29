@@ -31,11 +31,12 @@ test("buildConvergeDispatch: headless → [assumido], sem ask_user_question, cha
 });
 
 test("convergePiArgs: --print headless + tools store_plan + prompt com request/featureId", () => {
-	const a = convergePiArgs("/tmp/sys.md", "add login", "feat-login", "anthropic/claude");
+	const a = convergePiArgs("/tmp/sys.md", "add login", "feat-login", { model: "anthropic/claude", thinking: "xhigh" });
 	assert.ok(a.includes("--print") && a.includes("--no-session"));
 	const ti = a.indexOf("--tools");
 	assert.ok(a[ti + 1].includes("store_plan"), "tools inclui store_plan");
 	assert.ok(a.includes("--model") && a.includes("anthropic/claude"));
+	assert.ok(a.includes("--thinking") && a.includes("xhigh"), "effort do orchestrator → --thinking");
 	const prompt = a[a.length - 1];
 	assert.match(prompt, /Headless mode/);
 	assert.match(prompt, /feat-login/);

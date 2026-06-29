@@ -35,10 +35,12 @@ test("piArgs: task vs ship-gate tools; --append-system-prompt; model opcional", 
 	assert.ok(a.includes("--append-system-prompt") && a.includes("/tmp/sys.md"));
 	assert.ok(!a.includes("--model"), "sem model → herda o do parent");
 
-	const g = piArgs(gate, "/tmp/sys.md", "anthropic/claude");
+	const g = piArgs(gate, "/tmp/sys.md", { model: "anthropic/claude", thinking: "high" });
 	const gi = g.indexOf("--tools");
 	assert.match(g[gi + 1], /subagent/, "ship-gate spawna reviewers → precisa de subagent");
 	assert.ok(g.includes("--model") && g.includes("anthropic/claude"));
+	const thi = g.indexOf("--thinking");
+	assert.ok(thi !== -1 && g[thi + 1] === "high", "effort do role → --thinking high");
 });
 
 test("buildWorkerSystemPrompt: task inclui harness-worker-base + skill do profile + bootstrap", () => {

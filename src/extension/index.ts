@@ -30,6 +30,7 @@ import { registerPlanStoreTool } from "../plan-store-tool.ts";
 import { registerLessonsStoreTool } from "../lessons-store-tool.ts";
 import { buildConvergeDispatch } from "../converge-dispatch.ts";
 import { buildRunDispatch } from "../run-dispatch.ts";
+import { defaultModelRef, loadModelConfig, modelOptions, readPiSettings, saveModelConfig, summarizeConfig } from "../model-config.ts";
 import { buildFeatureRun, featureProgress, readFeatureRun, readPlan } from "../plan.ts";
 import { computeFingerprint } from "../fingerprint.ts";
 import { ensureProfile } from "../profile.ts";
@@ -71,6 +72,41 @@ function clearModeChrome(ctx: ExtensionContext): void {
  * via PI_SUBAGENT_EXTRA_AGENT_DIRS — sem escrever no repo do usuário. pi-subagents
  * lê esse env na descoberta (por chamada de subagent), então setar no load basta.
  */
+/** Modelos "provider/id" disponíveis (auth configurada) via o modelRegistry da sessão. */
+function availableModelRefs(ctx: ExtensionCommandContext): string[] {
+	try {
+		const reg = (ctx as unknown as { modelRegistry?: { getAvailable?: () => Array<{ provider: string; id: string }>; getAll?: () => Array<{ provider: string; id: string }> } }).modelRegistry;
+		const list = reg?.getAvailable?.() ?? reg?.getAll?.() ?? [];
+		return list.map((m) => `${m.provider}/${m.id}`);
+	} catch {
+		return [];
+	}
+}
+
+/**
+ * Abre a UI de config de modelo por role (orchestrator/worker/validator) e persiste a
+ * escolha em ~/.pi/agent/pi-harness/models.json. Sem UI (print/json) → mostra o estado
+ * atual. Lê o settings.json do usuário pra pré-popular default + enabledModels.
+ */
+async function openModelConfig(ctx: ExtensionCommandContext): Promise<void> {
+	const cfg = loadModelConfig();
+	const settings = readPiSettings();
+	const fallback = defaultModelRef(settings);
+	if (!ctx.hasUI) {
+		ctx.ui.notify(`pi-harness models — ${summarizeConfig(cfg, { fallback })}`);
+		return;
+	}
+	const models = modelOptions(availableModelRefs(ctx), settings);
+	const { showModelConfig } = await import("../model-config-view.ts");
+	const updated = await showModelConfig(ctx, { config: cfg, models, settings });
+	if (!updated) {
+		ctx.ui.notify("pi-harness: model config unchanged");
+		return;
+	}
+	saveModelConfig(updated);
+	ctx.ui.notify(`pi-harness: models saved — ${summarizeConfig(updated, { fallback })}`);
+}
+
 function contributeAgentsDir(): void {
 	try {
 		const dir = fileURLToPath(new URL("../../agents", import.meta.url));
@@ -153,6 +189,14 @@ export default function registerHarnessExtension(pi: ExtensionAPI): void {
 			runFix(ctx, args);
 		},
 	});
+	// Config global de modelo+effort por role (orchestrator/worker/validator). Mesmo handler
+	// do subcomando `/harness models`; comando dedicado pra descoberta.
+	pi.registerCommand("harness-models", {
+		description: "Configure model + effort per harness role (orchestrator/worker/validator).",
+		handler: async (_args: string, ctx: ExtensionCommandContext): Promise<void> => {
+			await openModelConfig(ctx);
+		},
+	});
 
 	pi.registerCommand("harness", {
 		description: "Enter harness mode: profile setup → readiness → feature (sequential).",
@@ -169,6 +213,10 @@ export default function registerHarnessExtension(pi: ExtensionAPI): void {
 			if (sub === "status") {
 				const progress = mode.featureId ? featureProgress(ctx.cwd, mode.featureId) : null;
 				ctx.ui.notify(statusDetail(mode, progress));
+				return;
+			}
+			if (sub === "models") {
+				await openModelConfig(ctx);
 				return;
 			}
 			// /harness "<feature>" --headless → CI: converge (code-initiated, gray-areas [assumido]) →
@@ -192,11 +240,12 @@ export default function registerHarnessExtension(pi: ExtensionAPI): void {
 				const { makeRealConvergeFn, makeRealSpawn } = await import("../feature-spawn.ts");
 				const { runHeadlessFeature } = await import("../headless.ts");
 				const model = (ctx as { model?: { id?: string } }).model?.id;
+				const cfg = loadModelConfig(); // per-role model+effort overrides (global)
 				const res = await runHeadlessFeature(ctx.cwd, {
 					request,
 					featureId: fid,
-					converge: makeRealConvergeFn({ model }),
-					spawn: makeRealSpawn({ featureId: fid, model }),
+					converge: makeRealConvergeFn({ model, config: cfg }),
+					spawn: makeRealSpawn({ featureId: fid, model, config: cfg }),
 				});
 				ctx.ui.notify(
 					res.ok
@@ -234,7 +283,7 @@ export default function registerHarnessExtension(pi: ExtensionAPI): void {
 					const { writeFeatureRun } = await import("../plan.ts");
 					const { appendProgress } = await import("../handoff.ts");
 					const model = (ctx as { model?: { id?: string } }).model?.id;
-					const spawn = makeRealSpawn({ featureId: fid, model });
+					const spawn = makeRealSpawn({ featureId: fid, model, config: loadModelConfig() });
 					await runLoop(ctx.cwd, run, {
 						spawn,
 						persist: (r) => writeFeatureRun(ctx.cwd, r),

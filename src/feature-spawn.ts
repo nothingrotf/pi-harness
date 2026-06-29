@@ -16,6 +16,7 @@ import { buildConvergeDispatch } from "./converge-dispatch.ts";
 import type { FeatureStep, SpawnCtx, SpawnFn, SpawnOutcome } from "./feature-runner.ts";
 import { handoffOutcome } from "./handoff.ts";
 import type { ConvergeFn } from "./headless.ts";
+import { type HarnessModelConfig, type ResolvedChoice, resolveChoice, roleForStep } from "./model-config.ts";
 import { buildWorkerBootstrap } from "./worker-bootstrap.ts";
 
 export function resolvePiBin(): string {
@@ -65,15 +66,19 @@ export function buildWorkerSystemPrompt(step: FeatureStep, cwd: string, opts: { 
 	return parts.join("\n");
 }
 
-/** Args do `pi --print` por step (puro — testável). `model` opcional (herda o do parent). */
-export function piArgs(step: FeatureStep, systemPromptPath: string, model?: string): string[] {
+/**
+ * Args do `pi --print` por step (puro — testável). `choice` = modelo+effort resolvidos
+ * pro role do step (worker/validator); ambos opcionais (undefined → herda o do parent).
+ */
+export function piArgs(step: FeatureStep, systemPromptPath: string, choice: ResolvedChoice = {}): string[] {
 	const tools = step.kind === "task" ? TOOLS_TASK : TOOLS_GATE;
 	const task =
 		step.kind === "task"
 			? "Execute your assigned task per the appended instructions (harness-worker-base, then your skill); call EndFeatureRun when done, then end your turn."
 			: "Run the ship-gate validator per the appended instructions; call EndFeatureRun (returnToOrchestrator: true) when done, then end your turn.";
 	const args = ["--print", "--mode", "json", "--no-session"];
-	if (model) args.push("--model", model);
+	if (choice.model) args.push("--model", choice.model);
+	if (choice.thinking) args.push("--thinking", choice.thinking);
 	args.push("--tools", tools, "--append-system-prompt", systemPromptPath, task);
 	return args;
 }
@@ -88,7 +93,10 @@ function writePromptFile(prompt: string): { file: string; dir: string } {
 export interface RealSpawnOpts {
 	featureId: string;
 	bin?: string;
+	/** Modelo herdado do parent (fallback quando o role não fixa um). */
 	model?: string;
+	/** Overrides de modelo+effort por role (worker/validator); ver model-config.ts. */
+	config?: HarnessModelConfig;
 	onEvent?: (step: FeatureStep, evt: { type?: string; toolName?: string }) => void;
 	spawnImpl?: typeof cpSpawn;
 	/** gerador de worker session id (injetável p/ teste). */
@@ -136,18 +144,22 @@ export function buildConvergeSystemPrompt(featureId: string): string {
 	return parts.join("\n");
 }
 
-/** Args do `pi --print` pro converge headless (puro — testável). */
-export function convergePiArgs(systemPromptPath: string, request: string, featureId: string, model?: string): string[] {
+/** Args do `pi --print` pro converge headless (puro — testável). `choice` = role orchestrator. */
+export function convergePiArgs(systemPromptPath: string, request: string, featureId: string, choice: ResolvedChoice = {}): string[] {
 	const prompt = buildConvergeDispatch(request, featureId, {}, { headless: true });
 	const args = ["--print", "--mode", "json", "--no-session"];
-	if (model) args.push("--model", model);
+	if (choice.model) args.push("--model", choice.model);
+	if (choice.thinking) args.push("--thinking", choice.thinking);
 	args.push("--tools", TOOLS_CONVERGE, "--append-system-prompt", systemPromptPath, prompt);
 	return args;
 }
 
 export interface RealConvergeOpts {
 	bin?: string;
+	/** Modelo herdado do parent (fallback do role orchestrator). */
 	model?: string;
+	/** Overrides de modelo+effort por role; o converge usa o role `orchestrator`. */
+	config?: HarnessModelConfig;
 	spawnImpl?: typeof cpSpawn;
 	onEvent?: (evt: { type?: string; toolName?: string }) => void;
 }
@@ -164,7 +176,7 @@ export function makeRealConvergeFn(opts: RealConvergeOpts = {}): ConvergeFn {
 		new Promise<void>((resolve) => {
 			const sys = buildConvergeSystemPrompt(featureId);
 			const { file, dir } = writePromptFile(sys);
-			const args = convergePiArgs(file, request, featureId, opts.model);
+			const args = convergePiArgs(file, request, featureId, resolveChoice(opts.config, "orchestrator", opts.model));
 			const child = spawnImpl(bin, args, { cwd, stdio: ["ignore", "pipe", "pipe"], env: process.env });
 			const cleanup = () => {
 				try {
@@ -197,7 +209,7 @@ export function makeRealSpawn(opts: RealSpawnOpts): SpawnFn {
 		const workerSessionId = genId();
 		const sys = buildWorkerSystemPrompt(step, ctx.cwd, { featureId: opts.featureId, workerSessionId });
 		const { file, dir } = writePromptFile(sys);
-		const args = piArgs(step, file, opts.model);
+		const args = piArgs(step, file, resolveChoice(opts.config, roleForStep(step), opts.model));
 		return new Promise<SpawnOutcome>((resolve) => {
 			const child = spawnImpl(bin, args, { cwd: ctx.cwd, stdio: ["ignore", "pipe", "pipe"], env: process.env });
 			let settled = false;
