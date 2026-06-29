@@ -2,11 +2,14 @@
  * Tier 1 — Repo Profile (profile.json): a camada determinística do gate de setup
  * (Fatia 2, docs/00-design §6). Código puro, sem LLM.
  *
- *   ensureProfile(repo): GATE READ-ONLY — não escreve.
+ *   ensureProfile(repo, opts): GATE READ-ONLY — não escreve.
  *     p = read(profile.json)
  *     if !p                                          → "absent"  (rode /harness setup)
+ *     elif opts.refresh                              → "refresh" (SETUP refresh: re-deriva + reconcilia)
  *     elif drift(fingerprint(repo), p.fingerprint)   → "drift"   (advisory)
  *     else                                           → "ok"
+ *   O conteúdo é reconciliado pela setup skill (merge, não clobber — src/reconcile.ts);
+ *   storeProfile re-carimba o metadata preservando a proveniência (firstGeneratedAt).
  *
  *   storeProfile(repo): o STAMP — chamado pela tool `store_profile` DEPOIS que a
  *     setup skill autorou o conteúdo. Valida que os artefatos do profile existem
@@ -15,7 +18,8 @@
  *     Corrige o bug do baseline: o fingerprint só é capturado QUANDO o conteúdo
  *     existe — nunca antes.
  *
- * profile.json = { version, generatedAt, sourceCommit, fingerprint:{lockfiles,rules,toolcfg} }
+ * profile.json = { version, generatedAt, firstGeneratedAt, refreshedAt?, refreshCount,
+ *                  sourceCommit, fingerprint:{lockfiles,rules,toolcfg} }
  */
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -25,7 +29,14 @@ export const PROFILE_VERSION = 1;
 
 export interface Profile {
 	version: number;
+	/** Last stamp time (fresh OR refresh). */
 	generatedAt: string;
+	/** When the profile was FIRST authored — preserved across refreshes (merge, não clobber). */
+	firstGeneratedAt: string;
+	/** Last refresh time; absent on the first (fresh) stamp. */
+	refreshedAt?: string;
+	/** How many times the profile was refreshed (0 on the fresh stamp). */
+	refreshCount: number;
 	sourceCommit: string | null;
 	fingerprint: FingerprintParts;
 }
@@ -50,17 +61,26 @@ export function writeProfile(cwd: string, profile: Profile): void {
 	fs.writeFileSync(profilePath(cwd), `${JSON.stringify(profile, null, 2)}\n`);
 }
 
-/** Deriva o profile.json determinístico do estado atual do repo. */
-export function computeProfile(cwd: string, now: () => string = () => new Date().toISOString()): Profile {
+/**
+ * Deriva o profile.json determinístico do estado atual do repo. Quando `prev` é
+ * passado (re-store/refresh), RECONCILIA o metadata sem clobberar a proveniência:
+ * preserva `firstGeneratedAt`, bumpa `refreshCount` e carimba `refreshedAt`.
+ */
+export function computeProfile(cwd: string, now: () => string = () => new Date().toISOString(), prev?: Profile | null): Profile {
+	const ts = now();
+	const isRefresh = !!prev;
 	return {
 		version: PROFILE_VERSION,
-		generatedAt: now(),
+		generatedAt: ts,
+		firstGeneratedAt: prev?.firstGeneratedAt ?? prev?.generatedAt ?? ts,
+		...(isRefresh ? { refreshedAt: ts } : {}),
+		refreshCount: isRefresh ? (prev.refreshCount ?? 0) + 1 : 0,
 		sourceCommit: gitHead(cwd),
 		fingerprint: computeFingerprintParts(cwd),
 	};
 }
 
-export type EnsureStatus = "absent" | "drift" | "ok";
+export type EnsureStatus = "absent" | "drift" | "ok" | "refresh";
 
 export interface EnsureResult {
 	status: EnsureStatus;
@@ -76,11 +96,13 @@ export interface EnsureResult {
  * advisory) ou "ok". O STAMP é exclusivo do `storeProfile` (tool store_profile),
  * que só roda depois que a setup skill autorou o conteúdo.
  */
-export function ensureProfile(cwd: string): EnsureResult {
+export function ensureProfile(cwd: string, opts: { refresh?: boolean } = {}): EnsureResult {
 	const prev = readProfile(cwd);
 	if (!prev) return { status: "absent", profile: null, changed: [] };
 	const cur = computeFingerprintParts(cwd);
 	const changed = changedParts(prev.fingerprint, cur);
+	// Refresh forçado (opts.refresh) → SETUP(refresh): re-deriva + reconcilia (design §6).
+	if (opts.refresh) return { status: "refresh", profile: prev, changed };
 	return { status: changed.length > 0 ? "drift" : "ok", profile: prev, changed };
 }
 
@@ -130,7 +152,10 @@ export type StoreProfileResult = { ok: true; profile: Profile } | { ok: false; m
 export function storeProfile(cwd: string, opts: { now?: () => string } = {}): StoreProfileResult {
 	const check = validateProfileContent(cwd);
 	if (!check.ok) return { ok: false, missing: check.missing };
-	const profile = computeProfile(cwd, opts.now);
+	// Reconcilia: se já há profile.json, preserva a proveniência (firstGeneratedAt) e
+	// bumpa refreshCount/refreshedAt em vez de clobberar.
+	const prev = readProfile(cwd);
+	const profile = computeProfile(cwd, opts.now, prev);
 	writeProfile(cwd, profile);
 	return { ok: true, profile };
 }

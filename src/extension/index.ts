@@ -22,6 +22,7 @@ import { buildGateModel, type GateActionValue, summarizeSnapshot } from "../read
 import { appendAudit, ensureReadinessInputs, readSnapshot } from "../readiness-pipeline.ts";
 import { buildAuditDispatch, buildFixDispatch } from "../readiness-dispatch.ts";
 import { buildSetupDispatch } from "../setup-dispatch.ts";
+import { buildRefreshDispatch } from "../reconcile.ts";
 import { registerReadinessStoreTool } from "../readiness-store-tool.ts";
 import { registerProfileStoreTool } from "../profile-store-tool.ts";
 import { registerEndFeatureRunTool } from "../endfeaturerun-tool.ts";
@@ -216,12 +217,19 @@ export default function registerHarnessExtension(pi: ExtensionAPI): void {
 			// (fingerprint de conteúdo) ou avisa drift. O CONTEÚDO do profile
 			// (architecture/services/skills) é a setup skill (Fatia 1, LLM) — ainda stub.
 			if (forceSetup) {
-				// Fatia 1: dispara a setup skill (autora o conteúdo do profile ao vivo). O
-				// profile.json é estampado pela tool `store_profile` no FIM da skill — depois
-				// que o conteúdo existe (acopla metadata↔conteúdo; sem baseline prematuro).
+				// Fatia 1/2: profile EXISTE → REFRESH (merge, não clobber — src/reconcile.ts);
+				// ausente → SETUP fresh. Em ambos o profile.json é estampado pela tool
+				// `store_profile` no FIM da skill (acopla metadata↔conteúdo; sem baseline prematuro).
 				const t = activeTools();
-				pi.sendUserMessage(buildSetupDispatch({ todo: t.has("todo") }));
-				ctx.ui.notify(`pi-harness: profile setup live — authoring .harness/profile/ then store_profile. tools: ${toolBadge(t, ["todo", "store_profile"])}`);
+				const existing = ensureProfile(ctx.cwd, { refresh: true });
+				if (existing.status === "refresh") {
+					const parts = existing.changed.length ? existing.changed.join(", ") : "all";
+					pi.sendUserMessage(buildRefreshDispatch(existing.changed, { todo: t.has("todo") }));
+					ctx.ui.notify(`pi-harness: profile REFRESH live — merging (not clobbering) ${parts} → store_profile. tools: ${toolBadge(t, ["todo", "store_profile"])}`);
+				} else {
+					pi.sendUserMessage(buildSetupDispatch({ todo: t.has("todo") }));
+					ctx.ui.notify(`pi-harness: profile setup live — authoring .harness/profile/ then store_profile. tools: ${toolBadge(t, ["todo", "store_profile"])}`);
+				}
 				return;
 			}
 			const prof = ensureProfile(ctx.cwd);

@@ -105,3 +105,40 @@ test("storeProfile: now injetável (generatedAt determinístico em teste)", () =
 	const r = storeProfile(d, { now: () => "2026-06-29T00:00:00Z" });
 	assert.ok(r.ok && r.profile.generatedAt === "2026-06-29T00:00:00Z");
 });
+
+test("storeProfile: reconcilia proveniência no refresh (firstGeneratedAt preservado, refreshCount bumpa)", () => {
+	const d = tmp();
+	authorProfile(d);
+	// 1º carimbo (fresh): refreshCount 0, sem refreshedAt, firstGeneratedAt = generatedAt
+	const fresh = storeProfile(d, { now: () => "2026-01-01T00:00:00Z" });
+	assert.ok(fresh.ok);
+	assert.ok(fresh.ok && fresh.profile.refreshCount === 0, "fresh → refreshCount 0");
+	assert.ok(fresh.ok && fresh.profile.firstGeneratedAt === "2026-01-01T00:00:00Z");
+	assert.ok(fresh.ok && fresh.profile.refreshedAt === undefined, "fresh não tem refreshedAt");
+
+	// 2º carimbo (refresh): preserva firstGeneratedAt, bumpa refreshCount, carimba refreshedAt
+	write(d, ".agents/rules/x.md", "v2"); // muda algo do repo
+	const ref = storeProfile(d, { now: () => "2026-02-02T00:00:00Z" });
+	assert.ok(ref.ok && ref.profile.refreshCount === 1, "refresh → refreshCount 1");
+	assert.ok(ref.ok && ref.profile.firstGeneratedAt === "2026-01-01T00:00:00Z", "firstGeneratedAt NÃO clobberado");
+	assert.ok(ref.ok && ref.profile.generatedAt === "2026-02-02T00:00:00Z", "generatedAt = último carimbo");
+	assert.ok(ref.ok && ref.profile.refreshedAt === "2026-02-02T00:00:00Z");
+
+	// 3º carimbo: refreshCount segue acumulando
+	assert.equal((storeProfile(d) as { ok: true; profile: { refreshCount: number } }).profile.refreshCount, 2);
+});
+
+test("ensureProfile: opts.refresh → status 'refresh' com as partes mudadas", () => {
+	const d = tmp();
+	write(d, "package-lock.json", "v1");
+	authorProfile(d);
+	assert.ok(storeProfile(d).ok);
+	write(d, "package-lock.json", "v2"); // drift de lockfiles
+	const r = ensureProfile(d, { refresh: true });
+	assert.equal(r.status, "refresh");
+	assert.deepEqual(r.changed, ["lockfiles"]);
+	// sem opts: o mesmo estado reporta 'drift' (back-compat do gate read-only)
+	assert.equal(ensureProfile(d).status, "drift");
+	// sem profile: refresh não inventa — 'absent'
+	assert.equal(ensureProfile(tmp(), { refresh: true }).status, "absent");
+});
