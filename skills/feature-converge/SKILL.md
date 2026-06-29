@@ -24,6 +24,12 @@ If the profile is absent or stale, stop and run `harness-setup` first.
 
 ## Phase 1 — Understand THIS feature (iterative)
 
+**Load confirmed lessons first.** Read `.harness/profile/LESSONS.md` (the **Confirmed** section
+only) — past verification failures distilled into project-local guidance by the self-improving
+lessons layer — and let them shape the contract and plan (e.g. a recurring "assert the exact
+persisted value" lesson → a sharper assertion; a recurring auth-boundary lesson → a cross-area
+flow). Apply only Confirmed; never Candidate/Quarantined. Skip silently if the file is absent.
+
 **Ask the user clarifying questions first** — enough to build shared understanding of
 what this feature is and what matters — before investigating. Then interleave: investigate
 via subagents, research unfamiliar tech, ask again. **Capture EVERY requirement the user

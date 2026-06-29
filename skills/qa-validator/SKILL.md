@@ -110,4 +110,6 @@ Write `validation/user-testing/synthesis.json`:
 Call `EndFeatureRun` with `returnToOrchestrator: true` (always). `success` only if every
 assertion from Step 1 passed; otherwise `failure` (≥1 failed/blocked/untested, or setup consumed
 the session — describe the setup work done in `salientSummary`). The orchestrator creates fix
-tasks for failed/blocked assertions.
+tasks for failed/blocked assertions — and distills each into a project-local **lesson** via
+`store_lesson` (`signal: failed_assertion`, `source` = the assertion id), so record failed/blocked
+assertions with precise ids + reasons in the synthesis.

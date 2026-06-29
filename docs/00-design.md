@@ -153,6 +153,7 @@ geradas-por-máquina, humano aprova; bump `version`/`sourceCommit`. Estável e d
   - **Smoke e2e do ship gate VALIDADO** (pi --print real): runLoop injetou o gate → spawnou `code-review` → gate programático rodou (npm test/typecheck/lint, exit 0) + 3 eixos consumindo o **conventions-map** cacheado → `synthesis.json` `status:"pass"` → `EndFeatureRun` (success, returnToOrchestrator) → runner processou (orchestrator_turn, por design). **qa-validator também validado e2e** (spawn → "nothing in scope" → synthesis.json `status:"pass"` → EndFeatureRun success). Os dois passos do ship gate provados com pi --print real.
 
 [note] Cérebro do orchestrator: skills/harness-orchestrator, skills/feature-converge (contract authoring), skills/worker-base.
+[x] Enhancements (da análise spec-driven): generate-tests (thin/fat + sensor), gray-area-policy explícita, e a **camada de lições auto-melhorável** — src/lessons.ts (maquinaria determinística: grounding gate, recorrência por feature distinta, candidate→confirmed, quarantine, dedup, render) + tool `store_lesson` (modelo dá juízo, TS valida+persiste em .harness/profile/lessons.json + LESSONS.md). WRITE no learning loop do orchestrator pós-ship-gate (sinais: blocking_finding/failed_assertion/gate_fail/spec_deviation/discovered_issue); READ na converge + worker. Smoke ao vivo: store_lesson grava L-001 candidate no runtime real.
 ```
 
 Cada fatia prova-se sozinha. Não automatiza loop sobre peça não-provada.

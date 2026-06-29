@@ -54,6 +54,10 @@ structural maintainability, and house-pattern conformance each catch a distinct 
 regression that must not ship) → `status: "fail"`.
 
 ## 4) Learning loop (light)
+The **blocking findings** in your synthesis are the grounded signals the orchestrator distills into
+project-local **lessons** via `store_lesson` (`signal: blocking_finding`, `source` = the finding's
+`file:line`) — surface them precisely (`file:line` + rule) so the lesson is groundable.
+
 When a finding is **systemic** (a pattern the repo's guidance should encode, or a gap in the
 conventions-map), record it as `suggestedGuidanceUpdates` in the synthesis, targeting
 **`harness.md`**, a profile **worker skill**, or **`conventions-map.md`** — never the repo's own

@@ -27,6 +27,7 @@ import { registerReadinessStoreTool } from "../readiness-store-tool.ts";
 import { registerProfileStoreTool } from "../profile-store-tool.ts";
 import { registerEndFeatureRunTool } from "../endfeaturerun-tool.ts";
 import { registerPlanStoreTool } from "../plan-store-tool.ts";
+import { registerLessonsStoreTool } from "../lessons-store-tool.ts";
 import { buildConvergeDispatch } from "../converge-dispatch.ts";
 import { buildRunDispatch } from "../run-dispatch.ts";
 import { buildFeatureRun, readFeatureRun, readPlan } from "../plan.ts";
@@ -94,6 +95,8 @@ export default function registerHarnessExtension(pi: ExtensionAPI): void {
 	registerEndFeatureRunTool(pi);
 	// Estágio STORE da convergência: valida cobertura → grava plan.json + status.json.
 	registerPlanStoreTool(pi);
+	// store_lesson — a camada de lições auto-melhorável (grounded em sinais do ship gate).
+	registerLessonsStoreTool(pi);
 	// Agentes dedicados pro pi-subagents (readiness-auditor / readiness-remediator).
 	contributeAgentsDir();
 

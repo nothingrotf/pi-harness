@@ -183,6 +183,12 @@ When all implementation tasks in `plan.json` complete, the runner injects **two 
 **The runner injects the gate** — never hand-create code-review/qa-validator tasks in `plan.json` yourself (you'd cause duplicate gate runs).
 **Overriding the gate** (well-justified cases only, never silent): mark the gate step complete with a written justification recorded in its synthesis, and move any non-`"passed"` assertions to a follow-up feature so they stay tracked (each assertion still claimed by exactly one task's `fulfills`). Always leave an auditable trail.
 **Learning loop:** when code-review surfaces systemic guidance gaps (`suggestedGuidanceUpdates`), act on them by updating **`harness.md`, the profile worker skills, or the conventions-map** — never the repo's own AGENTS.md. This is how the profile accrues operational knowledge learned across features. (The `appliedUpdates` = already-done FYI vs `suggestedGuidanceUpdates` = needs-your-judgment split, and the user-testing knowledge-persistence detail, live in the code-review/qa-validator skills.)
+
+**Lessons (self-improving, cross-feature) — distill after the ship gate.** For each **grounded** failure the ship gate surfaced, record ONE terse, codebase-general lesson via the **`store_lesson`** tool (a clean gate records nothing — no signal, no lesson). Map signal → call:
+- code-review **blocking finding** → `signal: blocking_finding`; qa-validator **failed/blocked assertion** → `failed_assertion`; **programmatic gate fail** → `gate_fail`; a **`// SPEC_DEVIATION`** → `spec_deviation`; a worker **blocking discovered issue** → `discovered_issue`.
+- `source` is **mandatory** (`file:line` / assertion id / finding ref) — the tool refuses an ungrounded lesson (opinion, not lesson). Phrase the **general rule**, not the incident ("Assert the exact persisted status value, not just that the field exists" — never "the test on line 88 was weak"), so recurrences merge.
+- The tool owns IDs, **recurrence across DISTINCT features**, candidate→confirmed promotion (≥2 features), and quarantine; it persists `.harness/profile/lessons.json` + `LESSONS.md`. `feature-converge` and workers **LOAD** the Confirmed lessons before building — so each feature starts smarter (the synergy: the harness learns the repo).
+- If a Confirmed lesson was loaded for this feature and the **same** failure recurred anyway, the guidance isn't working → `store_lesson` `action: "penalize"` it (2 penalties → quarantine). Use sparingly, on real repeats.
 ### End-of-Feature Gate
 Before declaring the feature done, check status: ALL assertions must be `"passed"`. Also perform at least one README operation (create/update) unless the user opts out, so it reflects the final state. Delegate README work to subagents; you own the gate.
 ## Quality Enforcement Is Your Core Responsibility
@@ -196,6 +202,7 @@ You, above anyone else, determine feature success.
 - `harness-setup` / `feature-converge` / `worker-base` skills — invoke for profile setup, convergence, worker startup
 - the **runner** — hand control for blocking, sequential task execution
 - `store_profile` — validate + stamp the profile after authoring (analog of `store_agent_readiness_report`)
+- `store_lesson` — record a grounded lesson from a ship-gate failure (or `penalize` a confirmed one); the self-improving lessons layer (persists `lessons.json` + `LESSONS.md`)
 - `Task`/`subagent` — spawn a sub-agent (always specify outputs + require filepaths back)
 - record handoff decisions you chose **not** to act on, with justification, persisting anything relevant into the right shared state (`harness.md` / a task description) — analog of `dismiss_handoff_items`
 - `Skill`, `Write`/`Edit`, bash, read, web search/fetch

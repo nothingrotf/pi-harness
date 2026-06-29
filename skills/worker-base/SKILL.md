@@ -70,6 +70,10 @@ with `returnToOrchestrator: true` explaining the failure.
 ### 1.3–1.5 Understand & Check Library
 Read `architecture.md` to understand the system and where your task fits. View your task's
 context in `plan.json`. Check `library/` for technology-specific patterns/SDK usage.
+**Load lessons:** read `.harness/profile/LESSONS.md` (the **Confirmed** section) and apply any
+lesson relevant to your task's area — they're past verification failures distilled into rules
+(e.g. "assert the resulting state, not the mock call count"). Only Confirmed; ignore
+Candidate/Quarantined; skip if absent.
 
 ### 1.6 Online Research (Conditional)
 If your task involves a technology/SDK/integration where you're unsure of idiomatic usage
