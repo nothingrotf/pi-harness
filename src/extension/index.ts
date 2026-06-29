@@ -167,6 +167,41 @@ export default function registerHarnessExtension(pi: ExtensionAPI): void {
 				ctx.ui.notify(statusText(mode));
 				return;
 			}
+			// /harness "<feature>" --headless → CI: converge (code-initiated, gray-areas [assumido]) →
+			// runner, BLOQUEANTE. O elo converge→runner sem TUI (src/headless.ts).
+			if (sub !== "run --headless" && /(^|\s)--headless\b/.test(sub)) {
+				const request = sub.replace(/--headless/g, "").trim();
+				if (!request) {
+					ctx.ui.notify('Usage: /harness "<feature>" --headless', "warning");
+					return;
+				}
+				if (ensureProfile(ctx.cwd).status === "absent") {
+					ctx.ui.notify("pi-harness: no profile — run /harness setup first.", "warning");
+					return;
+				}
+				const fid = featureIdFromRequest(request);
+				mode.active = true;
+				mode.featureId = fid;
+				mode.phase = "run";
+				await applyModeChrome(ctx, mode);
+				ctx.ui.notify(`pi-harness: HEADLESS feature "${fid}" — converge (pi --print) → runner. Blocks until done.`);
+				const { makeRealConvergeFn, makeRealSpawn } = await import("../feature-spawn.ts");
+				const { runHeadlessFeature } = await import("../headless.ts");
+				const model = (ctx as { model?: { id?: string } }).model?.id;
+				const res = await runHeadlessFeature(ctx.cwd, {
+					request,
+					featureId: fid,
+					converge: makeRealConvergeFn({ model }),
+					spawn: makeRealSpawn({ featureId: fid, model }),
+				});
+				ctx.ui.notify(
+					res.ok
+						? `pi-harness: headless "${fid}" SHIPPED — all assertions passed.`
+						: `pi-harness: headless "${fid}" stopped at ${res.stage} (${res.reason ?? res.status ?? "unknown"}).`,
+					res.ok ? undefined : "warning",
+				);
+				return;
+			}
 			if (sub === "run" || sub === "run --headless") {
 				// Execução da feature convergida (Fatia 3). DEFAULT = nativo TUI + TODO (orquestrador
 				// no chat, agentes via subagent, visíveis). --headless = FeatureRunner code-initiated.

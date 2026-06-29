@@ -16,13 +16,24 @@ export const CONVERGE_PHASES: readonly string[] = [
 	"Phase 5: store_plan (validate coverage + persist)",
 ];
 
-/** Builds the message that converges a feature live (Plan via rpiv-todo when active). */
-export function buildConvergeDispatch(request: string, featureId: string, tools: DispatchTools = {}): string {
+/** Builds the message that converges a feature live (Plan via rpiv-todo when active).
+ * `opts.headless` = CI mode (no interactive user): every gray area resolves as `[assumido]`
+ * and `ask_user_question` is forbidden (there is nobody to answer). */
+export function buildConvergeDispatch(request: string, featureId: string, tools: DispatchTools = {}, opts: { headless?: boolean } = {}): string {
 	const lines = [
 		`Converge the feature into its run artifacts now, live in this session.`,
 		`Feature id: ${featureId}. Run directory: .harness/runs/${featureId}/. User request: ${request}`,
 		"",
 	];
+	if (opts.headless) {
+		lines.push(
+			"**Headless mode (no interactive user).** There is NOBODY to answer questions:",
+			"- Do NOT call `ask_user_question`. Run the gray-area policy's dimensions sweep, but resolve EVERY gray area yourself as `[assumido]` with a conservative default + rationale (cite profile/codebase evidence).",
+			"- Tag HIGH-risk assumptions clearly in feature.md's `## Gray-area decisions` table (Status `[assumido]`, Risk `HIGH`) so a human can review them later; do not block on them.",
+			"- Author the artifacts and call `store_plan` directly — do not pause for confirmation.",
+			"",
+		);
+	}
 	let n = 1;
 	if (tools.todo) {
 		lines.push(

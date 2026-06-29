@@ -12,8 +12,10 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import { buildConvergeDispatch } from "./converge-dispatch.ts";
 import type { FeatureStep, SpawnCtx, SpawnFn, SpawnOutcome } from "./feature-runner.ts";
 import { handoffOutcome } from "./handoff.ts";
+import type { ConvergeFn } from "./headless.ts";
 import { buildWorkerBootstrap } from "./worker-bootstrap.ts";
 
 export function resolvePiBin(): string {
@@ -23,6 +25,8 @@ export function resolvePiBin(): string {
 /** Tasks editam código + chamam EndFeatureRun; ship-gates também spawnam reviewers (subagent). */
 const TOOLS_TASK = "read,grep,find,ls,bash,edit,write,EndFeatureRun";
 const TOOLS_GATE = "read,grep,find,ls,bash,edit,write,subagent,EndFeatureRun";
+/** Converge autora os artefatos + delega a contract a subagents + chama store_plan. */
+const TOOLS_CONVERGE = "read,grep,find,ls,bash,edit,write,subagent,store_plan";
 
 function harnessSkillsDir(): string {
 	return fileURLToPath(new URL("../skills", import.meta.url));
@@ -117,6 +121,74 @@ export function makeLineParser(onJson: (obj: unknown) => void): (chunk: string) 
  * reportar success/returnToOrchestrator — o exit code sozinho não basta (espelha o
  * auditSucceeded do readiness).
  */
+// ─────────────────────────────────────────────────────────────────────────────
+// Converge child (o elo headless converge→runner — src/headless.ts)
+
+/** System prompt do converge child: a skill feature-converge inline + nota de runtime. */
+export function buildConvergeSystemPrompt(featureId: string): string {
+	const skill = readSkill(path.join(harnessSkillsDir(), "feature-converge"));
+	const parts: string[] = [];
+	if (skill) parts.push("# feature-converge\n", skill);
+	parts.push(
+		`\n[runtime] Run dir: .harness/runs/${featureId}/ · Profile: .harness/profile/ (read-only).`,
+		"Author feature.md + contract.md (FROZEN) + decompose ordered tasks, then call store_plan. Headless: resolve gray areas as [assumido]; NEVER call ask_user_question.",
+	);
+	return parts.join("\n");
+}
+
+/** Args do `pi --print` pro converge headless (puro — testável). */
+export function convergePiArgs(systemPromptPath: string, request: string, featureId: string, model?: string): string[] {
+	const prompt = buildConvergeDispatch(request, featureId, {}, { headless: true });
+	const args = ["--print", "--mode", "json", "--no-session"];
+	if (model) args.push("--model", model);
+	args.push("--tools", TOOLS_CONVERGE, "--append-system-prompt", systemPromptPath, prompt);
+	return args;
+}
+
+export interface RealConvergeOpts {
+	bin?: string;
+	model?: string;
+	spawnImpl?: typeof cpSpawn;
+	onEvent?: (evt: { type?: string; toolName?: string }) => void;
+}
+
+/**
+ * ConvergeFn de produção: spawna `pi --print` rodando feature-converge headless no cwd do
+ * repo → autora os artefatos e chama store_plan (grava plan.json). Resolve quando o child
+ * fecha; o sucesso (plan.json existe) é checado pelo runHeadlessFeature depois.
+ */
+export function makeRealConvergeFn(opts: RealConvergeOpts = {}): ConvergeFn {
+	const bin = opts.bin ?? resolvePiBin();
+	const spawnImpl = opts.spawnImpl ?? cpSpawn;
+	return (cwd: string, request: string, featureId: string): Promise<void> =>
+		new Promise<void>((resolve) => {
+			const sys = buildConvergeSystemPrompt(featureId);
+			const { file, dir } = writePromptFile(sys);
+			const args = convergePiArgs(file, request, featureId, opts.model);
+			const child = spawnImpl(bin, args, { cwd, stdio: ["ignore", "pipe", "pipe"], env: process.env });
+			const cleanup = () => {
+				try {
+					fs.rmSync(dir, { recursive: true, force: true });
+				} catch {
+					// best-effort
+				}
+			};
+			if (opts.onEvent && child.stdout) {
+				const feed = makeLineParser((o) => opts.onEvent?.(o as { type?: string }));
+				child.stdout.setEncoding("utf8");
+				child.stdout.on("data", (c: string) => feed(c));
+			}
+			child.on("error", () => {
+				cleanup();
+				resolve();
+			});
+			child.on("close", () => {
+				cleanup();
+				resolve();
+			});
+		});
+}
+
 export function makeRealSpawn(opts: RealSpawnOpts): SpawnFn {
 	const bin = opts.bin ?? resolvePiBin();
 	const spawnImpl = opts.spawnImpl ?? cpSpawn;
