@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildSetupDispatch, SETUP_PHASES } from "../src/setup-dispatch.ts";
+import { buildConventionsMapDispatch, buildSetupDispatch, SETUP_PHASES } from "../src/setup-dispatch.ts";
 
 test("SETUP_PHASES: 8 fases do profile (brownfield → store)", () => {
 	assert.equal(SETUP_PHASES.length, 8);
@@ -36,4 +36,21 @@ test("buildSetupDispatch: sem todo → sem Plan/clear, ainda roda a skill", () =
 
 test("buildSetupDispatch: não rewrita AGENTS.md do repo (brownfield)", () => {
 	assert.match(buildSetupDispatch({ todo: true }), /do NOT rewrite the repo's own AGENTS\.md/);
+});
+
+test("buildConventionsMapDispatch: indexa ADRs/rules/patterns + split gate-vs-review → conventions-map.md", () => {
+	const m = buildConventionsMapDispatch({ subagent: true });
+	assert.match(m, /conventions-map\.md/);
+	assert.match(m, /ADRs?/);
+	assert.match(m, /Rule files/i);
+	assert.match(m, /House patterns/i);
+	assert.match(m, /Gate-enforced vs review-enforced/i);
+	assert.match(m, /read and index them, never edit/i);
+	assert.match(m, /subagent/i); // delega a varredura profunda
+});
+
+test("buildConventionsMapDispatch: sem subagent → sem passo de delegação, ainda gera o índice", () => {
+	const m = buildConventionsMapDispatch();
+	assert.match(m, /conventions-map\.md/);
+	assert.doesNotMatch(m, /Delegate the broad search/);
 });

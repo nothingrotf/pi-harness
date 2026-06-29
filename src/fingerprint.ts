@@ -5,7 +5,8 @@
  * Hash de CONTEÚDO (não depende de relógio nem de ordem do filesystem) sobre os
  * inputs que importam pra "como esse repo é montado":
  *   - lockfiles   (deps pinadas)
- *   - rules       (.agents/rules/ + AGENTS.md + docs/adr/ — convenções/decisões)
+ *   - rules       (.agents/rules/ + AGENTS.md + ADRs/decisões — convenções; ADRs não
+ *                  moram num único lugar canônico, então cobrimos os homes comuns)
  *   - toolcfg     (configs de lint/format/typecheck/build)
  *
  * Igual ao referência no espírito: o modelo de referência chaveia a staleness por commit/estado
@@ -38,8 +39,21 @@ const LOCKFILES = [
 	"composer.lock",
 ];
 
-const RULE_FILES = ["AGENTS.md", "CLAUDE.md"];
-const RULE_DIRS = [".agents/rules", "docs/adr", ".agents/skills"];
+// Fontes de convenção/decisão. ADRs e docs de regra NÃO moram num lugar canônico único —
+// cobrimos os homes comuns (docs/adr, docs/decisions, adr/, .cursor/rules, …). Para um repo
+// que guarda noutro lugar, os caminhos DESCOBERTOS no profile (conventions-map) são a fonte
+// precisa; esta lista é a rede determinística best-effort do drift de `rules`.
+const RULE_FILES = ["AGENTS.md", "CLAUDE.md", "CONVENTIONS.md", "CONTRIBUTING.md"];
+const RULE_DIRS = [
+	".agents/rules",
+	".cursor/rules",
+	".agents/skills",
+	"docs/adr",
+	"docs/decisions",
+	"docs/architecture/decisions",
+	"docs/rfc",
+	"adr",
+];
 
 const TOOLCFG = [
 	"tsconfig.json",

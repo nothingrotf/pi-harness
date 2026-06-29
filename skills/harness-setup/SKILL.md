@@ -148,7 +148,7 @@ run green here.**
 The **conventions-review axis** (the ship-gate reviewer that enforces house patterns) must NOT
 re-discover the repo's rules on every feature — that's slow and shallow. Pay the **deep mapping
 once here**, cached in the profile, refreshed on drift (the fingerprint's `rules` part already
-tracks `.agents/rules`+`AGENTS.md`+`docs/adr`, so a rule/ADR change re-triggers this on refresh).
+tracks `.agents/rules`+`AGENTS.md`+the common ADR/decision homes (`docs/adr`, `docs/decisions`, `adr/`, …) — ADRs don't live in one canonical place — so a rule/ADR change re-triggers this on refresh wherever they live).
 
 Do a thorough pass (delegate to a subagent) that **maps, identifies, and indexes** the repo's
 review-enforced conventions — search broadly by term, not just fixed paths:

@@ -42,3 +42,28 @@ export function buildSetupDispatch(tools: DispatchTools = {}): string {
 	}
 	return lines.join("\n");
 }
+
+/**
+ * Focused Phase-9 dispatch: (re)generate JUST the cached conventions-map the ship-gate
+ * conventions-review consumes — so it never re-discovers the repo's rules per feature.
+ * Reusable standalone: full setup (Phase 9), a `rules`-drift refresh (reconcile marks
+ * conventions-map.md → regenerate), and the smoke. Model-driven (deep mapping delegated).
+ */
+export function buildConventionsMapDispatch(tools: DispatchTools = {}): string {
+	const lines = [
+		"Build (or refresh) the cached conventions-map for THIS repository — the index the ship-gate conventions-review reads so it never re-discovers the repo's rules per feature.",
+		"",
+		"Do a thorough pass (search broadly by term, not just fixed paths) and index the repo's review-enforced conventions:",
+		"- ADRs (docs/adr/, docs/decisions/, **/ADR-*.md, an ADR index): id, title, status (accepted/superseded/proposed), what it decides, and a file:line anchor.",
+		"- Rule files (.agents/rules/, .cursor/rules/, CONVENTIONS.md, CONTRIBUTING.md, AGENTS.md/CLAUDE.md sections): what each governs + key terms to cite.",
+		"- House patterns in code a linter can't enforce (layering, API boundary, naming, error/logging contracts, enum style): the pattern + a canonical example reference.",
+		"- Gate-enforced vs review-enforced: note which checks are script-gated (lint/format/typecheck) so the reviewer DEFERS them and spends findings only on what review must catch.",
+		"",
+		"Write the index to .harness/profile/library/conventions-map.md (per entry: path, title, status, governs, key terms, canonical example). If the repo documents NO conventions, write a thin map saying so (the axis degrades to AGENTS.md-only — graceful, not a block).",
+		"Do NOT rewrite the repo's own AGENTS.md / .agents/rules / docs/adr — read and index them, never edit.",
+	];
+	if (tools.subagent) {
+		lines.push("", "Delegate the broad search and extraction to a subagent; require the written file path back.");
+	}
+	return lines.join("\n");
+}

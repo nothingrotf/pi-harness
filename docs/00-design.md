@@ -148,7 +148,8 @@ geradas-por-máquina, humano aprova; bump `version`/`sourceCommit`. Estável e d
   - **conventions-map** (Tier-1): nova fase do harness-setup (Phase 9) faz o mapeamento profundo de ADRs/rules/patterns → library/conventions-map.md; refresh no drift (fingerprint `rules`). O conventions-review consome (rápido + profundo).
   - **qa-validator** (skills/qa-validator) + agents/qa-flow-validator — verificação na superfície real.
   - CÓDIGO DO RUNNER FEITO (#6b, espelha readiness-runner/spawn, 23 testes): src/feature-runner.ts (engine: planFeatureRun + runLoop + injeção do ship gate code-review→qa-validator 1x + failure→orchestrator_turn + budget 5 + pause/resume + orphan + insertFixTask), src/worker-bootstrap.ts (o `Man`), src/handoff.ts (recordHandoff/handoffOutcome), src/endfeaturerun-tool.ts (tool EndFeatureRun), src/feature-spawn.ts (makeRealSpawn de `pi --print`).
-  - Falta: fiar converge(Slice 3)→runner no /harness; a fase Phase 9 do setup gerar o conventions-map num run real; smoke e2e com `pi --print` real.
+  - **Phase 9 conventions-map FEITO + validado num run real:** `buildConventionsMapDispatch` (dispatch focado da Phase 9, reusável no refresh de `rules`) + `pi --print` produziu um `conventions-map.md` real indexando ADRs (status/file:line)/rules/house-patterns + split gate-vs-review. Fingerprint de `rules` agora cobre ADRs/decisões fora de `docs/adr` (docs/decisions, adr/, …) — não supõe o local.
+  - Falta: fiar converge→runner no /harness headless; smoke e2e completo do ship gate (code-review→qa-validator) com `pi --print`.
 
 [note] Cérebro do orchestrator: skills/harness-orchestrator, skills/feature-converge (contract authoring), skills/worker-base.
 ```

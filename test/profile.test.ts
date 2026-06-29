@@ -50,6 +50,21 @@ test("computeFingerprint: repo vazio é estável (sem inputs)", () => {
 	assert.equal(computeFingerprint(tmp()), computeFingerprint(tmp()));
 });
 
+test("computeFingerprintParts: ADR/decisão FORA de docs/adr também conta como 'rules' (não supõe o local)", () => {
+	const d = tmp();
+	write(d, "package-lock.json", "v1");
+	const p0 = computeFingerprintParts(d);
+	write(d, "docs/decisions/0001-use-esm.md", "# decision"); // NÃO é docs/adr
+	const p1 = computeFingerprintParts(d);
+	assert.deepEqual(changedParts(p0, p1), ["rules"], "ADR em docs/decisions dispara rules drift");
+	write(d, "adr/0002.md", "# adr"); // outro home comum, na raiz
+	const p2 = computeFingerprintParts(d);
+	assert.deepEqual(changedParts(p1, p2), ["rules"], "adr/ na raiz também");
+	write(d, "CONVENTIONS.md", "x"); // rule file fora do AGENTS.md
+	const p3 = computeFingerprintParts(d);
+	assert.deepEqual(changedParts(p2, p3), ["rules"]);
+});
+
 /** Autora o conteúdo mínimo do profile (o que a setup skill produziria). */
 function authorProfile(dir: string): void {
 	for (const f of ["architecture.md", "services.yaml", "init.sh", "harness.md"]) write(dir, `.harness/profile/${f}`, "x");
