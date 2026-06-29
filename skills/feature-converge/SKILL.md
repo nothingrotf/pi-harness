@@ -30,19 +30,86 @@ via subagents, research unfamiliar tech, ask again. **Capture EVERY requirement 
 mentions, even casually** — named packages/tools are binding, not suggestions; echo them
 back before converging.
 
-**Gray-area decisions (explicit policy):** where the feature has ambiguous choices the profile
-doesn't settle, resolve them **with the user via the `ask_user_question` tool** (don't guess) and
-**record each as `{decision, rationale}`** — they go in a named `## Gray-area decisions` section of
-`feature.md` so workers and validators don't re-litigate. Keep going until nothing important is
-ambiguous. (This is the gray-area-policy: capture > assume; every resolved ambiguity is written down.)
+### Gray-area policy (the explicit procedure — capture > assume, risk-tiered)
+
+A *gray area* is any choice the feature leaves open that the profile/codebase doesn't already
+settle. **Resolve every one — none ends in an unmarked state.** Weave this into convergence; it's
+not a separate ceremony. (This is the harness's original piece: PUSH + risk-tiered ASK +
+`[assumido]`/`[confirmado]` + auditable persistence.)
+
+**1. Detect systematically — the implicit-requirement dimensions sweep.** Don't trust vibes; the
+dangerous gray areas are the easy-to-miss ones. Sweep each dimension and either capture a decision
+or mark **`N/A because <reason>`** — the N/A escape is **mandatory** (it stops you inventing
+requirements to fill the checklist; bound to THIS feature's scope):
+
+| Dimension | What to settle |
+|---|---|
+| Input validation & bounds | limits, formats, sanitization |
+| Failure / partial-failure | timeouts, partial saves, rollbacks |
+| Idempotency / retry / dedup | safe retries, dedup keys |
+| Auth boundaries & rate limits | who can call what, throttling |
+| Concurrency / ordering | races, ordering guarantees |
+| Data lifecycle / expiry | TTL, archival, deletion |
+| Observability | logging, metrics, tracing |
+| External-dependency failure | fallbacks, circuit breakers |
+| State-transition integrity | valid transitions, guards |
+
+Also scan the feature's **surface** for behavioral gray areas — something users SEE (layout, empty
+states, error display), CALL (response/error shape, versioning, rate limits), RUN (output, flags,
+verbosity), READ (structure, tone), or ORGANIZE (grouping, naming, duplicates). Generate **concrete,
+feature-specific** gray areas ("how are duplicate emails handled?", not "validation").
+
+**Scope-tier the sweep:** substantial feature → cover every dimension (decision or `N/A`); small/clear
+feature → only the dimensions obviously present, collapse the rest to one `remaining dimensions N/A
+for this scope`.
+
+**2. Tier each gray area by risk → this decides ASK vs ASSUME (the synergy).**
+- **LOW** — one obvious option from profile/codebase evidence, reversible, no directional / security /
+  data / cost / UX weight → resolve it yourself as an **assumption**: **PUSH** the default so the user
+  can object, tag **`[assumido]`** with the evidence (`file:line` / profile decision). **Do NOT ask.**
+  (As the profile accrues decisions across features, more gray areas land here → fewer asks — the
+  harness learns the repo; the SKIP that makes feature N cheaper than feature 1.)
+- **HIGH** — multiple valid options, conflicting patterns, or a directional / irreversible /
+  security-data-cost-UX choice → **ASK** via the `ask_user_question` tool: **concrete options** (not
+  "A/B"), lead with a **recommended default + the reasoning** (PUSH — don't just poll), and always
+  offer **"you decide"** (captures agent discretion). User picks → **`[confirmado]`**; "you decide"
+  → **`[assumido]`** (discretion, with your default + rationale). Ask **one area at a time**; let each
+  answer inform the next.
+
+**3. Stay in scope (HOW, not WHETHER).** Gray-area resolution clarifies how to build what's already
+in scope — it **never adds capability**. A new-capability suggestion → record it under **Deferred
+Ideas** and return to the current area; never silently expand the boundary.
+
+**4. Nothing silently dropped.** Any dimension/area the user declines or leaves undiscussed →
+**`[assumido]`** with your chosen default + rationale (never blank, never a silent guess).
+
+**5. Closure gate (before freezing the contract).** Every swept dimension is `[assumido]`,
+`[confirmado]`, or `N/A because <reason>` — **zero unmarked gray areas**. Echo the captured set back
+to the user, then converge.
 
 ## Phase 2 — feature.md (intent + scope)
 
-Author `.harness/runs/<feature-id>/feature.md`: the intent, the scope (what's IN and
-what's explicitly OUT), every captured requirement, and a named **`## Gray-area decisions`**
-section listing each resolved ambiguity as `{decision, rationale}` (from Phase 1). This is the
-human-readable statement of what this feature
-delivers and how, plus the decisions that bound it.
+Author `.harness/runs/<feature-id>/feature.md`: the intent, the scope (what's IN and what's
+explicitly OUT), every captured requirement, and a named **`## Gray-area decisions`** section
+persisting Phase 1's policy output as an auditable table — one row per swept dimension/area:
+
+```markdown
+## Gray-area decisions
+
+| Dimension / area | Decision | Status | Risk | Rationale / evidence |
+|---|---|---|---|---|
+| Duplicate email on signup | reject with 409 | [confirmado] | HIGH | user chose vs silent-merge |
+| Retry on 5xx | idempotent, dedup by request-id | [assumido] | LOW | matches src/http/client.ts:40 |
+| Rate limiting | N/A because no public endpoint | — | — | scope-bounded |
+
+### Deferred Ideas
+- [out-of-scope capability surfaced during gray-area discussion — captured, not built]
+```
+
+**Status** is `[assumido]` (agent-defaulted: LOW silent, declined, or "you decide") or `[confirmado]`
+(user-decided); `N/A because <reason>` rows carry no status. This is the human-readable statement of
+what this feature delivers and how, plus the decisions that bound it — workers and validators read it
+so they never re-litigate a settled gray area.
 
 ## Phase 3 — contract.md (the acceptance contract → FROZEN)
 
@@ -147,4 +214,7 @@ gate per the `harness-orchestrator` procedure.
 - `contract.md` BEFORE `plan.json` (feature-level TDD); black-box, behavior-based.
 - Freeze the contract once converged; edits only via the orchestrator's mid-feature procedure.
 - Coverage invariant (every assertion claimed exactly once) before running.
-- Capture every requirement; record gray-area decisions in `feature.md`.
+- Capture every requirement. Run the **gray-area policy** (Phase 1): dimensions sweep with the
+  mandatory `N/A because` escape; risk-tier each gray area (LOW → PUSH + `[assumido]` silently from
+  evidence, HIGH → `ask_user_question` → `[confirmado]`); HOW-not-WHETHER scope guardrail; zero
+  unmarked gray areas at the closure gate; persist the tagged table in `feature.md`.
