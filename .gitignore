@@ -5,3 +5,6 @@ node_modules/
 
 # scratch local de testes do harness contra um repo-alvo
 /scratch/
+
+# run state do rpiv-workflow (efêmero)
+.rpiv/
