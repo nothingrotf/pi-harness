@@ -64,7 +64,7 @@ escopo feature é sub-estrutura inútil. Mapeamento referência → nosso:
 | documento de proposta/intent | `feature.md` (intenção + escopo) |
 | discovery (prosa/mental) | decisões gray-area (gray-area-policy) |
 | contrato de validação + estado | `contract.md` **FROZEN** + status — **MANTÉM (a joia)** |
-| fila de N features + milestones | **SAI** → `plan.md` (tasks da feature) |
+| fila de N features + milestones | **SAI** → `plan.json` (tasks da feature, = features.json) |
 | feature→assertion | task→assertion |
 | milestones (cadência) | **colapsa**: 1 feature = 1 ship gate |
 
@@ -72,7 +72,7 @@ escopo feature é sub-estrutura inútil. Mapeamento referência → nosso:
 runs/<feature-id>/
 ├── feature.md      # intenção + escopo + (decisões gray-area? ver §aberto)
 ├── contract.md     # acceptance assertions FROZEN = "done" (black-box, testável)
-├── plan.md         # tasks ordenadas (thin/fat), cada task → assertion
+├── plan.json       # tasks ordenadas (estruturado, = features.json), cada task → assertion
 ├── state.json · progress_log.jsonl
 └── handoffs/ · validation/ · evidence/
 ```
@@ -138,11 +138,19 @@ geradas-por-máquina, humano aprova; bump `version`/`sourceCommit`. Estável e d
 ```
 [x] Fatia 0: scaffolding do repo (README, docs, .gitignore, estrutura)
 [~] Fatia 0.5: extensão (chrome do modo: comando /harness + badge aboveEditor + input recolorido + status) — shell pronto, dispatch stub (ver docs/01)
-[ ] Fatia 1: setup skill + harness.md template + profile-template
-[ ] Fatia 2: gate de setup + profile.json/fingerprint + refresh reconciler (o código novo fino)
-[ ] Fatia 3: Tier 2 — converge (gray-area-policy) → contract → plan
-[ ] Fatia 4: runner determinístico + state machine + handoff
-[ ] Fatia 5: ship gate (thermos + qa-validator) — reuso direto
+[~] Fatia 0.6: readiness gate UX — modelo puro (scoring, stances) + painel stance-banner real (ver docs/02)
+[~] Fatia 1: readiness setup (PORT 1:1 do referência: catálogo 82 + auditor verbatim + store_agent_readiness_report + flows /readiness-report e /readiness-fix) + **profile setup** (skills/harness-setup): agora uma autoria fiel (não-rasa) das fases de planejamento + design de workers + autoria de artefatos, brownfield-first — com delegação, loop iterativo, **verify-by-execution** (profile readiness check), resource classification, worker-skills c/ Example Handoff, encode-findings. Gera architecture.md + services.yaml + init.sh + harness.md + skills/<worker>/ + library/. **store_profile** (src/profile-store-tool.ts) acopla profile.json ao conteúdo autorado (bug do baseline prematuro corrigido: ensureProfile virou gate READ-ONLY absent/ok/drift; o stamp só ocorre via tool, depois do conteúdo existir). Falta: refresh reconciler (merge sem clobber) + relatório navegável + smoke ao vivo no TUI
+[~] Fatia 2: gate de setup determinístico — profile.json + fingerprint de conteúdo (lockfiles/rules/toolcfg) + ensureProfile (created/ok/drift/refreshed) + drift ligado ao stance `stale` do readiness (src/fingerprint.ts, src/profile.ts). Falta o reconciler de merge do conteúdo (depende da Fatia 1)
+[~] Fatia 3: Tier 2 — converge (gray-area-policy) → contract → plan. FEITO: a fase GERA está fiada. `/harness "<feature>"` passo 3 dispara `buildConvergeDispatch` (nativo, Plan via todo) → a skill `feature-converge` autora feature.md + contract.md (frozen), decompõe em tasks e chama **`store_plan`** (src/plan-store-tool.ts), que valida a INVARIANTE DE COBERTURA (cada assertion reivindicada por 1 task) e grava plan.json + status.json (src/plan.ts). Ponte converge→runner: `buildFeatureRun(cwd, featureId)` lê plan.json → planFeatureRun (9 testes). EXECUÇÃO FIADA no padrão nativo TUI: `/harness run` → `buildRunDispatch` (src/run-dispatch.ts) — o modelo, como harness-orchestrator, lê plan.json, cria o **Plan via `todo`** (um por task + 2 ship-gate), spawna um worker por task via **`subagent`** (worker-base → skill → EndFeatureRun), reage aos handoffs, e roda o ship gate (code-review → qa-validator), com **`advisor`** (escalação de verificação) e **`ask_user_question`** (blockers). Adaptativo nos utilitários ativos (DispatchTools). O FeatureRunner code-initiated continua como alternativa headless (bloqueante no TUI). Falta: o gray-area-policy explícito (hoje no feature.md via a skill) e o smoke e2e ao vivo.
+[x] Fatia 4: runner determinístico (ReadinessRunner) — loop sequencial code-initiated, spawn de `pi --print` por passo, state.json/jsonl, attempt budget 5, pause/resume, orphan cleanup; validado com auditoria real (ver docs/02)
+[~] Fatia 5: ship gate (2 steps) — **code-review** + **qa-validator**.
+  - **code-review** (skills/code-review) = review HOLÍSTICO no fim da feature (3 eixos), NÃO per-task: step 0 = gate determinístico (services.yaml test/typecheck/lint, 1x, pega quebra A+B); depois 3 axes em paralelo sobre o diff acumulado — agents/correctness-review + quality-review (genéricos) + conventions-review (lê o **conventions-map** cacheado). Sem per-task LLM (custo: 3 reviewers 1x).
+  - **conventions-map** (Tier-1): nova fase do harness-setup (Phase 9) faz o mapeamento profundo de ADRs/rules/patterns → library/conventions-map.md; refresh no drift (fingerprint `rules`). O conventions-review consome (rápido + profundo).
+  - **qa-validator** (skills/qa-validator) + agents/qa-flow-validator — verificação na superfície real.
+  - CÓDIGO DO RUNNER FEITO (#6b, espelha readiness-runner/spawn, 23 testes): src/feature-runner.ts (engine: planFeatureRun + runLoop + injeção do ship gate code-review→qa-validator 1x + failure→orchestrator_turn + budget 5 + pause/resume + orphan + insertFixTask), src/worker-bootstrap.ts (o `Man`), src/handoff.ts (recordHandoff/handoffOutcome), src/endfeaturerun-tool.ts (tool EndFeatureRun), src/feature-spawn.ts (makeRealSpawn de `pi --print`).
+  - Falta: fiar converge(Slice 3)→runner no /harness; a fase Phase 9 do setup gerar o conventions-map num run real; smoke e2e com `pi --print` real.
+
+[note] Cérebro do orchestrator: skills/harness-orchestrator, skills/feature-converge (contract authoring), skills/worker-base.
 ```
 
 Cada fatia prova-se sozinha. Não automatiza loop sobre peça não-provada.

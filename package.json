@@ -5,7 +5,8 @@
   "type": "module",
   "keywords": ["pi-package", "pi", "pi-coding-agent", "harness", "spec-driven"],
   "pi": {
-    "extensions": ["./src/extension/index.ts"]
+    "extensions": ["./src/extension/index.ts"],
+    "skills": ["./skills"]
   },
   "scripts": {
     "test": "node --experimental-strip-types --test test/*.test.ts"
