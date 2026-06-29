@@ -67,7 +67,7 @@ function clearModeChrome(ctx: ExtensionContext): void {
 }
 
 /**
- * Contribui os agentes dedicados (readiness-auditor/remediator) pro pi-subagents
+ * Contribui os agentes dedicados (harness-readiness-auditor/remediator) pro pi-subagents
  * via PI_SUBAGENT_EXTRA_AGENT_DIRS — sem escrever no repo do usuário. pi-subagents
  * lê esse env na descoberta (por chamada de subagent), então setar no load basta.
  */
@@ -97,7 +97,7 @@ export default function registerHarnessExtension(pi: ExtensionAPI): void {
 	registerPlanStoreTool(pi);
 	// store_lesson — a camada de lições auto-melhorável (grounded em sinais do ship gate).
 	registerLessonsStoreTool(pi);
-	// Agentes dedicados pro pi-subagents (readiness-auditor / readiness-remediator).
+	// Agentes dedicados pro pi-subagents (harness-readiness-auditor / harness-readiness-remediator).
 	contributeAgentsDir();
 
 	// DISPATCH NATIVO (model-driven, in-session) — o jeito nativo: os tool calls

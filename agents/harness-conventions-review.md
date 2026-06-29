@@ -1,5 +1,5 @@
 ---
-name: conventions-review
+name: harness-conventions-review
 description: Conventions review axis — strict conformance review of a diff against THIS repo's own review-enforced rules and ADRs, read from the cached conventions-map (.harness/profile/library/conventions-map.md) built at setup. Repo-aligned, not generic. Spawned by the harness-code-review ship-gate orchestrator.
 systemPromptMode: append
 inheritProjectContext: true

@@ -155,14 +155,14 @@ Dois slash-commands portados como comandos próprios, agora com **sessões
 isoladas** (via `pi-subagents`) pra alinhar a coordenação com o referência:
 
 - **`/readiness-report`** (estágio create) — dispara o **agente dedicado
-  `readiness-auditor`** numa sessão isolada fresh-context, espelhando a sessão
+  `harness-readiness-auditor`** numa sessão isolada fresh-context, espelhando a sessão
   dedicada `readiness-evaluation` (auditor de referência) do referência:
-  `subagent({ agent: "readiness-auditor", async: true, task: … })` que termina
+  `subagent({ agent: "harness-readiness-auditor", async: true, task: … })` que termina
   chamando `store_agent_readiness_report`. (gate `reaudit` = mesmo caminho.)
 - **`/readiness-fix [args]`** — port 1:1 do a referência (3 variantes: sem report →
   audit; report+args → match semântico; report+sem args → AskUser categoria/sinal).
   Texto verbatim. **+ camada de orquestração** (nossa): cada fix roda no **agente
-  dedicado `readiness-remediator` por critério, em sequência**, espelhando as
+  dedicado `harness-readiness-remediator` por critério, em sequência**, espelhando as
   sessões `readiness-remediation`; progresso rastreado com **rpiv-todo** (um todo
   por critério). (gate `fix` = mesmo caminho, args vazio.)
 
@@ -174,8 +174,8 @@ dedicados (em `agents/`, contribuídos pro pi-subagents via
 
 | Agente | Tools | Contexto | Papel |
 |---|---|---|---|
-| `readiness-auditor` | read/grep/find/ls/bash **+ store_agent_readiness_report** (sem edit/write) | fresh | roda a skill harness-readiness-audit, grava o snapshot; **não modifica o repo** |
-| `readiness-remediator` | read/grep/find/ls/bash **+ edit/write** | fresh | corrige **um** sinal falhando por sessão |
+| `harness-readiness-auditor` | read/grep/find/ls/bash **+ store_agent_readiness_report** (sem edit/write) | fresh | roda a skill harness-readiness-audit, grava o snapshot; **não modifica o repo** |
+| `harness-readiness-remediator` | read/grep/find/ls/bash **+ edit/write** | fresh | corrige **um** sinal falhando por sessão |
 
 ### Coordenação: ReadinessRunner = runner de referência 1:1 (code-initiated)
 
@@ -220,7 +220,7 @@ Plan · 1/5
 ```
 
 O fix (`/readiness-fix`) idem: uma todo por sinal falhando, cada fix opcionalmente
-isolado num `subagent` (agent `readiness-remediator`).
+isolado num `subagent` (agent `harness-readiness-remediator`).
 
 ### Alternativa headless: ReadinessRunner (code-initiated, runner de referência 1:1)
 

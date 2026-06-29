@@ -64,7 +64,7 @@ export function buildFixDispatch(args: string, tools: DispatchTools = {}): strin
 	const todoStart = tools.todo ? " mark its todo in_progress;" : "";
 	const todoDone = tools.todo ? " then mark the todo completed." : "";
 	const isolate = tools.subagent
-		? " For isolation, delegate each fix to a fresh `subagent` (agent: readiness-remediator)."
+		? " For isolation, delegate each fix to a fresh `subagent` (agent: harness-readiness-remediator)."
 		: "";
 	return [
 		`Fix ${scope}, live in this session.`,

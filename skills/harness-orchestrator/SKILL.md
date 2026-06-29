@@ -177,7 +177,7 @@ Tasks execute in `plan.json` array order — first pending runs next. Place foun
 ## Validation Strategy
 ### The Ship Gate (per feature)
 When all implementation tasks in `plan.json` complete, the runner injects **two sequential gate steps**:
-1. **harness-code-review** (scrutiny analog) — runs the programmatic gate (`services.yaml` `test`/`typecheck`/`lint`) **once** over the integrated result, then launches three review axes in parallel over the feature's accumulated diff (`correctness-review`, `quality-review`, `conventions-review` — the last reads the cached conventions-map), and synthesizes. No per-task LLM review. Any blocking finding → fail.
+1. **harness-code-review** (scrutiny analog) — runs the programmatic gate (`services.yaml` `test`/`typecheck`/`lint`) **once** over the integrated result, then launches three review axes in parallel over the feature's accumulated diff (`harness-correctness-review`, `harness-quality-review`, `harness-conventions-review` — the last reads the cached conventions-map), and synthesizes. No per-task LLM review. Any blocking finding → fail.
 2. **harness-qa-validator** (user-testing analog) — determines testable assertions from tasks' `fulfills`, sets up the environment, spawns flow-validator subagents to black-box each assertion through the real surface, updates status. Returns success only if every in-scope assertion passed.
 **Handling gate failures:** the failed gate step returns to you; delegate analysis, create **fix tasks at the top of `plan.json`**, then hand control back — the gate re-runs and only re-checks what failed.
 **The runner injects the gate** — never hand-create harness-code-review/harness-qa-validator tasks in `plan.json` yourself (you'd cause duplicate gate runs).

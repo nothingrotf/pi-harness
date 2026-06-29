@@ -37,13 +37,13 @@ test("buildFixDispatch: args + todo + subagent → match semântico, todo por si
 	const m = buildFixDispatch("lint and tests", { todo: true, subagent: true });
 	assert.match(m, /matching "lint and tests"/);
 	assert.match(m, /one `todo` per signal/);
-	assert.match(m, /readiness-remediator/);
+	assert.match(m, /harness-readiness-remediator/);
 	assert.match(m, /no gaming the metric/);
 });
 
 test("buildFixDispatch: sem subagent → não menciona delegação; sem todo → sem todo", () => {
 	const m = buildFixDispatch("x", { todo: false, subagent: false });
-	assert.doesNotMatch(m, /readiness-remediator/);
+	assert.doesNotMatch(m, /harness-readiness-remediator/);
 	assert.doesNotMatch(m, /`todo`/);
 	assert.match(m, /GENUINE, substantive fix/);
 });

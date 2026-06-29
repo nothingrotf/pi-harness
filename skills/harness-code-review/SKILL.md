@@ -37,9 +37,9 @@ is large.
 Spawn all three via the **`subagent` tool** (pi-subagents) **in the same message** — they run as
 isolated fresh-context sessions and are **visible live in the UI**. Pass each the **same** scoped
 diff + file contents (`### Git / diff output` and `### Changed file contents`):
-- `correctness-review` — bugs, breaking changes, security, devex regressions, feature-flag leaks. **Generic.**
-- `quality-review` — maintainability, structure, file-size growth, spaghetti, abstractions, code-judo. **Generic.**
-- `conventions-review` — conformance to THIS repo's rules/ADRs via the cached
+- `harness-correctness-review` — bugs, breaking changes, security, devex regressions, feature-flag leaks. **Generic.**
+- `harness-quality-review` — maintainability, structure, file-size growth, spaghetti, abstractions, code-judo. **Generic.**
+- `harness-conventions-review` — conformance to THIS repo's rules/ADRs via the cached
   **`.harness/profile/library/conventions-map.md`** (and the live rule/ADR files it indexes).
   Tell it where the map is. **Repo-aligned.**
 

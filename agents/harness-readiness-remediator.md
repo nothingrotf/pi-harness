@@ -1,5 +1,5 @@
 ---
-name: readiness-remediator
+name: harness-readiness-remediator
 description: Dedicated Agent-Readiness remediator — fixes exactly ONE failing readiness signal with a genuine, substantive improvement in a fresh isolated session. Mirrors the reference's per-criterion readiness-remediation session.
 systemPromptMode: append
 inheritProjectContext: true

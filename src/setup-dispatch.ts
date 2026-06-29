@@ -45,13 +45,13 @@ export function buildSetupDispatch(tools: DispatchTools = {}): string {
 
 /**
  * Focused Phase-9 dispatch: (re)generate JUST the cached conventions-map the ship-gate
- * conventions-review consumes — so it never re-discovers the repo's rules per feature.
+ * harness-conventions-review consumes — so it never re-discovers the repo's rules per feature.
  * Reusable standalone: full setup (Phase 9), a `rules`-drift refresh (reconcile marks
  * conventions-map.md → regenerate), and the smoke. Model-driven (deep mapping delegated).
  */
 export function buildConventionsMapDispatch(tools: DispatchTools = {}): string {
 	const lines = [
-		"Build (or refresh) the cached conventions-map for THIS repository — the index the ship-gate conventions-review reads so it never re-discovers the repo's rules per feature.",
+		"Build (or refresh) the cached conventions-map for THIS repository — the index the ship-gate harness-conventions-review reads so it never re-discovers the repo's rules per feature.",
 		"",
 		"Do a thorough pass (search broadly by term, not just fixed paths) and index the repo's review-enforced conventions:",
 		"- ADRs (docs/adr/, docs/decisions/, **/ADR-*.md, an ADR index): id, title, status (accepted/superseded/proposed), what it decides, and a file:line anchor.",

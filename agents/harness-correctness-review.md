@@ -1,5 +1,5 @@
 ---
-name: correctness-review
+name: harness-correctness-review
 description: Correctness & security review axis — diff-scoped audit for bugs, breaking changes, security, devex regressions, feature-flag leaks. Generic (no repo setup needed). Spawned by the harness-code-review ship-gate orchestrator.
 systemPromptMode: append
 inheritProjectContext: true

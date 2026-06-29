@@ -18,18 +18,18 @@ function frontmatter(file: string): Record<string, string> {
 	return fm;
 }
 
-test("readiness-auditor: read-only + store tool, fresh, liga a skill", () => {
-	const fm = frontmatter("readiness-auditor.md");
-	assert.equal(fm.name, "readiness-auditor");
+test("harness-readiness-auditor: read-only + store tool, fresh, liga a skill", () => {
+	const fm = frontmatter("harness-readiness-auditor.md");
+	assert.equal(fm.name, "harness-readiness-auditor");
 	assert.equal(fm.defaultContext, "fresh");
 	assert.match(fm.tools, /store_agent_readiness_report/);
 	assert.doesNotMatch(fm.tools, /\bedit\b|\bwrite\b/, "auditor não modifica o repo");
 	assert.match(fm.skills, /harness-readiness-audit/);
 });
 
-test("readiness-remediator: pode editar, fresh", () => {
-	const fm = frontmatter("readiness-remediator.md");
-	assert.equal(fm.name, "readiness-remediator");
+test("harness-readiness-remediator: pode editar, fresh", () => {
+	const fm = frontmatter("harness-readiness-remediator.md");
+	assert.equal(fm.name, "harness-readiness-remediator");
 	assert.equal(fm.defaultContext, "fresh");
 	assert.match(fm.tools, /\bedit\b/);
 	assert.match(fm.tools, /\bwrite\b/);

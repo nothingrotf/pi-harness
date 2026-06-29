@@ -35,7 +35,7 @@ const SCOPE: Record<string, ArtifactPlan[]> = {
 		{ file: "architecture.md", strategy: "propose-diff", reason: "dependency set changed — propose a diff in machine-generated regions only" },
 	],
 	rules: [
-		{ file: "library/conventions-map.md", strategy: "regenerate", reason: "rules/ADRs changed — re-map conventions (the conventions-review consumes this)" },
+		{ file: "library/conventions-map.md", strategy: "regenerate", reason: "rules/ADRs changed — re-map conventions (the harness-conventions-review consumes this)" },
 		{ file: "harness.md", strategy: "propose-diff", reason: "rules changed — the operational overlay may need updating; preserve human-curated prose" },
 		{ file: "skills/", strategy: "review", reason: "rules changed — worker skills may encode old conventions; update, don't rewrite" },
 	],

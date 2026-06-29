@@ -52,7 +52,7 @@ export function failingSignals(snapshot: ReadinessSnapshot): FailingSignal[] {
 }
 
 /**
- * Prompt de remediação de UM critério (pro child readiness-remediator code-spawned).
+ * Prompt de remediação de UM critério (pro child harness-readiness-remediator code-spawned).
  * Header + o sinal renderizado (com Description + Evaluation instructions do
  * criteria.json) + Fix Instructions/Quality Standards verbatim (a referência).
  */
@@ -120,7 +120,7 @@ Run fixes in ISOLATION, one per criterion, mirroring the reference's per-criteri
 2. For each signal, in sequence (keep writes single-threaded):
    - mark it in_progress: \`todo({ action: "update", id, status: "in_progress" })\`;
    - spawn the dedicated remediator in its own isolated session:
-     \`subagent({ agent: "readiness-remediator", async: true, task: "Fix the readiness signal <id> (<name>). Use that signal's Description and Evaluation instructions from the list above. Follow the Fix Instructions and CRITICAL Quality Standards above — genuine improvement, no gaming. Report exactly what changed." })\`;
+     \`subagent({ agent: "harness-readiness-remediator", async: true, task: "Fix the readiness signal <id> (<name>). Use that signal's Description and Evaluation instructions from the list above. Follow the Fix Instructions and CRITICAL Quality Standards above — genuine improvement, no gaming. Report exactly what changed." })\`;
    - when it returns, mark it completed: \`todo({ action: "update", id, status: "completed" })\`.
 3. Do NOT run multiple writer workers concurrently on the same worktree.
 4. After all fixes, suggest running /readiness-report to re-audit and confirm the new level.`;

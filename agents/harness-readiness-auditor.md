@@ -1,5 +1,5 @@
 ---
-name: readiness-auditor
+name: harness-readiness-auditor
 description: Dedicated Agent-Readiness auditor — runs the harness-readiness-audit skill (82 criteria, 5 phases) in a fresh isolated session and stores the local snapshot.
 systemPromptMode: append
 inheritProjectContext: true

@@ -61,10 +61,10 @@ resources NOW** (accounts, data dirs, extra ports). Ensure a `## Flow Validator 
 off-limits resources, safe-concurrency constraints).
 
 ## 4) Spawn flow-validator subagents via the `subagent` tool
-Spawn each group via `subagent` (agent: `qa-flow-validator` — visible in the UI):
+Spawn each group via `subagent` (agent: `harness-qa-flow-validator` — visible in the UI):
 ```
 subagent({
-  agent: "qa-flow-validator",
+  agent: "harness-qa-flow-validator",
   description: "Test assertions <group-name>",
   prompt: `Test contract assertions for feature "<feature-id>".
     Assigned assertions: <assertion-ids>.
