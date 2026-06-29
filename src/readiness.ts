@@ -228,6 +228,94 @@ export function summarizeSnapshot(snapshot: ReadinessSnapshot): string {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Relatório completo navegável (puro; string[] — o caller mostra em painel/print)
+
+export type CriterionStatus = "pass" | "fail" | "partial" | "skip";
+const STATUS_SYMBOL: Record<CriterionStatus, string> = { pass: "✓", fail: "✗", partial: "◐", skip: "⊘" };
+
+/** Status de um critério: app-scope pode ser parcial (0<num<den); null = skipped. */
+export function criterionStatus(ev: CriterionEval): CriterionStatus {
+	if (ev.num === null) return "skip";
+	const den = ev.den > 0 ? ev.den : 1;
+	if (ev.num >= den) return "pass";
+	if (ev.num <= 0) return "fail";
+	return "partial";
+}
+
+/**
+ * Renderiza o relatório completo: medidor de nível + contagem, depois uma seção por
+ * categoria (mais fraca primeiro), cada critério com ✓/✗/◐/⊘ + id + nome + nível +
+ * (ratio app-scope) + (motivo do skip) + rationale truncada. Determinístico e testável
+ * sem TUI; é o que a ação "View full report" mostra.
+ */
+export function renderReadinessReport(snapshot: ReadinessSnapshot, opts: { targetLevel?: number } = {}): string[] {
+	const target = opts.targetLevel ?? 4;
+	const pct = Math.round(snapshot.passRate * 100);
+	const entries = Object.entries(snapshot.evals);
+	let evaluated = 0;
+	let passed = 0;
+	let skipped = 0;
+	for (const [, ev] of entries) {
+		const s = criterionStatus(ev);
+		if (s === "skip") skipped++;
+		else {
+			evaluated++;
+			if (s === "pass") passed++;
+		}
+	}
+
+	const lines: string[] = [];
+	lines.push(`Agent Readiness — L${snapshot.level} / L5  ${levelBar(snapshot.level)}  ${pct}%   (target ≥ L${target})`);
+	lines.push(`${entries.length} criteria · ${evaluated} evaluated · ${passed} passed · ${skipped} skipped`);
+	lines.push("");
+
+	// ordem de registry (pra desempate estável dentro da categoria)
+	const regOrder = new Map<string, number>();
+	READINESS_CRITERIA.forEach((c, i) => regOrder.set(c.id, i));
+	const rank = (id: string): number => {
+		const st = criterionStatus(snapshot.evals[id]);
+		const stRank = st === "fail" ? 0 : st === "partial" ? 1 : st === "pass" ? 2 : 3;
+		return stRank * 1000 + (regOrder.get(id) ?? 999);
+	};
+
+	const byCat = new Map<Category, string[]>();
+	for (const [id] of entries) {
+		const crit = CRITERION_BY_ID.get(id);
+		if (!crit) continue;
+		byCat.set(crit.category, [...(byCat.get(crit.category) ?? []), id]);
+	}
+
+	const summaries = categorySummaries(snapshot); // mais fraca → mais forte (exclui skipped do total)
+	const seen = new Set<Category>();
+	const emit = (cat: Category): void => {
+		seen.add(cat);
+		const summ = summaries.find((s) => s.category === cat);
+		const pN = summ?.passed ?? 0;
+		const tN = summ?.total ?? 0;
+		lines.push(`${ratioBar(pN, tN)} ${String(cat).padEnd(14)} ${pN}/${tN}`);
+		for (const id of (byCat.get(cat) ?? []).slice().sort((a, b) => rank(a) - rank(b))) {
+			const crit = CRITERION_BY_ID.get(id);
+			if (!crit) continue;
+			const ev = snapshot.evals[id];
+			const st = criterionStatus(ev);
+			const ratio = ev.num !== null && ev.den > 1 ? ` ${ev.num}/${ev.den}` : "";
+			const skipNote = st === "skip" ? (crit.cloudOnly ? "  (skipped: cloud-only)" : "  (skipped)") : "";
+			const rationale = ev.rationale ? `  — ${ev.rationale.length > 80 ? `${ev.rationale.slice(0, 77)}...` : ev.rationale}` : "";
+			lines.push(`  ${STATUS_SYMBOL[st]} ${id.padEnd(26)} ${crit.name.padEnd(28)} [L${crit.level}]${ratio}${skipNote}${rationale}`);
+		}
+		lines.push("");
+	};
+	for (const s of summaries) emit(s.category); // categorias com sinais avaliados, mais fraca primeiro
+	for (const cat of byCat.keys()) if (!seen.has(cat)) emit(cat); // categorias 100% skipped, ao fim
+	return lines;
+}
+
+/** Conveniência: o relatório como texto (uma string). */
+export function renderReadinessReportText(snapshot: ReadinessSnapshot, opts: { targetLevel?: number } = {}): string {
+	return renderReadinessReport(snapshot, opts).join("\n");
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Gate view model (o que o readiness-gate.ts renderiza)
 
 export type GateActionValue = "fix" | "report" | "proceed" | "cancel" | "reaudit";

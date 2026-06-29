@@ -11,6 +11,10 @@ import {
 	levelFromPassRate,
 	ratioBar,
 	READINESS_CRITERIA,
+	CLOUD_ONLY_IDS,
+	criterionStatus,
+	renderReadinessReport,
+	renderReadinessReportText,
 	summarizeSnapshot,
 	validateReport,
 	type CriterionEval,
@@ -31,6 +35,49 @@ function fullReport(apps = 1): ReadinessReport {
 	}
 	return { evals, apps };
 }
+
+test("criterionStatus: pass/fail/partial/skip (app-scope parcial)", () => {
+	assert.equal(criterionStatus({ num: 1, den: 1 }), "pass");
+	assert.equal(criterionStatus({ num: 2, den: 2 }), "pass");
+	assert.equal(criterionStatus({ num: 0, den: 1 }), "fail");
+	assert.equal(criterionStatus({ num: 1, den: 3 }), "partial");
+	assert.equal(criterionStatus({ num: null, den: 1 }), "skip");
+});
+
+test("renderReadinessReport: medidor + contagem + seções por categoria, mais fraca primeiro", () => {
+	const evals: Record<string, CriterionEval> = {
+		readme: { num: 1, den: 1, rationale: "present" }, // pass, docs
+		env_template: { num: 0, den: 1, rationale: "no .env.example" }, // fail, dev_env
+		gitignore_comprehensive: { num: 1, den: 1 }, // pass, security
+		unit_tests_exist: { num: 0, den: 2 }, // fail, testing (app-scope)
+		formatter: { num: 1, den: 2 }, // partial, style (app-scope)
+		[CLOUD_ONLY_IDS[0]]: { num: null, den: 1 }, // skip (cloud-only)
+	};
+	const report = renderReadinessReportText(snapshot(2, 0.45, evals), { targetLevel: 4 });
+
+	// header + contagem
+	assert.match(report, /L2 \/ L5/);
+	assert.match(report, /45%/);
+	assert.match(report, /target ≥ L4/);
+	assert.match(report, /6 criteria · 5 evaluated · 2 passed · 1 skipped/);
+
+	// símbolos por status
+	assert.match(report, /✓ readme/);
+	assert.match(report, /✗ env_template/);
+	assert.match(report, /◐ formatter\s+Code Formatter\s+\[L1\] 1\/2/);
+	assert.match(report, /⊘ .+\(skipped: cloud-only\)/);
+
+	// weakest-first: uma categoria 0/1 (testing) vem antes de uma 1/1 (security)
+	assert.ok(report.indexOf("testing") < report.indexOf("security"), "categoria fraca antes da forte");
+	// rationale truncada/anexada
+	assert.match(report, /✗ env_template\s+Environment Template\s+\[L1\]  — no \.env\.example/);
+});
+
+test("renderReadinessReport: snapshot só com skipped — categoria aparece, 0 evaluated", () => {
+	const lines = renderReadinessReport(snapshot(1, 0, { [CLOUD_ONLY_IDS[0]]: { num: null, den: 1 } }));
+	assert.ok(lines[1].includes("1 criteria · 0 evaluated · 0 passed · 1 skipped"));
+	assert.ok(lines.some((l) => l.includes("⊘")), "mostra o critério skipped");
+});
 
 test("READINESS_CRITERIA: catálogo 1:1 de 82 com ids únicos e 20 cloudOnly", () => {
 	assert.equal(READINESS_CRITERIA.length, 82);

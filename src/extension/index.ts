@@ -264,7 +264,14 @@ export default function registerHarnessExtension(pi: ExtensionAPI): void {
 				return;
 			}
 			if (action === "report") {
-				ctx.ui.notify(snapshot ? `readiness: ${summarizeSnapshot(snapshot)}` : "No snapshot — run the audit first.");
+				if (!snapshot) {
+					ctx.ui.notify("No snapshot — run the audit first.", "warning");
+				} else if (ctx.hasUI) {
+					const { showReadinessReport } = await import("../readiness-report-view.ts");
+					await showReadinessReport(ctx, snapshot, { targetLevel: READINESS_TARGET_LEVEL });
+				} else {
+					ctx.ui.notify(`readiness: ${summarizeSnapshot(snapshot)}`);
+				}
 				return;
 			}
 
