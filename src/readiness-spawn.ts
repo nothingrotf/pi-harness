@@ -23,7 +23,7 @@ const TOOLS_AUDIT = "read,grep,find,ls,bash,store_agent_readiness_report";
 const TOOLS_FIX = "read,grep,find,ls,bash,edit,write";
 
 function skillDir(): string {
-	return fileURLToPath(new URL("../skills/readiness-audit", import.meta.url));
+	return fileURLToPath(new URL("../skills/harness-readiness-audit", import.meta.url));
 }
 
 /**

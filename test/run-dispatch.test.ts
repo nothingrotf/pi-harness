@@ -9,17 +9,17 @@ test("buildRunDispatch: todos os utilitários ativos → TODO + subagent + advis
 	assert.match(m, /status\.json/);
 	// TODO Plan: um por task + 2 ship-gate todos
 	assert.match(m, /`todo` tool/);
-	assert.match(m, /ship gate: code-review/);
-	assert.match(m, /ship gate: qa-validator/);
+	assert.match(m, /ship gate: harness-code-review/);
+	assert.match(m, /ship gate: harness-qa-validator/);
 	// worker via subagent (agente dedicado harness-worker), sequencial
 	assert.match(m, /`subagent` tool/);
 	assert.match(m, /agent: `harness-worker`/);
-	assert.match(m, /worker-base/);
+	assert.match(m, /harness-worker-base/);
 	assert.match(m, /EndFeatureRun/);
 	assert.match(m, /one at a time \(sequential\)/);
 	// ship gate em ordem
-	assert.match(m, /code-review/);
-	assert.match(m, /qa-validator/);
+	assert.match(m, /harness-code-review/);
+	assert.match(m, /harness-qa-validator/);
 	// utilitários reforçados
 	assert.match(m, /`advisor`/);
 	assert.match(m, /ask_user_question/);
@@ -33,8 +33,8 @@ test("buildRunDispatch: sem utilitários → degrada (in-session), ainda roda o 
 	assert.doesNotMatch(m, /`subagent` tool/);
 	assert.doesNotMatch(m, /`advisor`/);
 	assert.match(m, /run the task in-session/);
-	assert.match(m, /code-review/);
-	assert.match(m, /qa-validator/);
+	assert.match(m, /harness-code-review/);
+	assert.match(m, /harness-qa-validator/);
 	assert.match(m, /plan\.json/);
 	assert.match(m, /return to the user with the specific blocker/);
 });

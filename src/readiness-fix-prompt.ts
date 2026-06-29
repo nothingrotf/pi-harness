@@ -17,7 +17,7 @@ function criteriaData(): Map<string, { description: string; instructions: string
 	if (CRITERIA_DATA) return CRITERIA_DATA;
 	CRITERIA_DATA = new Map();
 	try {
-		const url = new URL("../skills/readiness-audit/criteria.json", import.meta.url);
+		const url = new URL("../skills/harness-readiness-audit/criteria.json", import.meta.url);
 		const arr = JSON.parse(fs.readFileSync(url, "utf8")) as Array<{ id: string; description: string; instructions: string }>;
 		for (const c of arr) CRITERIA_DATA.set(c.id, { description: c.description, instructions: c.instructions });
 	} catch {

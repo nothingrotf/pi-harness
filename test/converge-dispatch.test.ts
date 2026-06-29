@@ -9,11 +9,11 @@ test("CONVERGE_PHASES: 5 fases (size+entender → store_plan)", () => {
 	assert.match(CONVERGE_PHASES[CONVERGE_PHASES.length - 1], /store_plan/);
 });
 
-test("buildConvergeDispatch: com todo → Plan + feature-converge + artefatos + store_plan + clear", () => {
+test("buildConvergeDispatch: com todo → Plan + harness-feature-converge + artefatos + store_plan + clear", () => {
 	const m = buildConvergeDispatch("add user login", "add-user-login", { todo: true });
 	assert.match(m, /`todo` tool/);
 	for (const p of CONVERGE_PHASES) assert.ok(m.includes(p), `falta fase: ${p}`);
-	assert.match(m, /feature-converge/);
+	assert.match(m, /harness-feature-converge/);
 	assert.match(m, /add user login/); // a request aparece
 	assert.match(m, /\.harness\/runs\/add-user-login\//);
 	assert.match(m, /feature\.md/);
@@ -34,7 +34,7 @@ test("buildConvergeDispatch: sem todo → sem Plan/clear, ainda roda a skill + s
 	const m = buildConvergeDispatch("x", "x", { todo: false });
 	assert.doesNotMatch(m, /`todo` tool/);
 	assert.doesNotMatch(m, /clear the plan/);
-	assert.match(m, /feature-converge/);
+	assert.match(m, /harness-feature-converge/);
 	assert.match(m, /store_plan/);
 });
 

@@ -1,9 +1,9 @@
 ---
-name: qa-validator
+name: harness-qa-validator
 description: Ship-gate step 2 (user-testing analog). Tests the feature through its real user surface — determines testable assertions from tasks' fulfills, sets up the env, plans isolation/concurrency, spawns flow-validator subagents, synthesizes results, updates status. Runner-injected; always returns to orchestrator.
 ---
 
-# qa-validator — the user-surface ship gate (user testing)
+# harness-qa-validator — the user-surface ship gate (user testing)
 
 You validate a feature by testing it through its **real user surface** — the same interface a
 real user touches. You handle setup, determine what to test, spawn flow validators via the

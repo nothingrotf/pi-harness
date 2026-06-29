@@ -9,7 +9,7 @@ You author the **cached repo profile** — the expensive, generate-once,
 reusable-across-features layer (stable between features; the team commits, versions,
 and reviews it). This is the planning + worker-design method, pointed at a
 **profile**: **no per-feature plan/contract here** — those are per-feature
-(`feature-converge`).
+(`harness-feature-converge`).
 
 All artifacts go in **`.harness/profile/`**. Do **not** rewrite the repo's own
 `AGENTS.md` / `.agents/rules/` / `docs/adr/` — those govern code; you READ and defer to
@@ -43,7 +43,7 @@ from the repo — don't impose a template.
 **Readiness first (the profile consumes + triggers it):** read
 `.harness/profile/readiness.json` if it exists — its **level + weakest categories** tell you
 where the repo is thin, so you focus extraction/derivation there. If it's **absent**, run the
-`readiness-audit` skill now to compute it before continuing. Carry the level + weak areas into
+`harness-readiness-audit` skill now to compute it before continuing. Carry the level + weak areas into
 `repo-facts.md` (Phase 8) and let them prioritize the conventions-map (Phase 9).
 
 ## Phase 1 — Understand & Plan (iterative)
@@ -82,7 +82,7 @@ If the repo needs external integrations to be validated end-to-end, document wha
 required: env var names + placeholders (so the user has somewhere to put them), with
 clear setup steps. **Never commit secrets** — gitignore them. Note any deferred
 credentials. (Profile-level = *what the repo needs*; per-feature credential setup
-happens in `feature-converge`.)
+happens in `harness-feature-converge`.)
 
 ## Phase 5 — harness.md (operational overlay)
 
@@ -94,9 +94,9 @@ collide with the repo's own). Include:
 - **Testing & Validation Guidance** — the **Programmatic Validation Plan**: the exact
   `test`/`typecheck`/`lint` the ship gate runs verbatim, PLUS worker-scoping guidance
   (how workers scope those commands before handoff, e.g. package-level typecheck, area-scoped tests). Validators treat this section as authoritative.
-  **Test-authoring philosophy is the `generate-tests` skill** (behavior-driven, thin/fat
+  **Test-authoring philosophy is the `harness-generate-tests` skill** (behavior-driven, thin/fat
   classification, mock only at the boundary, mutation-killed = covered): thin/orchestration code
-  is covered by the qa-validator E2E surface (no internal-mock unit test), fat/business-rule code
+  is covered by the harness-qa-validator E2E surface (no internal-mock unit test), fat/business-rule code
   gets focused per-rule tests. Reference it here so workers and validators share one standard;
   do NOT impose blanket per-layer coverage quotas.
 
@@ -108,11 +108,11 @@ Design the worker **types this REPO needs** — one per distinct layer/domain
 
 1. **YAML frontmatter** — name, description.
 2. **Required Skills & Tools** — everything the worker must use (binding choices included). "None" if N/A.
-3. **Work Procedure** — step-by-step: **TDD (red→green)** — for the test-authoring step the worker **invokes the `generate-tests` skill** (classify thin/fat → fat = behavior tests, thin = qa-validator E2E coverage → adequacy review → discrimination/mutation sensor), **manual verification** (tests are necessary, not sufficient), **no orphaned processes** (no watch mode; kill by PID what you started), ending in the **verified gate** from `services.yaml`.
+3. **Work Procedure** — step-by-step: **TDD (red→green)** — for the test-authoring step the worker **invokes the `harness-generate-tests` skill** (classify thin/fat → fat = behavior tests, thin = harness-qa-validator E2E coverage → adequacy review → discrimination/mutation sensor), **manual verification** (tests are necessary, not sufficient), **no orphaned processes** (no watch mode; kill by PID what you started), ending in the **verified gate** from `services.yaml`.
 4. **Example Handoff** — a complete, realistic handoff. **This defines the upper bound of worker effort** — workers pattern-match against it. Show the schema: `salientSummary`, `whatWasImplemented`, `whatWasLeftUndone`, `verification.commandsRun[{command,exitCode,observation}]`, `verification.interactiveChecks`, `tests.added[{file,cases}]`, `discoveredIssues[{severity,description,suggestedFix?}]`.
 5. **When to Return to Orchestrator** — skill-specific conditions.
 
-NOTE in each skill: startup/cleanup are handled by `worker-base` — the skill defines the WORK PROCEDURE only.
+NOTE in each skill: startup/cleanup are handled by `harness-worker-base` — the skill defines the WORK PROCEDURE only.
 
 ## Phase 7 — Profile Readiness Check (verify-by-execution) — REQUIRED
 

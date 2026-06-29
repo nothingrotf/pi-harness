@@ -1,10 +1,10 @@
 /**
  * Pipeline de criação do snapshot de readiness — os estágios determinísticos em
- * volta do auditor LLM (skills/readiness-audit). Espelha o create→ensure→validate
+ * volta do auditor LLM (skills/harness-readiness-audit). Espelha o create→ensure→validate
  * →store do referência (modelo de referência) adaptado pra storage LOCAL.
  *
  *   ensure   (este módulo)         — preflight: inputs existem/graváveis
- *   create   (skills/readiness-audit) — o auditor LLM produz o report (5 fases)
+ *   create   (skills/harness-readiness-audit) — o auditor LLM produz o report (5 fases)
  *   validate (readiness.ts)        — validateReport: contrato estrito
  *   store    (este módulo)         — grava readiness.json + append readiness.jsonl
  *

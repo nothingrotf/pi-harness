@@ -12,7 +12,7 @@ test("buildAuditDispatch: com todo ativo → cria o Plan de 5 fases; sempre skil
 	const m = buildAuditDispatch({ todo: true });
 	assert.match(m, /`todo` tool/);
 	for (const p of AUDIT_PHASES) assert.ok(m.includes(p), `falta a fase: ${p}`);
-	assert.match(m, /readiness-audit/);
+	assert.match(m, /harness-readiness-audit/);
 	assert.match(m, /store_agent_readiness_report/);
 	assert.match(m, /in_progress → completed/);
 	assert.match(m, /Do not modify the repository/);
@@ -21,7 +21,7 @@ test("buildAuditDispatch: com todo ativo → cria o Plan de 5 fases; sempre skil
 test("buildAuditDispatch: sem todo → sem Plan, mas ainda roda skill + store", () => {
 	const m = buildAuditDispatch({ todo: false });
 	assert.doesNotMatch(m, /`todo` tool/);
-	assert.match(m, /readiness-audit/);
+	assert.match(m, /harness-readiness-audit/);
 	assert.match(m, /store_agent_readiness_report/);
 	assert.match(m, /5 phases/);
 });

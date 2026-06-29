@@ -1,10 +1,10 @@
 ---
 name: harness-worker
-description: Implements ONE assigned task in a fresh isolated session — runs worker-base startup, then the task's profile worker skill, then EndFeatureRun. Spawned by the harness orchestrator (one per plan.json task).
+description: Implements ONE assigned task in a fresh isolated session — runs harness-worker-base startup, then the task's profile worker skill, then EndFeatureRun. Spawned by the harness orchestrator (one per plan.json task).
 systemPromptMode: append
 inheritProjectContext: true
 inheritSkills: false
-skills: worker-base
+skills: harness-worker-base
 tools: read, grep, find, ls, bash, edit, write, EndFeatureRun
 defaultContext: fresh
 ---
@@ -18,7 +18,7 @@ The orchestrator gives you, in the prompt: the **feature id**, your **task** (`i
 is a profile worker skill at `.harness/profile/skills/<skillName>/SKILL.md`.
 
 ## Procedure
-1. **Startup** — the `worker-base` skill is preloaded; follow its Phase 1 (read `feature.md`, the
+1. **Startup** — the `harness-worker-base` skill is preloaded; follow its Phase 1 (read `feature.md`, the
    repo's `AGENTS.md` + `.harness/profile/harness.md`, your task's `fulfills` assertions in
    `contract.md`, `services.yaml`, `plan.json`, `git log`; run `.harness/profile/init.sh`; start
    any services you need). NEVER violate the Boundaries in `harness.md`.
@@ -27,7 +27,7 @@ is a profile worker skill at `.harness/profile/skills/<skillName>/SKILL.md`.
    `services.yaml`). If that skill file doesn't exist, EndFeatureRun with `returnToOrchestrator:
    true`. Stay in scope; note clearly-unrelated issues as `discoveredIssues` (`non_blocking`,
    "Pre-existing:") instead of fixing them.
-3. **Cleanup & handoff** — follow `worker-base` Phase 3: final validation (the gate), stop
+3. **Cleanup & handoff** — follow `harness-worker-base` Phase 3: final validation (the gate), stop
    services you started, commit repository changes (include `commitId` + `repoPath`), additively
    update `services.yaml` if you discovered reusable commands/services.
 4. **EndFeatureRun** — call it exactly once with your structured handoff: `featureId`, `taskId`

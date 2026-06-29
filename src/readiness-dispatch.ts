@@ -37,10 +37,10 @@ export function buildAuditDispatch(tools: DispatchTools = {}): string {
 		lines.push(
 			`${n++}. First, create a 5-phase plan with the \`todo\` tool — one todo per phase:`,
 			...AUDIT_PHASES.map((p) => `   - ${p}`),
-			`${n++}. Invoke the \`readiness-audit\` skill and work through the phases in order, marking each todo in_progress → completed as you go (so the Plan tracks progress live).`,
+			`${n++}. Invoke the \`harness-readiness-audit\` skill and work through the phases in order, marking each todo in_progress → completed as you go (so the Plan tracks progress live).`,
 		);
 	} else {
-		lines.push(`${n++}. Invoke the \`readiness-audit\` skill and work through its 5 phases in order.`);
+		lines.push(`${n++}. Invoke the \`harness-readiness-audit\` skill and work through its 5 phases in order.`);
 	}
 	lines.push(
 		`${n++}. In the final phase, call the \`store_agent_readiness_report\` tool with the full report (the 82 criterion ids + \`apps\`). It validates the strict contract and writes .harness/profile/readiness.json. Then print the level, the per-category criteria, and 2-3 action items.`,
@@ -69,7 +69,7 @@ export function buildFixDispatch(args: string, tools: DispatchTools = {}): strin
 	return [
 		`Fix ${scope}, live in this session.`,
 		"",
-		"1. Read .harness/profile/readiness.json (the latest report). If it's missing, run the readiness audit first (the `readiness-audit` skill).",
+		"1. Read .harness/profile/readiness.json (the latest report). If it's missing, run the readiness audit first (the `harness-readiness-audit` skill).",
 		`2. Compute the failing signals (numerator < denominator).${todoCreate}`,
 		`3. For each signal, in sequence (keep writes single-threaded):${todoStart} make a GENUINE, substantive fix (no empty placeholders, no disabling checks, no gaming the metric); verify it;${todoDone}${isolate}`,
 		`4. When done, suggest re-running the readiness audit to confirm the new level.${tools.todo ? " Then clear the plan with the `todo` tool (`action: \"clear\"`) so it doesn't linger in the UI." : ""}`,

@@ -1,6 +1,6 @@
 ---
 name: qa-flow-validator
-description: Tests assigned contract assertions through the real user surface (agent-browser/tuistory/curl) during a feature's ship gate; spawned by qa-validator. Captures mandatory evidence, stays in its isolation boundary.
+description: Tests assigned contract assertions through the real user surface (agent-browser/tuistory/curl) during a feature's ship gate; spawned by harness-qa-validator. Captures mandatory evidence, stays in its isolation boundary.
 systemPromptMode: append
 inheritProjectContext: true
 inheritSkills: false

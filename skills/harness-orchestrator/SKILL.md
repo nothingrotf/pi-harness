@@ -79,11 +79,11 @@ Your workflow consists of four phases:
 2. **Feature Convergence** - Deeply understand the feature and converge on what "done" means; it is critical that you are meticulous here
 3. **Creating Feature Artifacts** - Author feature.md, contract.md (frozen), and plan.json
 4. **Managing Execution** - Run the tasks and handle worker returns
-For Profile Setup invoke the `harness-setup` skill (it also designs the worker system). For Feature Convergence invoke the `feature-converge` skill. You MUST invoke these skills - without them, you'll likely set up the feature incorrectly.
+For Profile Setup invoke the `harness-setup` skill (it also designs the worker system). For Feature Convergence invoke the `harness-feature-converge` skill. You MUST invoke these skills - without them, you'll likely set up the feature incorrectly.
 ### 1. Profile Setup & Feature Convergence (CRITICAL)
 **This is the most important phase.** The quality of your planning directly determines feature success. Rushed or shallow planning leads to gaps, rework, and failed features.
 The **initial** profile setup is leveraged extremely heavily by every feature that follows; the feature convergence is leveraged extremely heavily by the rest of the feature. Slow down, gather evidence, and be explicit. Planning is an iterative exploration loop — investigate, enumerate what you still don't know, prioritize the most important unknowns, explore them (via subagents or by asking the user for ambiguous decisions), and repeat until you have a clear plan with no major gaps.
-Follow the `harness-setup` and `feature-converge` skill procedures:
+Follow the `harness-setup` and `harness-feature-converge` skill procedures:
 - Understanding requirements with the user - ask clarifying questions, don't assume
 - Investigating the codebase and technologies - understand existing patterns, research unfamiliar tools (brownfield: EXTRACT what the repo already declares before deriving anything new)
 - Planning infrastructure and boundaries - check what's already running
@@ -99,7 +99,7 @@ The worker types are **profile-level** (stable across features, cached in `.harn
 #### How Workers Execute
 When a worker session starts:
 1. The runner pre-assigns a task to the worker (the first pending task in plan.json).
-2. The worker invokes `worker-base` skill for setup (read feature.md, the repo's AGENTS.md + harness.md, run init, baseline tests).
+2. The worker invokes `harness-worker-base` skill for setup (read feature.md, the repo's AGENTS.md + harness.md, run init, baseline tests).
 3. The worker invokes the specific skill you specified for that task.
 4. Ultimately, the worker returns a structured handoff. If repository code changed, the worker commits those repo changes and includes `commitId` + `repoPath` in the handoff.
 This means skills YOU create only define the work procedure and handoff fields - not the boilerplate.
@@ -109,9 +109,9 @@ You work with the cached profile and the per-feature run directory.
 | Directory | What it is | Files |
 |-----------|------------|-------|
 | **`.harness/profile/`** | The cached repo profile (committed). Stable across features; authored/refreshed by `harness-setup`. | `architecture.md`, `services.yaml`, `init.sh`, `harness.md`, `library/`, `skills/<worker-type>/`, `readiness.json`, `profile.json` |
-| **`.harness/runs/<feature-id>/`** | The per-feature run (gitignored). Ephemeral; authored by `feature-converge`. | `feature.md`, `contract.md`, status, `plan.json`, `state.json`, `progress_log.jsonl`, `handoffs/`, `validation/` |
+| **`.harness/runs/<feature-id>/`** | The per-feature run (gitignored). Ephemeral; authored by `harness-feature-converge`. | `feature.md`, `contract.md`, status, `plan.json`, `state.json`, `progress_log.jsonl`, `handoffs/`, `validation/` |
 | **repo root(s)** | The git repositories where implementation work happens. | implementation code / commits |
-The **detailed schema for every artifact lives in the authoring skill** (`harness-setup` for the profile, `feature-converge` for the run) — not duplicated here. The orchestrator owns the **order, the invariants, and the checklist**:
+The **detailed schema for every artifact lives in the authoring skill** (`harness-setup` for the profile, `harness-feature-converge` for the run) — not duplicated here. The orchestrator owns the **order, the invariants, and the checklist**:
 Create the feature artifacts in this order:
 1. `contract.md` — created first, utilizing subagents (one per area + one for cross-area flows), given `architecture.md` as context. Run at least 1 review pass; continue until a pass finds nothing significant to add. This is feature-level TDD — `plan.json` cannot exist without it. **Core principle: validation is black-box and behavior-based, never derived from implementation.** Once converged, the contract is **FROZEN** = the definition of "done".
 2. status — initialize after the contract is finalized with all assertion IDs `"pending"`.
@@ -128,7 +128,7 @@ Note: `feature.md` (the intent + scope) is authored at the start of convergence.
 - [ ] `skills/<worker-type>/SKILL.md` for each worker type, each with Required Skills & Tools, Work Procedure ending in the verified gate, and a complete Example Handoff
 - [ ] `library/` initialized with topic files incl. `user-testing.md` (with `## Validation Concurrency`)
 - [ ] `readiness.json` present and fresh
-**Feature run (`.harness/runs/<feature-id>/`, via `feature-converge`):**
+**Feature run (`.harness/runs/<feature-id>/`, via `harness-feature-converge`):**
 - [ ] `feature.md` captures intent + scope + every requirement the user mentioned
 - [ ] `contract.md` exists with exhaustive black-box assertions, FROZEN
 - [ ] status initialized with all assertion IDs `"pending"`
@@ -177,17 +177,17 @@ Tasks execute in `plan.json` array order — first pending runs next. Place foun
 ## Validation Strategy
 ### The Ship Gate (per feature)
 When all implementation tasks in `plan.json` complete, the runner injects **two sequential gate steps**:
-1. **code-review** (scrutiny analog) — runs the programmatic gate (`services.yaml` `test`/`typecheck`/`lint`) **once** over the integrated result, then launches three review axes in parallel over the feature's accumulated diff (`correctness-review`, `quality-review`, `conventions-review` — the last reads the cached conventions-map), and synthesizes. No per-task LLM review. Any blocking finding → fail.
-2. **qa-validator** (user-testing analog) — determines testable assertions from tasks' `fulfills`, sets up the environment, spawns flow-validator subagents to black-box each assertion through the real surface, updates status. Returns success only if every in-scope assertion passed.
+1. **harness-code-review** (scrutiny analog) — runs the programmatic gate (`services.yaml` `test`/`typecheck`/`lint`) **once** over the integrated result, then launches three review axes in parallel over the feature's accumulated diff (`correctness-review`, `quality-review`, `conventions-review` — the last reads the cached conventions-map), and synthesizes. No per-task LLM review. Any blocking finding → fail.
+2. **harness-qa-validator** (user-testing analog) — determines testable assertions from tasks' `fulfills`, sets up the environment, spawns flow-validator subagents to black-box each assertion through the real surface, updates status. Returns success only if every in-scope assertion passed.
 **Handling gate failures:** the failed gate step returns to you; delegate analysis, create **fix tasks at the top of `plan.json`**, then hand control back — the gate re-runs and only re-checks what failed.
-**The runner injects the gate** — never hand-create code-review/qa-validator tasks in `plan.json` yourself (you'd cause duplicate gate runs).
+**The runner injects the gate** — never hand-create harness-code-review/harness-qa-validator tasks in `plan.json` yourself (you'd cause duplicate gate runs).
 **Overriding the gate** (well-justified cases only, never silent): mark the gate step complete with a written justification recorded in its synthesis, and move any non-`"passed"` assertions to a follow-up feature so they stay tracked (each assertion still claimed by exactly one task's `fulfills`). Always leave an auditable trail.
-**Learning loop:** when code-review surfaces systemic guidance gaps (`suggestedGuidanceUpdates`), act on them by updating **`harness.md`, the profile worker skills, or the conventions-map** — never the repo's own AGENTS.md. This is how the profile accrues operational knowledge learned across features. (The `appliedUpdates` = already-done FYI vs `suggestedGuidanceUpdates` = needs-your-judgment split, and the user-testing knowledge-persistence detail, live in the code-review/qa-validator skills.)
+**Learning loop:** when harness-code-review surfaces systemic guidance gaps (`suggestedGuidanceUpdates`), act on them by updating **`harness.md`, the profile worker skills, or the conventions-map** — never the repo's own AGENTS.md. This is how the profile accrues operational knowledge learned across features. (The `appliedUpdates` = already-done FYI vs `suggestedGuidanceUpdates` = needs-your-judgment split, and the user-testing knowledge-persistence detail, live in the harness-code-review/harness-qa-validator skills.)
 
 **Lessons (self-improving, cross-feature) — distill after the ship gate.** For each **grounded** failure the ship gate surfaced, record ONE terse, codebase-general lesson via the **`store_lesson`** tool (a clean gate records nothing — no signal, no lesson). Map signal → call:
-- code-review **blocking finding** → `signal: blocking_finding`; qa-validator **failed/blocked assertion** → `failed_assertion`; **programmatic gate fail** → `gate_fail`; a **`// SPEC_DEVIATION`** → `spec_deviation`; a worker **blocking discovered issue** → `discovered_issue`.
+- harness-code-review **blocking finding** → `signal: blocking_finding`; harness-qa-validator **failed/blocked assertion** → `failed_assertion`; **programmatic gate fail** → `gate_fail`; a **`// SPEC_DEVIATION`** → `spec_deviation`; a worker **blocking discovered issue** → `discovered_issue`.
 - `source` is **mandatory** (`file:line` / assertion id / finding ref) — the tool refuses an ungrounded lesson (opinion, not lesson). Phrase the **general rule**, not the incident ("Assert the exact persisted status value, not just that the field exists" — never "the test on line 88 was weak"), so recurrences merge.
-- The tool owns IDs, **recurrence across DISTINCT features**, candidate→confirmed promotion (≥2 features), and quarantine; it persists `.harness/profile/lessons.json` + `LESSONS.md`. `feature-converge` and workers **LOAD** the Confirmed lessons before building — so each feature starts smarter (the synergy: the harness learns the repo).
+- The tool owns IDs, **recurrence across DISTINCT features**, candidate→confirmed promotion (≥2 features), and quarantine; it persists `.harness/profile/lessons.json` + `LESSONS.md`. `harness-feature-converge` and workers **LOAD** the Confirmed lessons before building — so each feature starts smarter (the synergy: the harness learns the repo).
 - If a Confirmed lesson was loaded for this feature and the **same** failure recurred anyway, the guidance isn't working → `store_lesson` `action: "penalize"` it (2 penalties → quarantine). Use sparingly, on real repeats.
 ### End-of-Feature Gate
 Before declaring the feature done, check status: ALL assertions must be `"passed"`. Also perform at least one README operation (create/update) unless the user opts out, so it reflects the final state. Delegate README work to subagents; you own the gate.
@@ -199,7 +199,7 @@ We require YOUR active attention. Your role is essential:
 - Steer the feature to success
 You, above anyone else, determine feature success.
 ## Tools Available
-- `harness-setup` / `feature-converge` / `worker-base` skills — invoke for profile setup, convergence, worker startup
+- `harness-setup` / `harness-feature-converge` / `harness-worker-base` skills — invoke for profile setup, convergence, worker startup
 - the **runner** — hand control for blocking, sequential task execution
 - `store_profile` — validate + stamp the profile after authoring (analog of `store_agent_readiness_report`)
 - `store_lesson` — record a grounded lesson from a ship-gate failure (or `penalize` a confirmed one); the self-improving lessons layer (persists `lessons.json` + `LESSONS.md`)
@@ -212,9 +212,9 @@ Architectural Design & Decomposition
 - Workers are given their task, the architecture design doc (`.harness/profile/architecture.md` — authoritative), and the contract (`contract.md`) as their main guidance. Ensure these contain all the information needed for the worker to succeed.
 Scope & Acceptance
 - The contract is the definition of "done". Do not expand scope mid-feature unless the user explicitly requests it.
-- **Convergence depth auto-sizes** to the feature (feature-converge Phase 0: Small→Complex) — but the contract (≥1 frozen black-box assertion), the coverage invariant, and the ship gate run **regardless of size**. Sizing tunes effort, never the guarantees; under-sizing that thins the contract ships unvalidated behavior — when in doubt, size up.
+- **Convergence depth auto-sizes** to the feature (harness-feature-converge Phase 0: Small→Complex) — but the contract (≥1 frozen black-box assertion), the coverage invariant, and the ship gate run **regardless of size**. Sizing tunes effort, never the guarantees; under-sizing that thins the contract ships unvalidated behavior — when in doubt, size up.
 - Write `contract.md` before `plan.json`. Initialize status with all assertion IDs pending.
 - Coverage gate BEFORE running: every assertion ID is claimed by exactly one `plan.json` `fulfills` entry (no duplicates, no orphans).
 Infrastructure Resilience
 - If worker spawn fails due to runtime connection errors: retry once; if it fails again, stop and ask the user to restart, then retry.
-Begin by invoking the `harness-setup` skill (if the profile is absent or stale) and then `feature-converge`.
+Begin by invoking the `harness-setup` skill (if the profile is absent or stale) and then `harness-feature-converge`.

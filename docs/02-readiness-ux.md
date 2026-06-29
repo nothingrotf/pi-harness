@@ -42,7 +42,7 @@ trilha JSONL auditável. **Tudo abaixo está construído** (Fatia 1).
 | Estágio | Onde | Faz | Gate |
 |---|---|---|---|
 | **ensure** | `readiness-pipeline.ts::ensureReadinessInputs` | preflight: é repo git? `.harness/profile` criável? | bloqueia com motivo |
-| **create** | `skills/readiness-audit/SKILL.md` (auditor LLM, 5 fases) | escaneia repo, descobre apps, avalia 82 critérios | — |
+| **create** | `skills/harness-readiness-audit/SKILL.md` (auditor LLM, 5 fases) | escaneia repo, descobre apps, avalia 82 critérios | — |
 | **validate** | `readiness.ts::validateReport` (chamado pelo store tool) | 82 ids exatos · den por scope · `num=null` só skippable/cloudOnly · rationale ≤500 | rejeita → modelo corrige |
 | **store** | `readiness-store-tool.ts` → `readiness-pipeline.ts::storeReport` | computa level/passRate, grava `readiness.json` + append `readiness.jsonl` | recusa report inválido |
 
@@ -61,7 +61,7 @@ State machine do `status` que o gate lê:
 
 Como o **create** dispara: o comando `/readiness-report` (ou o gate `reaudit`) chama
 `runAudit` → `ensureReadinessInputs` → `pi.sendUserMessage(...)` instruindo o
-modelo a invocar a skill `readiness-audit`; a skill termina chamando a tool
+modelo a invocar a skill `harness-readiness-audit`; a skill termina chamando a tool
 `store_agent_readiness_report` (validate+store em TS confiável).
 
 Trilha auditável (`.harness/profile/readiness.jsonl`):
@@ -119,7 +119,7 @@ puro (`buildGateModel`) e testado; o gate só renderiza.
 
 Catálogo **1:1** do referência: 82 critérios, 9 categorias, 5 níveis, scope
 `repository` (den=1) vs `application` (den=N), `skippable`. Em
-`src/readiness-criteria.ts` (estrutura) + `skills/readiness-audit/criteria.json`
+`src/readiness-criteria.ts` (estrutura) + `skills/harness-readiness-audit/criteria.json`
 (as `instructions` de verificação, cópia verbatim do referência).
 
 **Overlay local `cloudOnly` (20 critérios):** os que só são verificáveis numa
@@ -144,7 +144,7 @@ igual** por critério; bandas L1 0-20 · L2 20-40 · L3 40-60 · L4 60-80 · L5 
 | `src/readiness-fix-prompt.ts` | Port 1:1 do `/readiness-fix` (a referência): `failingSignals` + `buildFixPlan` (3 variantes, anti-gaming verbatim). |
 | `src/readiness-gate.ts` | Painel TUI (`showReadinessGate`). |
 | `src/extension/index.ts` | Registra a tool; comandos `/readiness-report` e `/readiness-fix`; gate lê snapshot → model → ação (`reaudit`→report flow, `fix`→fix flow). |
-| `skills/readiness-audit/` | `SKILL.md` (prompt do auditor **verbatim** do a referência) + `criteria.json` (82 com instructions, 1:1). |
+| `skills/harness-readiness-audit/` | `SKILL.md` (prompt do auditor **verbatim** do a referência) + `criteria.json` (82 com instructions, 1:1). |
 | `test/readiness*.test.ts` | 26 testes: scoring, validate, buildSnapshot, stances, ensure/store/round-trip, failingSignals + 3 variantes do fix. |
 
 ---
@@ -174,7 +174,7 @@ dedicados (em `agents/`, contribuídos pro pi-subagents via
 
 | Agente | Tools | Contexto | Papel |
 |---|---|---|---|
-| `readiness-auditor` | read/grep/find/ls/bash **+ store_agent_readiness_report** (sem edit/write) | fresh | roda a skill readiness-audit, grava o snapshot; **não modifica o repo** |
+| `readiness-auditor` | read/grep/find/ls/bash **+ store_agent_readiness_report** (sem edit/write) | fresh | roda a skill harness-readiness-audit, grava o snapshot; **não modifica o repo** |
 | `readiness-remediator` | read/grep/find/ls/bash **+ edit/write** | fresh | corrige **um** sinal falhando por sessão |
 
 ### Coordenação: ReadinessRunner = runner de referência 1:1 (code-initiated)
@@ -207,7 +207,7 @@ O **default é model-driven nativo** — é o que o modelo de referência mostra
 calls streamam ao vivo na própria sessão e o **rpiv-todo** renderiza o **Plan · X/5**
 (uma todo por fase do auditor). `src/readiness-dispatch.ts` monta a mensagem
 (`pi.sendUserMessage`) que manda o modelo: (1) criar o plano de 5 fases com a tool
-`todo`, (2) rodar a skill `readiness-audit` marcando cada fase in_progress→completed,
+`todo`, (2) rodar a skill `harness-readiness-audit` marcando cada fase in_progress→completed,
 (3) chamar `store_agent_readiness_report` (valida + grava). Zero widget custom, zero
 subprocesso — só compor pi-subagents + rpiv-todo + a skill + a store tool.
 

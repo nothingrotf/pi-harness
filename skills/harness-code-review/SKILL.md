@@ -1,16 +1,16 @@
 ---
-name: code-review
+name: harness-code-review
 description: Ship-gate step 1 — the holistic end-of-feature review. Runs the deterministic programmatic gate once, then launches three review axes in parallel (correctness, code-quality, conventions) over the feature's accumulated diff, and synthesizes. Runner-injected; always returns to orchestrator.
 ---
 
-# code-review — holistic ship gate (correctness · code-quality · conventions)
+# harness-code-review — holistic ship gate (correctness · code-quality · conventions)
 
 You are the end-of-feature review gate, run **once** when all implementation tasks complete —
 not between tasks. You run the deterministic gate, then launch three review axes in parallel
 over the feature's accumulated diff, and synthesize. **Always return to the orchestrator.**
 
 Cost posture (deliberate): there are **no per-task LLM reviews** — each task already verified the
-programmatic gate at handoff (`worker-base`). code-review pays its LLM cost **once**: three parallel
+programmatic gate at handoff (`harness-worker-base`). harness-code-review pays its LLM cost **once**: three parallel
 axis reviewers over the whole diff. Keep it that way.
 
 ## Where things live
@@ -66,7 +66,7 @@ you're confident about (a `services.yaml`/`library` correction) you may apply di
 as `appliedUpdates`.
 
 ## 5) Write synthesis + return to orchestrator
-Write `.harness/runs/<feature-id>/validation/code-review/synthesis.json`:
+Write `.harness/runs/<feature-id>/validation/harness-code-review/synthesis.json`:
 ```json
 {
   "feature": "<feature-id>", "round": 1, "status": "pass" | "fail",
@@ -81,6 +81,6 @@ Write `.harness/runs/<feature-id>/validation/code-review/synthesis.json`:
 Call `EndFeatureRun` with `returnToOrchestrator: true` (always). Blocking findings or a red gate →
 `successState: "failure"`; otherwise `"success"`. Put the synthesis path in `salientSummary`. The
 orchestrator creates fix tasks for blocking findings (re-run only re-checks what failed), acts on
-`suggestedGuidanceUpdates`, then the qa-validator step runs next.
+`suggestedGuidanceUpdates`, then the harness-qa-validator step runs next.
 
 To run a single axis ad-hoc, spawn that one agent directly instead of this orchestrator.

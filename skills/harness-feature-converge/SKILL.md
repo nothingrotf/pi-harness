@@ -1,9 +1,9 @@
 ---
-name: feature-converge
+name: harness-feature-converge
 description: Converge a feature into its frozen acceptance contract and task plan under .harness/runs/<feature-id>/ (feature.md, contract.md FROZEN, status, plan.json). Reads the cached profile; runs per feature.
 ---
 
-# feature-converge — converge on what to build (Tier 2)
+# harness-feature-converge — converge on what to build (Tier 2)
 
 You converge a single feature into the artifacts that define and sequence it. This is
 the **per-feature run** (ephemeral, gitignored) under
@@ -36,7 +36,7 @@ effort**, NEVER the structure. Pick a tier:
 
 > **INVARIANT — never scaled away (regardless of size):** `contract.md` is FROZEN with **≥1
 > black-box assertion**, `store_plan` enforces the coverage invariant (every assertion claimed by
-> exactly one task), and the **ship gate (code-review → qa-validator) always runs**. Auto-sizing
+> exactly one task), and the **ship gate (harness-code-review → harness-qa-validator) always runs**. Auto-sizing
 > tunes the *effort*, not the *guarantees* — a "Small" feature still gets a real contract + plan +
 > gate, just cheaply. There is no path that skips the contract, the coverage gate, or the ship gate.
 
@@ -148,7 +148,7 @@ so they never re-litigate a settled gray area.
 ## Phase 3 — contract.md (the acceptance contract → FROZEN)
 
 The formal contract: a finite checklist of **testable behavioral assertions** that define
-"done". It is the primary input for the qa-validator ship-gate step, and it is authored
+"done". It is the primary input for the harness-qa-validator ship-gate step, and it is authored
 **before** `plan.json` (feature-level TDD).
 
 **Core principle:** validation is **black-box and behavior-based, never derived from
@@ -201,7 +201,7 @@ except via the orchestrator's mid-feature procedure.
 ## Phase 4 — status init
 
 After the contract is finalized, initialize the status record with all assertion IDs set to
-`"pending"`. (Lifecycle: `pending → passed | failed`; the qa-validator writes results; the
+`"pending"`. (Lifecycle: `pending → passed | failed`; the harness-qa-validator writes results; the
 end-of-feature gate requires all `passed`.)
 
 ## Phase 5 — plan.json (ordered tasks)
@@ -234,7 +234,7 @@ complete understanding; for large contracts audit coverage with a subagent first
 in trusted code and persists `plan.json` + `status.json` (assertions `pending`) — do NOT
 hand-write `plan.json`/`status.json`.
 
-**Never create ship-gate tasks** (code-review / qa-validator) — the runner injects them when all
+**Never create ship-gate tasks** (harness-code-review / harness-qa-validator) — the runner injects them when all
 implementation tasks complete. Order foundational tasks first; place urgent fixes at the top.
 
 ## Hand off to the runner

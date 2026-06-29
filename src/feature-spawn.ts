@@ -2,7 +2,7 @@
  * Integração real do FeatureRunner: spawna um WORKER child por step via `pi --print`
  * (processo novo = contexto fresco), o analog code-initiated do spawnWorkerSession do
  * runner de referência. Separado do engine (puro) pra mantê-lo 100% testável com SpawnFn
- * injetado. Aqui vivem: o system prompt do worker (worker-base + a skill, inline,
+ * injetado. Aqui vivem: o system prompt do worker (harness-worker-base + a skill, inline,
  * como o readiness faz com o auditor), os args do `pi --print` (puros) e o spawn real
  * que lê o handoff (EndFeatureRun) pra reportar success ao runner.
  */
@@ -42,16 +42,16 @@ function readSkill(absDir: string): string {
 
 /**
  * System prompt do worker child: as skills relevantes inline (como o readiness inlina
- * o auditor) + o bootstrap + uma nota de runtime. Tasks recebem worker-base + a skill
+ * o auditor) + o bootstrap + uma nota de runtime. Tasks recebem harness-worker-base + a skill
  * do profile (.harness/profile/skills/<name>); ship-gates recebem a skill do validator
- * (skills/<code-review|qa-validator> deste pacote).
+ * (skills/<harness-code-review|harness-qa-validator> deste pacote).
  */
 export function buildWorkerSystemPrompt(step: FeatureStep, cwd: string, opts: { featureId: string; workerSessionId: string }): string {
 	const parts: string[] = [];
 	if (step.kind === "task") {
-		const base = readSkill(path.join(harnessSkillsDir(), "worker-base"));
+		const base = readSkill(path.join(harnessSkillsDir(), "harness-worker-base"));
 		const profileSkill = readSkill(path.join(cwd, ".harness", "profile", "skills", step.skillName));
-		if (base) parts.push("# worker-base\n", base);
+		if (base) parts.push("# harness-worker-base\n", base);
 		if (profileSkill) parts.push(`\n# ${step.skillName}\n`, profileSkill);
 	} else {
 		const validator = readSkill(path.join(harnessSkillsDir(), step.skillName));
@@ -70,7 +70,7 @@ export function piArgs(step: FeatureStep, systemPromptPath: string, model?: stri
 	const tools = step.kind === "task" ? TOOLS_TASK : TOOLS_GATE;
 	const task =
 		step.kind === "task"
-			? "Execute your assigned task per the appended instructions (worker-base, then your skill); call EndFeatureRun when done, then end your turn."
+			? "Execute your assigned task per the appended instructions (harness-worker-base, then your skill); call EndFeatureRun when done, then end your turn."
 			: "Run the ship-gate validator per the appended instructions; call EndFeatureRun (returnToOrchestrator: true) when done, then end your turn.";
 	const args = ["--print", "--mode", "json", "--no-session"];
 	if (model) args.push("--model", model);
@@ -124,11 +124,11 @@ export function makeLineParser(onJson: (obj: unknown) => void): (chunk: string) 
 // ─────────────────────────────────────────────────────────────────────────────
 // Converge child (o elo headless converge→runner — src/headless.ts)
 
-/** System prompt do converge child: a skill feature-converge inline + nota de runtime. */
+/** System prompt do converge child: a skill harness-feature-converge inline + nota de runtime. */
 export function buildConvergeSystemPrompt(featureId: string): string {
-	const skill = readSkill(path.join(harnessSkillsDir(), "feature-converge"));
+	const skill = readSkill(path.join(harnessSkillsDir(), "harness-feature-converge"));
 	const parts: string[] = [];
-	if (skill) parts.push("# feature-converge\n", skill);
+	if (skill) parts.push("# harness-feature-converge\n", skill);
 	parts.push(
 		`\n[runtime] Run dir: .harness/runs/${featureId}/ · Profile: .harness/profile/ (read-only).`,
 		"Author feature.md + contract.md (FROZEN) + decompose ordered tasks, then call store_plan. Headless: resolve gray areas as [assumido]; NEVER call ask_user_question.",
@@ -153,7 +153,7 @@ export interface RealConvergeOpts {
 }
 
 /**
- * ConvergeFn de produção: spawna `pi --print` rodando feature-converge headless no cwd do
+ * ConvergeFn de produção: spawna `pi --print` rodando harness-feature-converge headless no cwd do
  * repo → autora os artefatos e chama store_plan (grava plan.json). Resolve quando o child
  * fecha; o sucesso (plan.json existe) é checado pelo runHeadlessFeature depois.
  */

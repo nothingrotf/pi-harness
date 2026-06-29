@@ -1,11 +1,11 @@
 /**
  * Plan — a fila de tasks de uma feature (o analog do features.json do modelo de referência, em escopo
- * feature). A `feature-converge` (LLM) autora feature.md + contract.md (markdown, humano)
+ * feature). A `harness-feature-converge` (LLM) autora feature.md + contract.md (markdown, humano)
  * e CHAMA `store_plan` no fim com as tasks estruturadas + os ids das assertions do
  * contract; o TS (confiável) valida a INVARIANTE DE COBERTURA (cada assertion reivindicada
  * por exatamente uma task) e persiste:
  *   - plan.json   (a fila canônica que o FeatureRunner consome)
- *   - status.json (assertions → pending; o qa-validator escreve depois)
+ *   - status.json (assertions → pending; o harness-qa-validator escreve depois)
  *
  * Espelha store_profile / store_agent_readiness_report: o modelo autora, a tool valida+grava.
  */

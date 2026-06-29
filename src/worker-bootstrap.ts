@@ -1,9 +1,9 @@
 /**
  * Worker bootstrap — a primeira mensagem injetada num child de worker/validator
  * (porte da função de bootstrap do worker, docs/02). Pra steps de TASK manda rodar
- * `worker-base` → a skill da task → `EndFeatureRun`. Pra steps de SHIP GATE
- * (code-review/qa-validator) pula o worker-base e invoca o validator direto (igual ao
- * referência: validators pulam o worker-base), sempre com returnToOrchestrator.
+ * `harness-worker-base` → a skill da task → `EndFeatureRun`. Pra steps de SHIP GATE
+ * (harness-code-review/harness-qa-validator) pula o harness-worker-base e invoca o validator direto (igual ao
+ * referência: validators pulam o harness-worker-base), sempre com returnToOrchestrator.
  *
  * Função pura (testável) — o spawn real injeta o retorno como primeira mensagem.
  */
@@ -33,7 +33,7 @@ export function buildWorkerBootstrap(step: FeatureStep, opts: BootstrapOpts): st
 		);
 	} else {
 		lines.push(
-			"1. First, invoke the 'worker-base' skill for startup procedures.",
+			"1. First, invoke the 'harness-worker-base' skill for startup procedures.",
 			`2. Then, invoke the '${step.skillName}' skill to complete your assigned task.`,
 			"3. Call EndFeatureRun when done.",
 		);

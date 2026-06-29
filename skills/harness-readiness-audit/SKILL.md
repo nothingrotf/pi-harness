@@ -1,5 +1,5 @@
 ---
-name: readiness-audit
+name: harness-readiness-audit
 description: Static repository auditor — evaluates the codebase against the Agent Readiness Model (82 criteria, 5 levels) and stores a local snapshot via store_agent_readiness_report. Use for /readiness-report, the /harness readiness gate (reaudit), or when no snapshot exists.
 ---
 

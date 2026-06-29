@@ -1,5 +1,5 @@
 ---
-name: worker-base
+name: harness-worker-base
 description: Universal worker startup + cleanup + handoff procedure every harness worker runs before its task-specific skill. Reads the cached profile + the feature run; ends with a structured handoff.
 ---
 
@@ -98,8 +98,8 @@ Invoke the skill named in your task's `skillName`. **If it doesn't exist**, do n
 ### 3.1 Final Validation
 Run the verification step(s) from your task skill's Work Procedure (the gate from
 `services.yaml`). Fix failures your work introduced. Don't hand off with broken verification.
-**Tests you wrote must follow the `generate-tests` skill**: thin/orchestration code is covered by
-the qa-validator E2E surface (no internal-mock unit test), fat/business-rule code gets focused
+**Tests you wrote must follow the `harness-generate-tests` skill**: thin/orchestration code is covered by
+the harness-qa-validator E2E surface (no internal-mock unit test), fat/business-rule code gets focused
 per-rule behavior tests that derive from the `contract.md` assertions (never from the
 implementation), survive the adequacy review (evidence-or-zero, no shallow assertions), and are
 mutation-killed by the discrimination sensor. `harness.md` §Testing overrides these defaults.

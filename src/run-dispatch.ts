@@ -2,7 +2,7 @@
  * Native dispatch for Tier-2 feature EXECUTION (Fatia 3, execução) — model-driven,
  * in-session, TUI-first, with a live TODO Plan. The model acts as the harness
  * orchestrator: reads plan.json, runs each task in a fresh worker subagent (sequential),
- * reacts to handoffs, then runs the ship gate (code-review → qa-validator).
+ * reacts to handoffs, then runs the ship gate (harness-code-review → harness-qa-validator).
  *
  * Pattern parity with the readiness/setup/converge dispatches: adaptive on which
  * companion utilities are ACTIVE (todo / subagent / advisor / ask-user-question) and
@@ -23,12 +23,12 @@ export function buildRunDispatch(featureId: string, tools: DispatchTools = {}): 
 	let n = 2;
 	if (tools.todo) {
 		lines.push(
-			`${n++}. **Create the Plan with the \`todo\` tool** — one todo per task (in plan.json order), then two trailing todos: "ship gate: code-review" and "ship gate: qa-validator". This Plan is the live source of truth; it survives /reload and compaction — keep it updated at EVERY transition.`,
+			`${n++}. **Create the Plan with the \`todo\` tool** — one todo per task (in plan.json order), then two trailing todos: "ship gate: harness-code-review" and "ship gate: harness-qa-validator". This Plan is the live source of truth; it survives /reload and compaction — keep it updated at EVERY transition.`,
 		);
 	}
 	const spawn = tools.subagent
-		? "spawn a fresh worker via the `subagent` tool (agent: `harness-worker`), passing the feature id, the task ({id, description, skillName, fulfills}) and a fresh worker session id — it runs `worker-base` → the task's profile skill → `EndFeatureRun`"
-		: "run the task in-session (`worker-base` → the task's profile skill → `EndFeatureRun`), passing the feature id + task id so EndFeatureRun records the handoff";
+		? "spawn a fresh worker via the `subagent` tool (agent: `harness-worker`), passing the feature id, the task ({id, description, skillName, fulfills}) and a fresh worker session id — it runs `harness-worker-base` → the task's profile skill → `EndFeatureRun`"
+		: "run the task in-session (`harness-worker-base` → the task's profile skill → `EndFeatureRun`), passing the feature id + task id so EndFeatureRun records the handoff";
 	const markStart = tools.todo ? "mark its todo in_progress; " : "";
 	const markDone = tools.todo ? " mark the todo completed;" : "";
 	const askOnBlock = tools.askUser
@@ -42,8 +42,8 @@ export function buildRunDispatch(featureId: string, tools: DispatchTools = {}): 
 		: "";
 	lines.push(
 		`${n++}. When every task todo is completed, run the **ship gate** (the two trailing todos), in order:`,
-		`   a. **code-review** — invoke the \`code-review\` skill: it runs the programmatic gate once (services.yaml test/typecheck/lint over the integrated result), then ${tools.subagent ? "spawns the three review axes (`correctness-review`, `quality-review`, `conventions-review`) via `subagent`" : "runs the three review axes (correctness, quality, conventions)"} over the feature diff, and synthesizes.${escalate} Any blocking finding → create fix tasks${tools.todo ? " (new todos at the top)" : ""}, address them, then re-run only what failed.`,
-		`   b. **qa-validator** — invoke the \`qa-validator\` skill: verify the contract assertions on the real surface and update ${runDir}status.json.`,
+		`   a. **harness-code-review** — invoke the \`harness-code-review\` skill: it runs the programmatic gate once (services.yaml test/typecheck/lint over the integrated result), then ${tools.subagent ? "spawns the three review axes (`correctness-review`, `quality-review`, `conventions-review`) via `subagent`" : "runs the three review axes (correctness, quality, conventions)"} over the feature diff, and synthesizes.${escalate} Any blocking finding → create fix tasks${tools.todo ? " (new todos at the top)" : ""}, address them, then re-run only what failed.`,
+		`   b. **harness-qa-validator** — invoke the \`harness-qa-validator\` skill: verify the contract assertions on the real surface and update ${runDir}status.json.`,
 		`${n++}. The feature is DONE when status.json has every assertion \`"passed"\` and the gate is green.${tools.todo ? " Clear the Plan with the `todo` tool (`action: \"clear\"`)." : ""} Summarize what shipped (assertions passed, tasks run, any deferred follow-ups).`,
 	);
 	// Reinforce utility usage explicitly.

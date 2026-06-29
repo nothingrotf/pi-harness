@@ -61,7 +61,7 @@ TIER 2 — FEATURE RUN    (por feature, SEQUENCIAL, GITIGNORED)        .harness/
 2. CONVERGE           # gray-area-policy: intent → contract FROZEN; lê o profile como EVIDÊNCIA
 3. DECOMPOSE → plan.md  # tasks ordenadas (thin/fat), cada task → assertion
 4. RUN                # runner determinístico fino, worker sequencial, verified gate
-5. SHIP GATE          # code-review (3 eixos) + qa-validator (se user-facing) vs contract
+5. SHIP GATE          # harness-code-review (3 eixos) + harness-qa-validator (se user-facing) vs contract
 6. ARCHIVE            # decisões/conhecimento → profile/library/ (acumula)
 ```
 
@@ -74,8 +74,8 @@ gray-areas resolvem como LOW (silenciosas) → **menos ASK**. O harness aprende 
 
 | Camada | Origem |
 |---|---|
-| Convergência + contrato + teste thin/fat | reuso do harness anterior (gray-area-policy, generate-tests) |
-| Ship gate (code-review 3 eixos, qa-validator, fix-agent) | reuso do harness anterior |
+| Convergência + contrato + teste thin/fat | reuso do harness anterior (gray-area-policy, harness-generate-tests) |
+| Ship gate (harness-code-review 3 eixos, harness-qa-validator, fix-agent) | reuso do harness anterior |
 | Runner determinístico + state machine + handoff + persistência | porte de especificação de referência |
 | Setup skill (gera o profile) | recorte das seções de autoria de artefatos, postura brownfield |
 | Gray-area-policy risk-tiered + dois tiers + profile cacheado | **original** |

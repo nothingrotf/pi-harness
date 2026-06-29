@@ -1,15 +1,15 @@
 /**
  * FeatureRunner — generaliza o motor do ReadinessRunner (= runner de referência 1:1, docs/02)
  * pro eixo de EXECUÇÃO DE FEATURE: roda as tasks do plan.json em sequência, cada uma num
- * worker (bootstrap = worker-base + a skill da task + EndFeatureRun), e quando TODAS as
- * tasks completam INJETA o ship gate (code-review → qa-validator) UMA vez. Qualquer
+ * worker (bootstrap = harness-worker-base + a skill da task + EndFeatureRun), e quando TODAS as
+ * tasks completam INJETA o ship gate (harness-code-review → harness-qa-validator) UMA vez. Qualquer
  * failure/returnToOrchestrator → status "orchestrator_turn" (para; o orchestrator cria
  * fix tasks e resume). Budget de 5 tentativas por step; pause/resume; orphan cleanup.
  *
  * Mapeamento runner de referência → FeatureRunner:
  *   features.json (fila)                 → steps[] (tasks do plan.json)
  *   milestone completa → injeta          → todas as tasks completam → injeta ship gate
- *     scrutiny + user-testing               (code-review + qa-validator), 1x (gateInjected)
+ *     scrutiny + user-testing               (harness-code-review + harness-qa-validator), 1x (gateInjected)
  *   _9H = 5                               → STEP_ATTEMPT_BUDGET = 5
  *   failure / returnToOrchestrator        → status "orchestrator_turn"
  *   cleanupOrphanedWorker()               → cleanupOrphan()
@@ -30,7 +30,7 @@ export type StepKind = "task" | "ship-gate";
 export interface FeatureStep {
 	id: string;
 	kind: StepKind;
-	/** worker skill (task) | "code-review" | "qa-validator" (ship gate). */
+	/** worker skill (task) | "harness-code-review" | "harness-qa-validator" (ship gate). */
 	skillName: string;
 	/** assertion IDs que a task completa (tasks). */
 	fulfills?: string[];
@@ -82,8 +82,8 @@ export interface FeatureRunLoopDeps {
 
 /** Os dois steps do ship gate, em ordem (scrutiny → user-testing). */
 export const SHIP_GATE: readonly { id: string; skillName: string }[] = [
-	{ id: "ship-gate-code-review", skillName: "code-review" },
-	{ id: "ship-gate-qa-validator", skillName: "qa-validator" },
+	{ id: "ship-gate-code-review", skillName: "harness-code-review" },
+	{ id: "ship-gate-qa-validator", skillName: "harness-qa-validator" },
 ];
 
 const defaultNow = (): string => new Date().toISOString();
@@ -135,7 +135,7 @@ export function planFeatureRun(
 	};
 }
 
-/** Injeta o ship gate (code-review → qa-validator) no fim da fila. Idempotente via gateInjected. */
+/** Injeta o ship gate (harness-code-review → harness-qa-validator) no fim da fila. Idempotente via gateInjected. */
 export function injectShipGate(run: FeatureRun): void {
 	if (run.gateInjected) return;
 	for (const g of SHIP_GATE) {

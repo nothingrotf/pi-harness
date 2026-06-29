@@ -1,10 +1,10 @@
 /**
  * Caminho headless/CI (Fatia 3/5) — o elo converge→runner sem TUI. Encadeia:
- *   1. CONVERGE (model → plan.json): roda a feature-converge em modo headless (sem usuário;
+ *   1. CONVERGE (model → plan.json): roda a harness-feature-converge em modo headless (sem usuário;
  *      gray-areas viram [assumido]) via uma ConvergeFn injetada (real: spawn `pi --print`;
  *      teste: fake que escreve plan.json).
  *   2. RUN (FeatureRunner determinístico): runLoop spawna 1 worker por task (sequencial),
- *      injeta o ship gate (code-review → qa-validator) e persiste o estado.
+ *      injeta o ship gate (harness-code-review → harness-qa-validator) e persiste o estado.
  *
  * Separado do engine puro pra ser 100% testável com ConvergeFn + SpawnFn injetados.
  * Idempotente: se plan.json já existe, pula o converge e só roda (resume).
@@ -13,7 +13,7 @@ import { appendProgress } from "./handoff.ts";
 import { type FeatureRun, type FeatureRunLoopDeps, type FeatureRunStatus, runLoop, type SpawnFn } from "./feature-runner.ts";
 import { buildFeatureRun, readPlan, writeFeatureRun } from "./plan.ts";
 
-/** Produz plan.json a partir do request. Real: spawna `pi --print` rodando feature-converge
+/** Produz plan.json a partir do request. Real: spawna `pi --print` rodando harness-feature-converge
  * (headless). Teste: escreve um plan.json fake. */
 export type ConvergeFn = (cwd: string, request: string, featureId: string) => Promise<void>;
 

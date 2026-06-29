@@ -5,7 +5,7 @@
  *
  * Mantém id/name/category/level/scope/skippable VERBATIM. As `instructions` de
  * verificação (prosa pro auditor) NÃO vivem aqui — vivem no skill
- * (skills/readiness-audit/criteria.json, cópia 1:1 do referência), igual ao
+ * (skills/harness-readiness-audit/criteria.json, cópia 1:1 do referência), igual ao
  * referência (registry `DK` em código + prompt do auditor com instructions).
  *
  * Adaptação LOCAL (a "small change" documentada em docs/02): `cloudOnly` marca

@@ -323,7 +323,7 @@ export default function registerHarnessExtension(pi: ExtensionAPI): void {
 			mode.featureId = featureIdFromRequest(request);
 			mode.phase = "converge";
 			await applyModeChrome(ctx, mode);
-			// Fatia 3: dispara a feature-converge ao vivo (autora feature.md/contract.md/plan.json
+			// Fatia 3: dispara a harness-feature-converge ao vivo (autora feature.md/contract.md/plan.json
 			// e chama store_plan, que valida a cobertura e grava plan.json + status.json). O
 			// FeatureRunner consome plan.json via buildFeatureRun (ponte converge→runner).
 			const t = activeTools();

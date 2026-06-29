@@ -1,9 +1,9 @@
 ---
-name: generate-tests
-description: Author tests that catch real bugs, not coverage numbers. Classifies each unit as thin (orchestration → covered by the qa-validator E2E surface, no internal-mock unit test) or fat (business rules → focused behavior tests, one rule per test, real objects, mock only at the boundary), then enforces quality with a classification-gated coverage matrix, an evidence-or-zero adequacy review, and a discrimination (mutation) sensor. Behavior-driven and wired into the harness (services.yaml commands, harness.md §Testing precedence, contract.md assertions, qa-validator). Use whenever a worker writes/updates tests for a task, or when asked "does X need tests?".
+name: harness-generate-tests
+description: Author tests that catch real bugs, not coverage numbers. Classifies each unit as thin (orchestration → covered by the harness-qa-validator E2E surface, no internal-mock unit test) or fat (business rules → focused behavior tests, one rule per test, real objects, mock only at the boundary), then enforces quality with a classification-gated coverage matrix, an evidence-or-zero adequacy review, and a discrimination (mutation) sensor. Behavior-driven and wired into the harness (services.yaml commands, harness.md §Testing precedence, contract.md assertions, harness-qa-validator). Use whenever a worker writes/updates tests for a task, or when asked "does X need tests?".
 ---
 
-# generate-tests — behavior-driven tests (thin/fat) with adequacy + mutation gate
+# harness-generate-tests — behavior-driven tests (thin/fat) with adequacy + mutation gate
 
 You are a test author who values **tests that catch real bugs over tests that inflate coverage
 numbers**. A test exists to describe and verify **behavior**, never to document **implementation**.
@@ -37,8 +37,8 @@ boundary** (HTTP, DB, external service, side effects you can't afford), and only
 ## Where this fits in the harness
 
 - **Who runs it.** A worker invokes this while writing/updating tests for its task (the test part of
-  its `skillName` Work Procedure). The discrimination sensor (Step 7) may also be run by `code-review`
-  over the feature diff. `qa-validator` is where **thin code's E2E coverage actually lands**.
+  its `skillName` Work Procedure). The discrimination sensor (Step 7) may also be run by `harness-code-review`
+  over the feature diff. `harness-qa-validator` is where **thin code's E2E coverage actually lands**.
 - **Source of WHAT to assert** (in precedence): the task's `fulfills` → the matching `contract.md`
   assertions (`VAL-*`, black-box, with their Evidence), then the task's `expectedBehavior`, then the
   spec/feature.md. **Tests derive from these, never from reading the implementation.**
@@ -47,7 +47,7 @@ boundary** (HTTP, DB, external service, side effects you can't afford), and only
   to the orchestrator (don't guess).
 - **Precedence for testing rules:** `harness.md` §Testing & Validation Guidance (highest) → the repo's
   own `AGENTS.md` / `.agents/rules/` (style, location, framework) → the defaults in this skill.
-- **Thin ⇒ E2E ⇒ qa-validator.** In the harness, the "E2E that covers thin code" is the qa-validator
+- **Thin ⇒ E2E ⇒ harness-qa-validator.** In the harness, the "E2E that covers thin code" is the harness-qa-validator
   black-box assertion through the real surface (`agent-browser`/`tuistory`/`curl`). E2E does **not**
   require a frontend — for an API it's an HTTP call. So thin code is **not** "unverified": its
   verification is the `contract.md` assertion, not an internal-mock unit test.
@@ -69,7 +69,7 @@ AuthenticateUseCase → FAT
 - Rejects locked accounts even with correct password
 - Resets lock state on successful login
 VerifyEmailUseCase → THIN
-- Validates token, sets verified, invalidates token; no branching → E2E (qa-validator) covers it.
+- Validates token, sets verified, invalidates token; no branching → E2E (harness-qa-validator) covers it.
 ```
 
 ### 2. Fat → write behavior tests
@@ -97,7 +97,7 @@ blocks **by business rule**, not by method.
 State it explicitly and move on:
 
 > "`VerifyEmailUseCase` is thin — orchestration without business logic. The `contract.md` assertion
-> `VAL-AUTH-007` (exercised by qa-validator through the real surface) covers this path. A unit test
+> `VAL-AUTH-007` (exercised by harness-qa-validator through the real surface) covers this path. A unit test
 > here would mock internals and test wiring, not behavior."
 
 Only if a convention *forces* a test, write a **minimal smoke test** with real/in-memory deps (no
@@ -112,10 +112,10 @@ Not a blanket per-layer quota — a per-unit map keyed on the Step-1 classificat
 | Unit / Layer | thin / fat | Test type | Asserts (contract `VAL-*` / rule) | Location | Command (from services.yaml) |
 | ------------ | ---------- | --------- | --------------------------------- | -------- | ---------------------------- |
 | `AuthenticateUseCase` | fat | unit | `VAL-AUTH-001..004` (lockout rules) | `__test__/unit/authenticate.spec.ts` | `<services.yaml test>` |
-| `VerifyEmailUseCase`  | thin | E2E (qa-validator) | `VAL-AUTH-007` | — (contract assertion) | — |
+| `VerifyEmailUseCase`  | thin | E2E (harness-qa-validator) | `VAL-AUTH-007` | — (contract assertion) | — |
 | `User` entity / config | — | none | — | — | build/typecheck gate only |
 
-Rule: a **thin** row's coverage is a `contract.md` assertion (qa-validator), never a mocked unit test.
+Rule: a **thin** row's coverage is a `contract.md` assertion (harness-qa-validator), never a mocked unit test.
 A **fat** row maps each business rule to at least one focused test. `none` is only for entity/config
 units with no rules.
 
@@ -183,14 +183,14 @@ tests: …"**. Give a clear recommendation.
 - Coverage measures what was **executed**, not what was **verified**. A test that runs code without a
   meaningful assertion inflates the number and catches nothing.
 - Treat coverage as an **indicator** (what's untested?), never an **objective** (hit 90%).
-- Thin code covered by the qa-validator E2E surface has **real** coverage that simply won't show in
+- Thin code covered by the harness-qa-validator E2E surface has **real** coverage that simply won't show in
   unit/integration metrics — that's correct, not a gap.
 - Do **not** adopt a blanket "cover every layer 1:1 / exceed the repo's depth" default. Thin/fat gates it.
 
 ## Rules
 - Classify thin/fat **before** writing — it gates everything.
 - Fat → behavior tests (rule-named, one rule/test, real objects, boundary-only mocks, edges covered).
-- Thin → E2E (qa-validator contract assertion); never a mocked-internals unit test.
+- Thin → E2E (harness-qa-validator contract assertion); never a mocked-internals unit test.
 - Tests derive from `contract.md`/`expectedBehavior`/spec — never from the implementation.
 - Commands from `services.yaml`; testing precedence `harness.md` §Testing → repo `AGENTS.md` → defaults.
 - Never weaken/delete/skip a test to go green. A red test is a signal.

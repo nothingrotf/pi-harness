@@ -45,7 +45,7 @@ test("runLoop: roda tasks em sequência, injeta ship gate 1x, completa", async (
 	};
 	await runLoop("/repo", run, deps(spawn));
 	assert.equal(run.status, "completed");
-	// 2 tasks + code-review + qa-validator, nessa ordem
+	// 2 tasks + harness-code-review + harness-qa-validator, nessa ordem
 	assert.deepEqual(order, ["T1", "T2", "ship-gate-code-review", "ship-gate-qa-validator"]);
 	assert.equal(run.gateInjected, true);
 	assert.ok(run.steps.every((s) => s.status === "completed"));
@@ -67,9 +67,9 @@ test("runLoop: returnToOrchestrator também devolve controle", async () => {
 	assert.equal(run.status, "orchestrator_turn");
 });
 
-test("runLoop: ship gate falha (code-review) → orchestrator_turn; fix task corre antes do gate no resume", async () => {
+test("runLoop: ship gate falha (harness-code-review) → orchestrator_turn; fix task corre antes do gate no resume", async () => {
 	const run = planFeatureRun("feat-x", tasks("T1"), NOW);
-	// 1ª passada: T1 ok, code-review falha
+	// 1ª passada: T1 ok, harness-code-review falha
 	await runLoop("/repo", run, deps(spawnFrom({ "ship-gate-code-review": { code: 0, success: false } })));
 	assert.equal(run.status, "orchestrator_turn");
 	assert.equal(run.gateInjected, true);
@@ -84,7 +84,7 @@ test("runLoop: ship gate falha (code-review) → orchestrator_turn; fix task cor
 		return { code: 0, success: true };
 	}));
 	assert.equal(run.status, "completed");
-	// no resume corre a fix, depois code-review (que estava pending) e qa-validator
+	// no resume corre a fix, depois harness-code-review (que estava pending) e harness-qa-validator
 	assert.deepEqual(order, ["FIX1", "ship-gate-code-review", "ship-gate-qa-validator"]);
 });
 

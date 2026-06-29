@@ -1,6 +1,6 @@
 ---
 name: quality-review
-description: Code-quality review axis — strict maintainability/structure review (1k-line rule, spaghetti growth, abstraction quality, code-judo simplifications). Generic (no repo setup needed). Spawned by the code-review ship-gate orchestrator.
+description: Code-quality review axis — strict maintainability/structure review (1k-line rule, spaghetti growth, abstraction quality, code-judo simplifications). Generic (no repo setup needed). Spawned by the harness-code-review ship-gate orchestrator.
 systemPromptMode: append
 inheritProjectContext: true
 inheritSkills: false

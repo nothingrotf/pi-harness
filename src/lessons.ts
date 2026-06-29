@@ -22,8 +22,8 @@ import * as path from "node:path";
 
 /** Sinais válidos — sempre grounded num output de verificação do harness. */
 export const LESSON_SIGNALS = {
-	blocking_finding: "code-review surfaced a blocking finding (correctness/quality/conventions)",
-	failed_assertion: "qa-validator assertion failed or was blocked",
+	blocking_finding: "harness-code-review surfaced a blocking finding (correctness/quality/conventions)",
+	failed_assertion: "harness-qa-validator assertion failed or was blocked",
 	gate_fail: "the programmatic gate (test/typecheck/lint) failed at integration",
 	spec_deviation: "implementation diverged from the contract (SPEC_DEVIATION)",
 	discovered_issue: "a worker handoff surfaced a blocking discovered issue",

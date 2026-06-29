@@ -12,7 +12,7 @@ function tmp(): string {
 	return fs.mkdtempSync(path.join(os.tmpdir(), "harness-fspawn-"));
 }
 const task: FeatureStep = { id: "T1", kind: "task", skillName: "backend-worker", fulfills: ["A-1"], status: "pending", attempts: 0 };
-const gate: FeatureStep = { id: "ship-gate-code-review", kind: "ship-gate", skillName: "code-review", status: "pending", attempts: 0 };
+const gate: FeatureStep = { id: "ship-gate-code-review", kind: "ship-gate", skillName: "harness-code-review", status: "pending", attempts: 0 };
 
 function payload(over: Partial<EndFeatureRunPayload> = {}): EndFeatureRunPayload {
 	return {
@@ -41,23 +41,23 @@ test("piArgs: task vs ship-gate tools; --append-system-prompt; model opcional", 
 	assert.ok(g.includes("--model") && g.includes("anthropic/claude"));
 });
 
-test("buildWorkerSystemPrompt: task inclui worker-base + skill do profile + bootstrap", () => {
+test("buildWorkerSystemPrompt: task inclui harness-worker-base + skill do profile + bootstrap", () => {
 	const cwd = tmp();
 	const skillDir = path.join(cwd, ".harness", "profile", "skills", "backend-worker");
 	fs.mkdirSync(skillDir, { recursive: true });
 	fs.writeFileSync(path.join(skillDir, "SKILL.md"), "PROFILE-BACKEND-SKILL-BODY");
 	const sys = buildWorkerSystemPrompt(task, cwd, { featureId: "feat-x", workerSessionId: "ws" });
-	assert.match(sys, /# worker-base/);
-	assert.match(sys, /Worker Base Procedures/, "corpo real do worker-base inlined");
+	assert.match(sys, /# harness-worker-base/);
+	assert.match(sys, /Worker Base Procedures/, "corpo real do harness-worker-base inlined");
 	assert.match(sys, /PROFILE-BACKEND-SKILL-BODY/, "skill do profile inlined");
 	assert.match(sys, /EndFeatureRun with featureId="feat-x", taskId="T1"/);
 });
 
-test("buildWorkerSystemPrompt: ship-gate inclui a skill do validator, não o worker-base", () => {
+test("buildWorkerSystemPrompt: ship-gate inclui a skill do validator, não o harness-worker-base", () => {
 	const cwd = tmp();
 	const sys = buildWorkerSystemPrompt(gate, cwd, { featureId: "feat-x", workerSessionId: "ws" });
-	assert.match(sys, /# code-review/);
-	assert.doesNotMatch(sys, /# worker-base/);
+	assert.match(sys, /# harness-code-review/);
+	assert.doesNotMatch(sys, /# harness-worker-base/);
 });
 
 /** child fake (EventEmitter) que fecha no próximo tick com o code dado. */

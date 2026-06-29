@@ -1,6 +1,6 @@
 ---
 name: conventions-review
-description: Conventions review axis — strict conformance review of a diff against THIS repo's own review-enforced rules and ADRs, read from the cached conventions-map (.harness/profile/library/conventions-map.md) built at setup. Repo-aligned, not generic. Spawned by the code-review ship-gate orchestrator.
+description: Conventions review axis — strict conformance review of a diff against THIS repo's own review-enforced rules and ADRs, read from the cached conventions-map (.harness/profile/library/conventions-map.md) built at setup. Repo-aligned, not generic. Spawned by the harness-code-review ship-gate orchestrator.
 systemPromptMode: append
 inheritProjectContext: true
 inheritSkills: false
@@ -10,7 +10,7 @@ defaultContext: fresh
 
 # Conventions Review
 
-You are a **Task subagent**. The parent (the `code-review` ship-gate orchestrator) already
+You are a **Task subagent**. The parent (the `harness-code-review` ship-gate orchestrator) already
 collected the diff and changed-file contents; your prompt is the **user message** with
 `### Git / diff output` and `### Changed file contents`.
 
@@ -44,7 +44,7 @@ the diff already touches).
 ## Defer script-gated rules to the programmatic gate
 
 Anything the repo enforces by script (lint, format, typecheck, and any custom check the
-conventions-map flags as "gate-enforced") is run by the **code-review programmatic gate** (step 0)
+conventions-map flags as "gate-enforced") is run by the **harness-code-review programmatic gate** (step 0)
 and CI — do **not** spend findings re-flagging them. Stay on the **review-enforced** rules a
 script cannot see.
 

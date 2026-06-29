@@ -1,6 +1,6 @@
 /**
  * Tool `store_plan` — o estágio "store" da convergência da feature, espelhando
- * store_profile / store_agent_readiness_report: a `feature-converge` (LLM) autora
+ * store_profile / store_agent_readiness_report: a `harness-feature-converge` (LLM) autora
  * feature.md + contract.md e CHAMA esta tool no fim com as tasks estruturadas + os
  * ids das assertions do contract. O TS valida a INVARIANTE DE COBERTURA (cada assertion
  * reivindicada por exatamente uma task) e persiste plan.json + status.json.
@@ -33,7 +33,7 @@ export function registerPlanStoreTool(pi: ExtensionAPI): void {
 			name: "store_plan",
 			label: "Store Feature Plan",
 			description:
-				"Validates the feature plan's coverage invariant (every contract assertion claimed by exactly one task's fulfills — no orphans, no duplicates) and persists .harness/runs/<featureId>/plan.json + status.json (assertions pending). Call at the END of feature-converge. Rejects (throws) on a coverage violation — fix the plan and call again.",
+				"Validates the feature plan's coverage invariant (every contract assertion claimed by exactly one task's fulfills — no orphans, no duplicates) and persists .harness/runs/<featureId>/plan.json + status.json (assertions pending). Call at the END of harness-feature-converge. Rejects (throws) on a coverage violation — fix the plan and call again.",
 			parameters: PARAMS,
 			async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
 				const plan: Plan = {

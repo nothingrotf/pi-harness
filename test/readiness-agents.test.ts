@@ -24,7 +24,7 @@ test("readiness-auditor: read-only + store tool, fresh, liga a skill", () => {
 	assert.equal(fm.defaultContext, "fresh");
 	assert.match(fm.tools, /store_agent_readiness_report/);
 	assert.doesNotMatch(fm.tools, /\bedit\b|\bwrite\b/, "auditor não modifica o repo");
-	assert.match(fm.skills, /readiness-audit/);
+	assert.match(fm.skills, /harness-readiness-audit/);
 });
 
 test("readiness-remediator: pode editar, fresh", () => {
