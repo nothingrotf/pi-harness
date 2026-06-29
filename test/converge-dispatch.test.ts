@@ -2,9 +2,10 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { buildConvergeDispatch, CONVERGE_PHASES } from "../src/converge-dispatch.ts";
 
-test("CONVERGE_PHASES: 5 fases (entender → store_plan)", () => {
+test("CONVERGE_PHASES: 5 fases (size+entender → store_plan)", () => {
 	assert.equal(CONVERGE_PHASES.length, 5);
-	assert.match(CONVERGE_PHASES[0], /Understand the feature/);
+	assert.match(CONVERGE_PHASES[0], /understand the feature/i);
+	assert.match(CONVERGE_PHASES[0], /[Ss]ize/, "a fase 1 inclui o sizing (auto-sizing)");
 	assert.match(CONVERGE_PHASES[CONVERGE_PHASES.length - 1], /store_plan/);
 });
 
@@ -21,6 +22,9 @@ test("buildConvergeDispatch: com todo → Plan + feature-converge + artefatos + 
 	assert.match(m, /plan\.json/);
 	assert.match(m, /store_plan/);
 	assert.match(m, /coverage invariant/);
+	// auto-sizing: escala o esforço, não a estrutura (invariante)
+	assert.match(m, /Size the feature first/);
+	assert.match(m, /ALWAYS run regardless of size/);
 	assert.match(m, /clear the plan with the `todo` tool/);
 	assert.match(m, /do NOT hand-write plan\.json/i);
 	assert.match(m, /\/harness run/); // sugere o próximo passo (execução)

@@ -9,7 +9,7 @@ import type { DispatchTools } from "./readiness-dispatch.ts";
 
 /** The convergence phases (one todo each — the "Plan · X/5"). */
 export const CONVERGE_PHASES: readonly string[] = [
-	"Phase 1: Understand the feature (clarify + gray-area decisions)",
+	"Phase 1: Size + understand the feature (Small/Medium/Large/Complex → depth; structure invariant) + gray-area",
 	"Phase 2: feature.md (intent + scope)",
 	"Phase 3: contract.md (frozen, black-box assertions)",
 	"Phase 4: decompose into ordered tasks (each → assertion)",
@@ -45,6 +45,7 @@ export function buildConvergeDispatch(request: string, featureId: string, tools:
 		lines.push(`${n++}. Invoke the \`feature-converge\` skill and work through its phases in order.`);
 	}
 	lines.push(
+		`${n++}. **Size the feature first** (Small/Medium/Large/Complex — see feature-converge Phase 0): it scales the convergence depth, NOT the structure. contract.md (≥1 frozen black-box assertion), the store_plan coverage invariant, and the ship gate ALWAYS run regardless of size; when in doubt, size up (a thin contract ships unvalidated behavior).`,
 		`${n++}. Read the cached profile (.harness/profile/: architecture.md, services.yaml, harness.md, skills/, library/) — do NOT re-derive it. If the profile is absent, stop and tell the user to run /harness setup.`,
 		`${n++}. Author under .harness/runs/${featureId}/: feature.md (intent + scope + captured requirements + gray-area decisions), then contract.md (FROZEN, black-box assertions via subagents + at least one review pass). Then **decompose into ordered tasks** (each names a profile worker skill + the assertion IDs it fulfills) — the tasks are persisted by store_plan as plan.json, NOT hand-written as markdown.`,
 		`${n++}. Finish by calling the \`store_plan\` tool with featureId="${featureId}", the structured tasks, and ALL assertion IDs from contract.md. It enforces the coverage invariant (every assertion claimed by exactly one task) and persists plan.json + status.json. Do NOT hand-write plan.json/status.json.`,

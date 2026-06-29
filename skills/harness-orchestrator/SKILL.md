@@ -212,6 +212,7 @@ Architectural Design & Decomposition
 - Workers are given their task, the architecture design doc (`.harness/profile/architecture.md` — authoritative), and the contract (`contract.md`) as their main guidance. Ensure these contain all the information needed for the worker to succeed.
 Scope & Acceptance
 - The contract is the definition of "done". Do not expand scope mid-feature unless the user explicitly requests it.
+- **Convergence depth auto-sizes** to the feature (feature-converge Phase 0: Small→Complex) — but the contract (≥1 frozen black-box assertion), the coverage invariant, and the ship gate run **regardless of size**. Sizing tunes effort, never the guarantees; under-sizing that thins the contract ships unvalidated behavior — when in doubt, size up.
 - Write `contract.md` before `plan.json`. Initialize status with all assertion IDs pending.
 - Coverage gate BEFORE running: every assertion ID is claimed by exactly one `plan.json` `fulfills` entry (no duplicates, no orphans).
 Infrastructure Resilience

@@ -22,6 +22,34 @@ The profile already exists (authored by `harness-setup`). Read, don't re-author:
 
 If the profile is absent or stale, stop and run `harness-setup` first.
 
+## Phase 0 — Size the feature (auto-sizing)
+
+Before converging, assess the feature's size — it scales the **convergence depth and execution
+effort**, NEVER the structure. Pick a tier:
+
+| Size | Signal | Convergence depth (what scales) |
+|---|---|---|
+| **Small** | ≤~3 files, one obvious change, no new behavior surface | Author `contract.md` DIRECTLY (1–3 assertions, no per-area subagents); 1 self review pass; gray-area sweep = only dimensions obviously present; ~1 task; no research |
+| **Medium** | clear single-area feature, <~10 tasks | Contract direct or 1 area subagent; ≥1 review pass; gray-area = present + the implicit dimensions actually touched; a few tasks |
+| **Large** | multi-component, several user-facing areas | Full: a contract subagent PER area + cross-area flows + ≥2 review passes; full implicit-requirement dimensions sweep; ordered task decomposition; research unfamiliar tech |
+| **Complex** | ambiguity / new domain / risk surface (auth, payments, migrations, concurrency) | Large + extra: research-FIRST, more HIGH gray-area asks, more contract review passes, emphasize cross-area + consequential behaviors; finer task granularity |
+
+> **INVARIANT — never scaled away (regardless of size):** `contract.md` is FROZEN with **≥1
+> black-box assertion**, `store_plan` enforces the coverage invariant (every assertion claimed by
+> exactly one task), and the **ship gate (code-review → qa-validator) always runs**. Auto-sizing
+> tunes the *effort*, not the *guarantees* — a "Small" feature still gets a real contract + plan +
+> gate, just cheaply. There is no path that skips the contract, the coverage gate, or the ship gate.
+
+**Safety valve (the one bug to avoid — under-sizing):** the danger is sizing DOWN and leaving real
+behavior out of the contract — because the contract is what the ship gate tests; a thin contract
+ships **unvalidated behavior**. So if, while authoring the contract or decomposing, a "Small/Medium"
+feature reveals cross-area behavior, >~5 tasks, or any implicit-requirement dimension (persistence,
+auth, payments, concurrency, state transitions), **re-size UP** before `store_plan`: add the missing
+assertions + a review pass. Sizing up is cheap; an under-specified contract is a silent gap. When in
+doubt, size up.
+
+Record the chosen size in `feature.md` (one line) so workers/validators know the intended depth.
+
 ## Phase 1 — Understand THIS feature (iterative)
 
 **Load confirmed lessons first.** Read `.harness/profile/LESSONS.md` (the **Confirmed** section
