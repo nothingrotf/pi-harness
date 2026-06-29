@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { buildFeatureRun, type Plan, readFeatureRun, readPlan, readStatus, storePlan, validatePlan, writeFeatureRun } from "../src/plan.ts";
+import { buildFeatureRun, featureProgress, type Plan, readFeatureRun, readPlan, readStatus, storePlan, validatePlan, writeFeatureRun } from "../src/plan.ts";
 
 function tmp(): string {
 	return fs.mkdtempSync(path.join(os.tmpdir(), "harness-plan-"));
@@ -103,4 +103,27 @@ test("writeFeatureRun/readFeatureRun: round-trip (state.json do runner headless,
 	assert.equal(back?.steps[0].status, "completed");
 	assert.equal(back?.featureId, "feat-x");
 	assert.equal(readFeatureRun(d, "nao-existe"), null);
+});
+
+test("featureProgress: tasks done/total (do feature-run) + assertions passed/failed (do status)", () => {
+	const d = tmp();
+	assert.equal(featureProgress(d, "feat-x"), null, "sem plan → null");
+	storePlan(d, plan()); // 3 tasks, 3 assertions pending
+	// sem feature-run ainda: 0 tasks done; assertions todas pending
+	let p = featureProgress(d, "feat-x");
+	assert.deepEqual(p, { tasksTotal: 3, tasksDone: 0, assertionsTotal: 3, assertionsPassed: 0, assertionsFailed: 0 });
+	// roda o runner parcial + marca status
+	const run = buildFeatureRun(d, "feat-x", () => "2026-06-29T00:00:00.000Z");
+	if (!run) return;
+	run.steps[0].status = "completed";
+	run.steps[1].status = "completed";
+	writeFeatureRun(d, run);
+	const st = readStatus(d, "feat-x");
+	if (st) {
+		st.assertions.A1 = "passed";
+		st.assertions.A2 = "failed";
+		fs.writeFileSync(path.join(d, ".harness", "runs", "feat-x", "status.json"), JSON.stringify(st));
+	}
+	p = featureProgress(d, "feat-x");
+	assert.deepEqual(p, { tasksTotal: 3, tasksDone: 2, assertionsTotal: 3, assertionsPassed: 1, assertionsFailed: 1 });
 });

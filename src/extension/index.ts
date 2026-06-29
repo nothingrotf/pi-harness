@@ -17,7 +17,7 @@
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { badgeText, featureIdFromRequest, idleMode, statusText, type HarnessMode } from "../mode.ts";
+import { badgeText, featureIdFromRequest, idleMode, statusDetail, statusText, type HarnessMode } from "../mode.ts";
 import { buildGateModel, type GateActionValue, summarizeSnapshot } from "../readiness.ts";
 import { appendAudit, ensureReadinessInputs, readSnapshot } from "../readiness-pipeline.ts";
 import { buildAuditDispatch, buildFixDispatch } from "../readiness-dispatch.ts";
@@ -30,7 +30,7 @@ import { registerPlanStoreTool } from "../plan-store-tool.ts";
 import { registerLessonsStoreTool } from "../lessons-store-tool.ts";
 import { buildConvergeDispatch } from "../converge-dispatch.ts";
 import { buildRunDispatch } from "../run-dispatch.ts";
-import { buildFeatureRun, readFeatureRun, readPlan } from "../plan.ts";
+import { buildFeatureRun, featureProgress, readFeatureRun, readPlan } from "../plan.ts";
 import { computeFingerprint } from "../fingerprint.ts";
 import { ensureProfile } from "../profile.ts";
 
@@ -119,7 +119,7 @@ export default function registerHarnessExtension(pi: ExtensionAPI): void {
 	const runAudit = (ctx: ExtensionCommandContext, via: string): void => {
 		const ensured = ensureReadinessInputs(ctx.cwd);
 		if (!ensured.ok) {
-			ctx.ui.notify(`Readiness blocked: ${ensured.issues.join("; ")}`, "warning");
+			ctx.ui.notify(`pi-harness: readiness blocked — ${ensured.issues.join("; ")}`, "warning");
 			return;
 		}
 		const t = activeTools();
@@ -130,7 +130,7 @@ export default function registerHarnessExtension(pi: ExtensionAPI): void {
 
 	const runFix = (ctx: ExtensionCommandContext, args: string): void => {
 		if (!readSnapshot(ctx.cwd)) {
-			ctx.ui.notify("No report yet — running the audit first.");
+			ctx.ui.notify("pi-harness: no report yet — running the audit first.");
 			runAudit(ctx, "/readiness-fix");
 			return;
 		}
@@ -167,7 +167,8 @@ export default function registerHarnessExtension(pi: ExtensionAPI): void {
 				return;
 			}
 			if (sub === "status") {
-				ctx.ui.notify(statusText(mode));
+				const progress = mode.featureId ? featureProgress(ctx.cwd, mode.featureId) : null;
+				ctx.ui.notify(statusDetail(mode, progress));
 				return;
 			}
 			// /harness "<feature>" --headless → CI: converge (code-initiated, gray-areas [assumido]) →
@@ -303,12 +304,12 @@ export default function registerHarnessExtension(pi: ExtensionAPI): void {
 			}
 			if (action === "report") {
 				if (!snapshot) {
-					ctx.ui.notify("No snapshot — run the audit first.", "warning");
+					ctx.ui.notify("pi-harness: no snapshot — run the audit first.", "warning");
 				} else if (ctx.hasUI) {
 					const { showReadinessReport } = await import("../readiness-report-view.ts");
 					await showReadinessReport(ctx, snapshot, { targetLevel: READINESS_TARGET_LEVEL });
 				} else {
-					ctx.ui.notify(`readiness: ${summarizeSnapshot(snapshot)}`);
+					ctx.ui.notify(`pi-harness: readiness ${summarizeSnapshot(snapshot)}`);
 				}
 				return;
 			}

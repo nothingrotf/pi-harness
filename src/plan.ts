@@ -118,6 +118,29 @@ export function readStatus(cwd: string, featureId: string): PlanStatus | null {
 	}
 }
 
+/**
+ * Progresso do feature run pro `/harness status`: tasks completas/total (do feature-run.json)
+ * + assertions passed/failed/total (do status.json). null se a feature não convergiu (sem plan).
+ */
+export function featureProgress(cwd: string, featureId: string): import("./mode.ts").ProgressSummary | null {
+	const plan = readPlan(cwd, featureId);
+	if (!plan) return null;
+	const run = readFeatureRun(cwd, featureId);
+	const status = readStatus(cwd, featureId);
+	const tasksDone = run ? run.steps.filter((s) => s.kind === "task" && s.status === "completed").length : 0;
+	let assertionsTotal = 0;
+	let assertionsPassed = 0;
+	let assertionsFailed = 0;
+	if (status) {
+		for (const v of Object.values(status.assertions)) {
+			assertionsTotal++;
+			if (v === "passed") assertionsPassed++;
+			else if (v === "failed") assertionsFailed++;
+		}
+	}
+	return { tasksTotal: plan.tasks.length, tasksDone, assertionsTotal, assertionsPassed, assertionsFailed };
+}
+
 /** A ponte converge → runner: lê plan.json e constrói o FeatureRun (a fila de steps). null se não há plan. */
 export function buildFeatureRun(cwd: string, featureId: string, now?: () => string): FeatureRun | null {
 	const plan = readPlan(cwd, featureId);

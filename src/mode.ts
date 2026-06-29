@@ -32,12 +32,30 @@ export function featureIdFromRequest(req: string): string {
 	return base || "feature";
 }
 
+/** Glyph por fase — leitura rápida do estágio no badge/status (text-presentation, single-width). */
+export function phaseGlyph(phase: Phase): string {
+	switch (phase) {
+		case "setup":
+			return "⊙";
+		case "readiness":
+			return "▢";
+		case "converge":
+			return "◆";
+		case "run":
+			return "▸";
+		case "ship":
+			return "✦";
+		default:
+			return "○";
+	}
+}
+
 /** O badge colado no input (widget aboveEditor). */
 export function badgeText(m: HarnessMode): string {
 	if (!m.active) return "⬢ pi-harness";
 	const parts = ["⬢ pi-harness"];
 	if (m.featureId) parts.push(m.featureId);
-	parts.push(m.phase);
+	parts.push(`${phaseGlyph(m.phase)} ${m.phase}`);
 	return parts.join(" · ");
 }
 
@@ -45,5 +63,34 @@ export function badgeText(m: HarnessMode): string {
 export function statusText(m: HarnessMode): string {
 	if (!m.active) return "pi-harness: inativo";
 	const lvl = m.readinessLevel ? ` · readiness L${m.readinessLevel}` : "";
-	return `${m.phase}${lvl}`;
+	return `${phaseGlyph(m.phase)} ${m.phase}${lvl}`;
+}
+
+/** Progresso do feature run (computado pelo caller a partir de plan.json/status.json/feature-run.json). */
+export interface ProgressSummary {
+	tasksTotal: number;
+	tasksDone: number;
+	assertionsTotal: number;
+	assertionsPassed: number;
+	assertionsFailed: number;
+}
+
+/**
+ * Status RICO (uma linha) pro comando `/harness status`: badge + feature + fase + readiness +
+ * progresso (tasks done/total, assertions passed/total, falhas). Omite partes ausentes/zero.
+ */
+export function statusDetail(m: HarnessMode, progress?: ProgressSummary | null): string {
+	if (!m.active) return "pi-harness: inativo";
+	const parts = ["⬢ pi-harness"];
+	if (m.featureId) parts.push(m.featureId);
+	parts.push(`${phaseGlyph(m.phase)} ${m.phase}`);
+	if (m.readinessLevel) parts.push(`readiness L${m.readinessLevel}`);
+	if (progress) {
+		if (progress.tasksTotal > 0) parts.push(`tasks ${progress.tasksDone}/${progress.tasksTotal}`);
+		if (progress.assertionsTotal > 0) {
+			const fail = progress.assertionsFailed > 0 ? ` (${progress.assertionsFailed} failed)` : "";
+			parts.push(`assertions ${progress.assertionsPassed}/${progress.assertionsTotal}${fail}`);
+		}
+	}
+	return parts.join(" · ");
 }
