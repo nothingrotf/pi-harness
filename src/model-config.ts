@@ -174,11 +174,37 @@ export function resolveChoice(cfg: HarnessModelConfig | undefined, role: Harness
 	return { model: c.model ?? fallbackModel, thinking: c.thinking };
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Display amigável (model + effort combinados): "Claude Opus 4.8 (XHigh)".
+
+export const EFFORT_LABELS: Record<Effort, string> = { off: "Off", minimal: "Minimal", low: "Low", medium: "Medium", high: "High", xhigh: "XHigh" };
+
+/** Rótulo do effort (capitalizado); `undefined` → "inherit". */
+export function effortLabel(e?: Effort): string {
+	return e ? EFFORT_LABELS[e] : "inherit";
+}
+
+export interface RoleDisplayOpts {
+	/** ref "provider/id" → nome amigável (display names do registry). */
+	labels?: Record<string, string>;
+	/** ref do modelo herdado (fallback) — exibido quando o role herda. */
+	fallback?: string;
+}
+
+/** Nome amigável de um ref: label do registry, senão o id (parte após "/"); `undefined` → "inherit". */
+export function modelLabel(ref: string | undefined, opts: RoleDisplayOpts = {}): string {
+	if (!ref) return "inherit";
+	return opts.labels?.[ref] ?? ref.split("/").pop() ?? ref;
+}
+
+/** Display combinado de um role: "Model (Effort)" — ex.: "Claude Opus 4.8 (XHigh)". */
+export function roleSummary(cfg: HarnessModelConfig, role: HarnessRole, opts: RoleDisplayOpts = {}): string {
+	const c = cfg.roles[role];
+	const modelPart = c.model ? modelLabel(c.model, opts) : `inherit→${opts.fallback ? modelLabel(opts.fallback, opts) : "session"}`;
+	return `${modelPart} (${effortLabel(c.thinking)})`;
+}
+
 /** Uma linha legível por role pro notify/status. */
-export function summarizeConfig(cfg: HarnessModelConfig, opts: { fallback?: string } = {}): string {
-	const fb = opts.fallback ? `inherit→${opts.fallback}` : "inherit";
-	return HARNESS_ROLES.map((role) => {
-		const c = cfg.roles[role];
-		return `${role}: ${c.model ?? fb} · ${c.thinking ?? "inherit"}`;
-	}).join("  |  ");
+export function summarizeConfig(cfg: HarnessModelConfig, opts: RoleDisplayOpts = {}): string {
+	return HARNESS_ROLES.map((role) => `${role}: ${roleSummary(cfg, role, opts)}`).join("  |  ");
 }

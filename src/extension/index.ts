@@ -72,12 +72,12 @@ function clearModeChrome(ctx: ExtensionContext): void {
  * via PI_SUBAGENT_EXTRA_AGENT_DIRS — sem escrever no repo do usuário. pi-subagents
  * lê esse env na descoberta (por chamada de subagent), então setar no load basta.
  */
-/** Modelos "provider/id" disponíveis (auth configurada) via o modelRegistry da sessão. */
-function availableModelRefs(ctx: ExtensionCommandContext): string[] {
+/** Modelos disponíveis (auth configurada) via o modelRegistry da sessão: ref "provider/id" + nome amigável. */
+function registryModels(ctx: ExtensionCommandContext): Array<{ ref: string; label: string }> {
 	try {
-		const reg = (ctx as unknown as { modelRegistry?: { getAvailable?: () => Array<{ provider: string; id: string }>; getAll?: () => Array<{ provider: string; id: string }> } }).modelRegistry;
+		const reg = (ctx as unknown as { modelRegistry?: { getAvailable?: () => Array<{ provider: string; id: string; name?: string }>; getAll?: () => Array<{ provider: string; id: string; name?: string }> } }).modelRegistry;
 		const list = reg?.getAvailable?.() ?? reg?.getAll?.() ?? [];
-		return list.map((m) => `${m.provider}/${m.id}`);
+		return list.map((m) => ({ ref: `${m.provider}/${m.id}`, label: m.name ?? `${m.provider}/${m.id}` }));
 	} catch {
 		return [];
 	}
@@ -92,19 +92,25 @@ async function openModelConfig(ctx: ExtensionCommandContext): Promise<void> {
 	const cfg = loadModelConfig();
 	const settings = readPiSettings();
 	const fallback = defaultModelRef(settings);
+	const reg = registryModels(ctx);
+	const labels: Record<string, string> = {};
+	for (const m of reg) labels[m.ref] = m.label;
 	if (!ctx.hasUI) {
-		ctx.ui.notify(`pi-harness models — ${summarizeConfig(cfg, { fallback })}`);
+		ctx.ui.notify(`pi-harness models — ${summarizeConfig(cfg, { fallback, labels })}`);
 		return;
 	}
-	const models = modelOptions(availableModelRefs(ctx), settings);
+	const models = modelOptions(
+		reg.map((m) => m.ref),
+		settings,
+	);
 	const { showModelConfig } = await import("../model-config-view.ts");
-	const updated = await showModelConfig(ctx, { config: cfg, models, settings });
+	const updated = await showModelConfig(ctx, { config: cfg, models, labels, settings });
 	if (!updated) {
 		ctx.ui.notify("pi-harness: model config unchanged");
 		return;
 	}
 	saveModelConfig(updated);
-	ctx.ui.notify(`pi-harness: models saved — ${summarizeConfig(updated, { fallback })}`);
+	ctx.ui.notify(`pi-harness: models saved — ${summarizeConfig(updated, { fallback, labels })}`);
 }
 
 function contributeAgentsDir(): void {
