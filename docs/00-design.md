@@ -113,9 +113,11 @@ ensureProfile(repo, opts):
      # segue com o profile existente   ← o SKIP da feature 2
 ```
 
-`profile.json`: `{ version, generatedAt, sourceCommit, fingerprint:{lockfiles, rules,
-toolcfg, commitsSince} }`. Fingerprint = hash determinístico de lockfiles +
-`.agents/rules/`+AGENTS.md+`docs/adr/` + configs de tooling.
+`profile.json` (real, ver `src/profile.ts`): `{ version, generatedAt, firstGeneratedAt,
+refreshedAt?, refreshCount, sourceCommit, fingerprint:{lockfiles, rules, toolcfg} }` — os
+campos de proveniência (`firstGeneratedAt`/`refreshCount`) sustentam o refresh não-clobber.
+Fingerprint = hash determinístico de lockfiles + `.agents/rules/`+AGENTS.md+ADRs (`docs/adr/`,
+`docs/decisions/`, `adr/`, … — não supõe o local) + configs de tooling.
 
 **Refresh NÃO clobbera:** `library/` append/merge; `services.yaml` merge aditivo (diffa
 remoções pra aprovação); `architecture.md`/`harness.md` propõe diff em regiões
@@ -123,17 +125,28 @@ geradas-por-máquina, humano aprova; bump `version`/`sourceCommit`. Estável e d
 
 ---
 
-## Pontos abertos
+## Pontos abertos → fechados na implementação
 
-1. **Decisões gray-area: arquivo separado (`context.md`) ou seção em `feature.md`?**
-   (auditoria isolada vs menos arquivos)
-2. **Status das assertions: inline no `contract.md` (checkbox) ou `validation-state.json`
-   minúsculo** que o runner/validators escrevem? (contract deve ficar FROZEN — misturar
-   status mutável é smell; tender pro json pequeno separado.)
-3. **Monorepo:** 1 profile na raiz por enquanto; `profile/<app>/` depois se precisar.
-   `// ponytail: deferido`.
+1. **[RESOLVIDO] Gray-area: seção em `feature.md`.** Persistido como **tabela tagueada**
+   (`[assumido]`/`[confirmado]`) em `feature.md` (gray-area-policy, Fatia 3) — menos
+   arquivos, e a auditoria é preservada pela própria tag. `context.md` separado descartado.
+2. **[RESOLVIDO] Status das assertions: `status.json` separado.** `store_plan` grava
+   `status.json` (assertions `pending` → …) ao lado do `contract.md`, que fica **FROZEN**.
+   O smell de misturar status mutável no contract foi evitado — como o próprio doc já tendia.
+3. **[DEFERIDO] Monorepo:** 1 profile na raiz por enquanto; `profile/<app>/` depois se
+   precisar. `// ponytail: deferido` (única decisão genuinamente em aberto).
 
 ## Roadmap (fatias verticais)
+
+**Estado atual (síntese).** A espinha dorsal do runtime está **construída e provada e2e**
+com `pi --print` real: **converge (gray-area-policy) → contract FROZEN → plan (store_plan) →
+runner determinístico → ship gate (code-review 3 eixos + qa-validator) → lições**. Cobertura:
+142 testes verdes, 30 arquivos `src/`, 8 skills, 7 agents.
+
+Legenda: `[x]` = fatia fechada; `[~]` = **núcleo provado, resíduo = polish** (não "incompleto").
+O resíduo concentra-se na **UX/extensão** (fatias 0.5 / 0.6 / 1) — a ponta menos validada ao
+vivo comparada ao runtime. O **runtime central (2, 3, 4, 5 + enhancements) está provado**;
+os `[~]` em 3 e 5 são polish sobre peças já validadas e2e, não trabalho central pendente.
 
 ```
 [x] Fatia 0: scaffolding do repo (README, docs, .gitignore, estrutura)
