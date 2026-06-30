@@ -4,6 +4,7 @@ import {
 	cleanupOrphan,
 	type FeatureRun,
 	type FeatureRunLoopDeps,
+	grantRetryBudget,
 	injectShipGate,
 	insertFixTask,
 	nextPending,
@@ -98,7 +99,7 @@ test("runLoop: budget esgotado → paused (step_retry_limit_exceeded)", async ()
 	assert.equal(run.steps[0].attempts, 5, "não passa do budget");
 });
 
-test("runLoop: abort → paused (aborted), step volta a pending", async () => {
+test("runLoop: abort (graceful) → paused, step fica in_progress (resumível) + registra a sessão", async () => {
 	const run = planFeatureRun("feat-x", tasks("T1"), NOW);
 	const ac = new AbortController();
 	const spawn: SpawnFn = async () => {
@@ -108,7 +109,87 @@ test("runLoop: abort → paused (aborted), step volta a pending", async () => {
 	await runLoop("/repo", run, deps(spawn), ac.signal);
 	assert.equal(run.status, "paused");
 	assert.equal(run.pauseReason, "aborted");
-	assert.equal(run.steps[0].status, "pending");
+	assert.equal(run.steps[0].status, "in_progress", "graceful → mantém in_progress p/ re-attach");
+	assert.equal(run.steps[0].workerSessionIds.length, 1);
+	assert.equal(run.steps[0].attempts, 1);
+});
+
+test("runLoop: resume re-attacha a MESMA sessão (sem nova tentativa) e continua", async () => {
+	const run = planFeatureRun("feat-x", tasks("T1"), NOW);
+	const ac = new AbortController();
+	await runLoop("/repo", run, deps(async () => {
+		ac.abort();
+		return { code: 0, aborted: true };
+	}), ac.signal);
+	const wsid = run.steps[0].workerSessionIds.at(-1);
+	const seen: { resume?: boolean; wsid?: string }[] = [];
+	await runLoop("/repo", run, deps(async (_s, ctx) => {
+		seen.push({ resume: ctx.resume, wsid: ctx.workerSessionId });
+		return { code: 0, success: true };
+	}), undefined, { resume: true });
+	assert.equal(run.status, "completed");
+	assert.equal(run.steps[0].attempts, 1, "re-attach NÃO consome nova tentativa");
+	assert.equal(seen[0]?.resume, true);
+	assert.equal(seen[0]?.wsid, wsid, "re-attacha a mesma sessão do worker");
+});
+
+test("runLoop: 402/usage-limit → paused (usage_limit), step resumível", async () => {
+	const run = planFeatureRun("feat-x", tasks("T1"), NOW);
+	await runLoop("/repo", run, deps(spawnFrom({ T1: { code: null, usageLimit: true } })));
+	assert.equal(run.status, "paused");
+	assert.equal(run.pauseReason, "usage_limit");
+	assert.equal(run.steps[0].status, "in_progress");
+});
+
+test("runLoop: inactivity → requeue (step pending, tentativa contada) e segue até completar", async () => {
+	const run = planFeatureRun("feat-x", tasks("T1"), NOW);
+	let n = 0;
+	await runLoop("/repo", run, deps(async () => {
+		n++;
+		return n === 1 ? { code: null, inactivity: true } : { code: 0, success: true };
+	}));
+	assert.equal(run.status, "completed");
+	assert.equal(run.steps[0].attempts, 2, "inactivity contou 1 tentativa; a 2ª teve sucesso");
+});
+
+test("runLoop: retry-budget bonus permite re-rodar um step esgotado", async () => {
+	const run = planFeatureRun("feat-x", tasks("T1"), NOW);
+	for (let i = 0; i < 5; i++) await runLoop("/repo", run, deps(spawnFrom({ T1: { code: 1, success: false } })));
+	await runLoop("/repo", run, deps(spawnFrom({ T1: { code: 1, success: false } })));
+	assert.equal(run.status, "paused");
+	assert.equal(run.pauseReason, "step_retry_limit_exceeded");
+	grantRetryBudget(run, "T1");
+	await runLoop("/repo", run, deps(spawnFrom({ T1: { code: 0, success: true } })), undefined, { resume: true });
+	assert.equal(run.status, "completed");
+	assert.equal(run.steps[0].attempts, 6, "consumiu 1 do budget bônus");
+});
+
+test("runLoop: preempção no resume — pending acima do in_progress roda primeiro", async () => {
+	const run = planFeatureRun("feat-x", tasks("T1"), NOW);
+	const ac = new AbortController();
+	await runLoop("/repo", run, deps(async () => {
+		ac.abort();
+		return { code: 0, aborted: true };
+	}), ac.signal);
+	assert.equal(run.steps[0].status, "in_progress");
+	run.steps.unshift({ id: "PRE", kind: "task", skillName: "w", status: "pending", attempts: 0, workerSessionIds: [] });
+	const order: string[] = [];
+	await runLoop("/repo", run, deps(async (s) => {
+		order.push(s.id);
+		return { code: 0, success: true };
+	}), undefined, { resume: true });
+	assert.equal(run.status, "completed");
+	assert.equal(order[0], "PRE", "a task preemptora corre primeiro");
+	assert.ok(order.includes("T1"), "o step preemptado re-roda depois");
+});
+
+test("runLoop: heartbeat toca durante um spawn longo", async () => {
+	const run = planFeatureRun("feat-x", tasks("T1"), NOW);
+	let beats = 0;
+	const slow: SpawnFn = () => new Promise((res) => setTimeout(() => res({ code: 0, success: true }), 40));
+	await runLoop("/repo", run, deps(slow, { heartbeatMs: 8, log: (ev) => { if (ev === "heartbeat") beats++; } }));
+	assert.ok(beats >= 1, `esperava >=1 heartbeat, teve ${beats}`);
+	assert.equal(run.status, "completed");
 });
 
 test("cleanupOrphan: in_progress órfão volta a pending", () => {

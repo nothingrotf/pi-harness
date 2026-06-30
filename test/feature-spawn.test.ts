@@ -5,7 +5,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { FeatureStep } from "../src/feature-runner.ts";
-import { buildWorkerSystemPrompt, makeRealSpawn, piArgs } from "../src/feature-spawn.ts";
+import { buildWorkerSystemPrompt, isUsageLimitEvent, makeRealSpawn, piArgs } from "../src/feature-spawn.ts";
 import { type EndFeatureRunPayload, recordHandoff } from "../src/handoff.ts";
 
 function tmp(): string {
@@ -41,6 +41,24 @@ test("piArgs: task vs ship-gate tools; --append-system-prompt; model opcional", 
 	assert.ok(g.includes("--model") && g.includes("anthropic/claude"));
 	const thi = g.indexOf("--thinking");
 	assert.ok(thi !== -1 && g[thi + 1] === "high", "effort do role → --thinking high");
+});
+
+test("piArgs: session-backed quando há workerSessionId (--session-id + --session-dir, sem --no-session); resume → continue prompt", () => {
+	const a = piArgs(task, "/tmp/sys.md", {}, { workerSessionId: "ws_1", sessionDir: "/run/sessions" });
+	const si = a.indexOf("--session-id");
+	assert.ok(si !== -1 && a[si + 1] === "ws_1", "--session-id <wsid>");
+	assert.ok(a.includes("--session-dir") && a.includes("/run/sessions"));
+	assert.ok(!a.includes("--no-session"), "session-backed não usa --no-session");
+	const r = piArgs(task, "/tmp/sys.md", {}, { workerSessionId: "ws_1", resume: true });
+	assert.match(r.at(-1) as string, /Continue EXACTLY where you left off/);
+});
+
+test("isUsageLimitEvent: detecta 402/usage em evento de erro; ignora output normal", () => {
+	assert.equal(isUsageLimitEvent({ type: "error", message: "Request failed: 402 Payment Required" }), true);
+	assert.equal(isUsageLimitEvent({ type: "error", error: "no active subscription" }), true);
+	assert.equal(isUsageLimitEvent({ type: "assistant", text: "we hit the rate limit yesterday" }), false, "menção em texto normal não dispara");
+	assert.equal(isUsageLimitEvent({ type: "tool_result", output: "quota: 50%" }), false, "quota em tool output (não-erro) não dispara");
+	assert.equal(isUsageLimitEvent(null), false);
 });
 
 test("buildWorkerSystemPrompt: task inclui harness-worker-base + skill do profile + bootstrap", () => {
@@ -95,4 +113,37 @@ test("makeRealSpawn: handoff failure+returnToOrchestrator → reflete no outcome
 	// step sem handoff (worker crashou sem reportar) → success false
 	const out2 = await spawn({ ...task, id: "T-missing" }, { cwd });
 	assert.equal(out2.success, false);
+});
+
+/** child fake que fica ABERTO (não fecha) — p/ exercitar watchdog/402; expõe killed. */
+function openChild() {
+	const stdout = Object.assign(new EventEmitter(), { setEncoding: () => {} });
+	const child = Object.assign(new EventEmitter(), {
+		stdout,
+		killed: false,
+		kill() {
+			(child as { killed: boolean }).killed = true;
+		},
+	});
+	return child as typeof child & { stdout: EventEmitter & { setEncoding: () => void } };
+}
+
+test("makeRealSpawn: inativo além do inactivityMs → kill + inactivity", async () => {
+	const cwd = tmp();
+	const child = openChild();
+	const spawn = makeRealSpawn({ featureId: "feat-x", spawnImpl: (() => child) as unknown as typeof import("node:child_process").spawn, inactivityMs: 10, genSessionId: () => "ws" });
+	const out = await spawn(task, { cwd, workerSessionId: "ws" });
+	assert.equal(out.inactivity, true);
+	assert.equal(child.killed, true);
+});
+
+test("makeRealSpawn: evento 402 no stdout → usageLimit + kill (auto-pausa)", async () => {
+	const cwd = tmp();
+	const child = openChild();
+	const spawn = makeRealSpawn({ featureId: "feat-x", spawnImpl: (() => child) as unknown as typeof import("node:child_process").spawn, inactivityMs: 0, genSessionId: () => "ws" });
+	const p = spawn(task, { cwd, workerSessionId: "ws" });
+	setImmediate(() => child.stdout.emit("data", `${JSON.stringify({ type: "error", message: "402 Payment Required" })}\n`));
+	const out = await p;
+	assert.equal(out.usageLimit, true);
+	assert.equal(child.killed, true);
 });

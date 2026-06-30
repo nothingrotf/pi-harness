@@ -36,6 +36,9 @@ export interface FeatureStep {
 	fulfills?: string[];
 	status: StepStatus;
 	attempts: number;
+	/** ids de sessão usados por tentativa (analog de feature.workerSessionIds, doc 07). O
+	 * último = a sessão corrente/resumível (resume re-attacha; nova tentativa = id novo). */
+	workerSessionIds: string[];
 }
 
 export interface FeatureRun {
@@ -48,6 +51,8 @@ export interface FeatureRun {
 	createdAt: string;
 	updatedAt: string;
 	pauseReason?: string;
+	/** budget extra por step concedido no resume após esgotamento (doc 07: featureRetryBudgetBonus). */
+	retryBudgetBonus?: Record<string, number>;
 }
 
 /** Resultado de spawnar um child. `aborted` = interrompido (SIGINT/abort). */
@@ -58,11 +63,19 @@ export interface SpawnOutcome {
 	success?: boolean;
 	/** o worker/validator pediu retorno ao orchestrator (EndFeatureRun.returnToOrchestrator). */
 	returnToOrchestrator?: boolean;
+	/** 402/usage-limit detectado no stream → auto-pausa resumível (doc 07: unrecoverable_usage_402). */
+	usageLimit?: boolean;
+	/** watchdog matou o child por inatividade → morte do worker, requeue (doc 07: session_inactivity). */
+	inactivity?: boolean;
 }
 
 export interface SpawnCtx {
 	cwd: string;
 	signal?: AbortSignal;
+	/** id de sessão do worker desta tentativa (engine-owned). O spawn real abre `--session-id <id>`. */
+	workerSessionId?: string;
+	/** re-attacha a sessão existente ("continue where you left off") em vez de começar do zero. */
+	resume?: boolean;
 }
 
 export type SpawnFn = (step: FeatureStep, ctx: SpawnCtx) => Promise<SpawnOutcome>;
@@ -80,6 +93,16 @@ export interface FeatureRunLoopDeps {
 	budget?: number;
 	/** ship-gate skills a pular (skipScrutiny/skipUserTesting) — de skippedGateSkills(config). */
 	gateSkip?: ReadonlySet<string>;
+	/** gerador de worker session id (injetável p/ teste; default aleatório). */
+	genSessionId?: () => string;
+	/** intervalo do heartbeat (toca updatedAt enquanto um spawn longo roda; doc 07: 180000). off por default. */
+	heartbeatMs?: number;
+}
+
+/** Opções do runLoop. `resume` = continuar um run persistido (não reclama órfãos; re-attacha in_progress). */
+export interface RunLoopOpts {
+	resume?: boolean;
+	heartbeatMs?: number;
 }
 
 /** Os steps do ship gate, em ordem (scrutiny → user-testing → delivery). */
@@ -90,11 +113,23 @@ export const SHIP_GATE: readonly { id: string; skillName: string }[] = [
 ];
 
 const defaultNow = (): string => new Date().toISOString();
+const defaultGenSessionId = (): string => `ws_${Math.random().toString(36).slice(2, 10)}`;
 
 let counter = 0;
 function genRunId(now: () => string): string {
 	counter = (counter + 1) % 1e6;
 	return `ftr_${now().replace(/[^0-9]/g, "").slice(8, 17)}${counter}`;
+}
+
+/** O step deixado in_progress (graceful pause / resume pendente). undefined se nenhum. */
+export function inProgressStep(run: FeatureRun): FeatureStep | undefined {
+	return run.steps.find((s) => s.status === "in_progress");
+}
+
+/** Concede budget extra a um step esgotado (analog do grantRetryBudgetForExhaustedFeatures, doc 07). */
+export function grantRetryBudget(run: FeatureRun, stepId: string, n: number = STEP_ATTEMPT_BUDGET): void {
+	run.retryBudgetBonus = run.retryBudgetBonus ?? {};
+	run.retryBudgetBonus[stepId] = (run.retryBudgetBonus[stepId] ?? 0) + n;
 }
 
 function touch(run: FeatureRun, deps: FeatureRunLoopDeps): void {
@@ -131,6 +166,7 @@ export function planFeatureRun(
 			fulfills: t.fulfills,
 			status: "pending" as const,
 			attempts: 0,
+			workerSessionIds: [],
 		})),
 		gateInjected: false,
 		createdAt: ts,
@@ -143,7 +179,7 @@ export function injectShipGate(run: FeatureRun, skip: ReadonlySet<string> = new 
 	if (run.gateInjected) return;
 	for (const g of SHIP_GATE) {
 		if (skip.has(g.skillName)) continue; // skipScrutiny→code-review; skipUserTesting→qa-validator
-		run.steps.push({ id: g.id, kind: "ship-gate", skillName: g.skillName, status: "pending", attempts: 0 });
+		run.steps.push({ id: g.id, kind: "ship-gate", skillName: g.skillName, status: "pending", attempts: 0, workerSessionIds: [] });
 	}
 	run.gateInjected = true;
 }
@@ -151,9 +187,15 @@ export function injectShipGate(run: FeatureRun, skip: ReadonlySet<string> = new 
 /** Insere uma fix task ANTES do primeiro step de ship gate (analog do insertFeatureAtTop pra fixes). */
 export function insertFixTask(run: FeatureRun, task: { id: string; skillName: string; fulfills?: string[] }): void {
 	const gateIdx = run.steps.findIndex((s) => s.kind === "ship-gate");
-	const step: FeatureStep = { id: task.id, kind: "task", skillName: task.skillName, fulfills: task.fulfills, status: "pending", attempts: 0 };
+	const step: FeatureStep = { id: task.id, kind: "task", skillName: task.skillName, fulfills: task.fulfills, status: "pending", attempts: 0, workerSessionIds: [] };
 	if (gateIdx < 0) run.steps.push(step);
 	else run.steps.splice(gateIdx, 0, step);
+}
+
+function nextWorkerSessionId(step: FeatureStep, gen: () => string): string {
+	const wsid = gen();
+	step.workerSessionIds = [...(step.workerSessionIds ?? []), wsid];
+	return wsid;
 }
 
 /**
@@ -162,11 +204,30 @@ export function insertFixTask(run: FeatureRun, task: { id: string; skillName: st
  * as tasks acabam; failure/returnToOrchestrator → orchestrator_turn; pausa em abort/budget;
  * orphan cleanup no início. Muta e persiste `run`.
  */
-export async function runLoop(cwd: string, run: FeatureRun, deps: FeatureRunLoopDeps, signal?: AbortSignal): Promise<FeatureRun> {
-	const budget = deps.budget ?? STEP_ATTEMPT_BUDGET;
-	cleanupOrphan(run);
+export async function runLoop(cwd: string, run: FeatureRun, deps: FeatureRunLoopDeps, signal?: AbortSignal, opts: RunLoopOpts = {}): Promise<FeatureRun> {
+	const base = deps.budget ?? STEP_ATTEMPT_BUDGET;
+	const genId = deps.genSessionId ?? defaultGenSessionId;
+	const heartbeatMs = opts.heartbeatMs ?? deps.heartbeatMs;
+	// Fresh start → reclama órfãos (recuperação de HARD kill: in_progress → pending, re-roda do zero).
+	// Resume → preserva o in_progress (re-attacha a sessão do worker = "continue where you left off").
+	if (!opts.resume) cleanupOrphan(run);
 	run.status = "running";
 	touch(run, deps);
+
+	// Preempção por ordenação (doc 07): no resume, se um pending está ACIMA do in_progress
+	// (ex.: fix task inserida no topo), requeue o in_progress → a fix corre primeiro.
+	if (opts.resume) {
+		const ip = inProgressStep(run);
+		if (ip) {
+			const ipIdx = run.steps.indexOf(ip);
+			const firstPendingIdx = run.steps.findIndex((s) => s.status === "pending");
+			if (firstPendingIdx >= 0 && firstPendingIdx < ipIdx) {
+				ip.status = "pending";
+				deps.log?.("step_preempted", { id: ip.id });
+				touch(run, deps);
+			}
+		}
+	}
 
 	while (run.status === "running") {
 		if (signal?.aborted) {
@@ -174,45 +235,84 @@ export async function runLoop(cwd: string, run: FeatureRun, deps: FeatureRunLoop
 			run.pauseReason = "aborted";
 			break;
 		}
-		const step = nextPending(run);
+
+		// Re-attach: um step in_progress (graceful pause / resume) continua sua sessão existente,
+		// SEM consumir uma nova tentativa. Senão, pega o próximo pending (tentativa nova).
+		let step = inProgressStep(run);
+		const reattach = step != null;
 		if (!step) {
-			// Tasks acabaram: injeta o ship gate 1x; depois disso → completo.
-			if (!run.gateInjected) {
-				injectShipGate(run, deps.gateSkip);
-				deps.log?.("ship_gate_injected", { steps: run.steps.filter((s) => s.kind === "ship-gate").map((s) => s.id) });
-				touch(run, deps);
-				continue;
+			step = nextPending(run);
+			if (!step) {
+				// Tasks acabaram: injeta o ship gate 1x; depois disso → completo.
+				if (!run.gateInjected) {
+					injectShipGate(run, deps.gateSkip);
+					deps.log?.("ship_gate_injected", { steps: run.steps.filter((s) => s.kind === "ship-gate").map((s) => s.id) });
+					touch(run, deps);
+					continue;
+				}
+				run.status = "completed";
+				break;
 			}
-			run.status = "completed";
-			break;
-		}
-		if (step.attempts >= budget) {
-			run.status = "paused";
-			run.pauseReason = "step_retry_limit_exceeded";
-			deps.log?.("step_paused", { id: step.id, reason: "step_retry_limit_exceeded", attempts: step.attempts });
-			break;
+			const budget = base + (run.retryBudgetBonus?.[step.id] ?? 0);
+			if (step.attempts >= budget) {
+				run.status = "paused";
+				run.pauseReason = "step_retry_limit_exceeded";
+				deps.log?.("step_paused", { id: step.id, reason: "step_retry_limit_exceeded", attempts: step.attempts });
+				break;
+			}
+			step.status = "in_progress";
+			step.attempts++;
+			const wsid = nextWorkerSessionId(step, genId);
+			touch(run, deps);
+			deps.log?.("step_started", { id: step.id, kind: step.kind, skillName: step.skillName, attempt: step.attempts, workerSessionId: wsid });
 		}
 
-		step.status = "in_progress";
-		step.attempts++;
-		touch(run, deps);
-		deps.log?.("step_started", { id: step.id, kind: step.kind, skillName: step.skillName, attempt: step.attempts });
+		const workerSessionId = step.workerSessionIds.at(-1) ?? nextWorkerSessionId(step, genId);
+		if (reattach) deps.log?.("step_resumed", { id: step.id, workerSessionId });
+
+		// Heartbeat: enquanto o spawn roda, toca updatedAt periodicamente (beacon de vida, doc 07).
+		const beat = heartbeatMs
+			? setInterval(() => {
+					run.updatedAt = (deps.now ?? defaultNow)();
+					deps.persist?.(run);
+					deps.log?.("heartbeat", { id: step.id });
+				}, heartbeatMs)
+			: null;
+		(beat as { unref?: () => void } | null)?.unref?.();
 
 		let res: SpawnOutcome;
 		try {
-			res = await deps.spawn(step, { cwd, signal });
+			res = await deps.spawn(step, { cwd, signal, workerSessionId, resume: reattach });
 		} catch (e) {
 			res = { code: 1 };
 			deps.log?.("step_error", { id: step.id, error: (e as Error).message });
+		} finally {
+			if (beat) clearInterval(beat);
 		}
 
 		if (res.aborted) {
-			step.status = "pending";
+			// Pause GRACEFUL (SIGTERM nosso): preserva o step in_progress → resume re-attacha o MESMO worker.
 			run.status = "paused";
 			run.pauseReason = "aborted";
 			deps.log?.("step_paused", { id: step.id, reason: "aborted" });
 			touch(run, deps);
 			break;
+		}
+		if (res.usageLimit) {
+			// 402/usage-limit: auto-pausa resumível (doc 07: unrecoverable_usage_402) — mantém in_progress.
+			run.status = "paused";
+			run.pauseReason = "usage_limit";
+			deps.log?.("step_paused", { id: step.id, reason: "usage_limit" });
+			touch(run, deps);
+			break;
+		}
+		if (res.inactivity) {
+			// Morte por inatividade (doc 07: session_inactivity → failAndRequeue): requeue, segue o loop
+			// (a tentativa já foi contada; o budget guard pega runaway).
+			step.status = "pending";
+			deps.log?.("step_failed", { id: step.id, kind: step.kind, reason: "inactivity_timeout" });
+			touch(run, deps);
+			continue;
 		}
 
 		const ok = res.code === 0 && res.success === true && !res.returnToOrchestrator;
@@ -221,8 +321,8 @@ export async function runLoop(cwd: string, run: FeatureRun, deps: FeatureRunLoop
 			deps.log?.("step_completed", { id: step.id, kind: step.kind });
 			touch(run, deps);
 		} else {
-			// Falha/returnToOrchestrator: step volta a pending (re-tenta até o budget) e o
-			// run devolve controle ao orchestrator (que cria fix tasks e resume).
+			// Falha/returnToOrchestrator: step volta a pending (próxima tentativa = worker NOVO,
+			// do zero) e o run devolve controle ao orchestrator (que cria fix tasks e resume).
 			step.status = "pending";
 			run.status = "orchestrator_turn";
 			deps.log?.("step_returned", { id: step.id, kind: step.kind, code: res.code, returnToOrchestrator: !!res.returnToOrchestrator });

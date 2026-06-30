@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { buildFeatureRun, featureProgress, type Plan, readFeatureRun, readPlan, readStatus, storePlan, validatePlan, writeFeatureRun } from "../src/plan.ts";
+import { buildFeatureRun, featureProgress, loadOrBuildFeatureRun, type Plan, readFeatureRun, readPlan, readStatus, storePlan, validatePlan, writeFeatureRun } from "../src/plan.ts";
 
 function tmp(): string {
 	return fs.mkdtempSync(path.join(os.tmpdir(), "harness-plan-"));
@@ -103,6 +103,56 @@ test("writeFeatureRun/readFeatureRun: round-trip (state.json do runner headless,
 	assert.equal(back?.steps[0].status, "completed");
 	assert.equal(back?.featureId, "feat-x");
 	assert.equal(readFeatureRun(d, "nao-existe"), null);
+});
+
+test("loadOrBuildFeatureRun: sem run persistido → fresh do plano (resume:false)", () => {
+	const d = tmp();
+	storePlan(d, plan());
+	const rp = loadOrBuildFeatureRun(d, "feat-x", () => "t");
+	assert.ok(rp);
+	assert.equal(rp?.resume, false);
+	assert.equal(rp?.run.steps.length, 3);
+	assert.equal(loadOrBuildFeatureRun(d, "nao-existe"), null, "sem plan → null");
+});
+
+test("loadOrBuildFeatureRun: status 'paused' (graceful) → resume:true (re-attach)", () => {
+	const d = tmp();
+	storePlan(d, plan());
+	const run = buildFeatureRun(d, "feat-x", () => "t");
+	if (!run) return;
+	run.status = "paused";
+	run.pauseReason = "aborted";
+	run.steps[0].status = "in_progress";
+	writeFeatureRun(d, run);
+	const rp = loadOrBuildFeatureRun(d, "feat-x");
+	assert.equal(rp?.resume, true);
+	assert.equal(rp?.run.steps[0].status, "in_progress", "preserva o in_progress p/ re-attach");
+});
+
+test("loadOrBuildFeatureRun: status 'running' congelado (HARD kill) → resume:false", () => {
+	const d = tmp();
+	storePlan(d, plan());
+	const run = buildFeatureRun(d, "feat-x", () => "t");
+	if (!run) return;
+	run.status = "running"; // congelado por um kill sem hook
+	run.steps[0].status = "in_progress";
+	writeFeatureRun(d, run);
+	const rp = loadOrBuildFeatureRun(d, "feat-x");
+	assert.equal(rp?.resume, false, "hard kill → o runLoop reclama o órfão (re-roda do zero)");
+});
+
+test("loadOrBuildFeatureRun: pausa por esgotamento → concede budget bônus", () => {
+	const d = tmp();
+	storePlan(d, plan());
+	const run = buildFeatureRun(d, "feat-x", () => "t");
+	if (!run) return;
+	run.status = "paused";
+	run.pauseReason = "step_retry_limit_exceeded";
+	run.steps[0].attempts = 5;
+	writeFeatureRun(d, run);
+	const rp = loadOrBuildFeatureRun(d, "feat-x");
+	assert.equal(rp?.resume, true);
+	assert.equal(rp?.run.retryBudgetBonus?.T1, 5, "step esgotado ganha budget fresco no resume");
 });
 
 test("featureProgress: tasks done/total (do feature-run) + assertions passed/failed (do status)", () => {

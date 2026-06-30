@@ -11,7 +11,7 @@
  */
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { type FeatureRun, planFeatureRun } from "./feature-runner.ts";
+import { type FeatureRun, grantRetryBudget, planFeatureRun, STEP_ATTEMPT_BUDGET } from "./feature-runner.ts";
 import { appendProgress, runDir } from "./handoff.ts";
 
 export interface Task {
@@ -166,4 +166,30 @@ export function readFeatureRun(cwd: string, featureId: string): FeatureRun | nul
 	} catch {
 		return null;
 	}
+}
+
+export interface ResumePlan {
+	run: FeatureRun;
+	/** true = continuar um run pausado GRACEFULLY (re-attacha o in_progress). */
+	resume: boolean;
+}
+
+/**
+ * Carrega o feature-run persistido p/ CONTINUAR, ou constrói fresh do plano (analog do
+ * "qual resume" do start_mission_run, doc 07). A distinção graceful×hard sai do estado em disco:
+ *   - status "paused"  → saída GRACEFUL (abort/402) → resume:true, re-attacha o worker in_progress;
+ *   - status "running" congelado (HARD kill, sem hook) → resume:false → o runLoop reclama o órfão
+ *     (in_progress → pending, re-roda do zero sobre os commits que o worker morto já fez);
+ *   - sem run persistido → fresh do plan.json.
+ * Concede budget fresco quando a pausa anterior foi por esgotamento (grantRetryBudgetForExhaustedFeatures).
+ */
+export function loadOrBuildFeatureRun(cwd: string, featureId: string, now?: () => string): ResumePlan | null {
+	const existing = readFeatureRun(cwd, featureId);
+	const run = existing ?? buildFeatureRun(cwd, featureId, now);
+	if (!run) return null;
+	const resume = existing?.status === "paused";
+	if (existing?.pauseReason === "step_retry_limit_exceeded") {
+		for (const s of run.steps) if (s.attempts >= STEP_ATTEMPT_BUDGET) grantRetryBudget(run, s.id);
+	}
+	return { run, resume };
 }

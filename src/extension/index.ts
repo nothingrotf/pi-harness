@@ -475,16 +475,18 @@ export default function registerHarnessExtension(pi: ExtensionAPI): void {
 					// CI/headless: o FeatureRunner spawna `pi --print` por step (NÃO in-chat) e BLOQUEIA
 					// até terminar. Opt-in explícito — o default visível é o nativo acima.
 					const fid = mode.featureId;
-					const run = readFeatureRun(ctx.cwd, fid) ?? buildFeatureRun(ctx.cwd, fid);
-					if (!run) {
+					const { makeRealSpawn } = await import("../feature-spawn.ts");
+					const { runLoop } = await import("../feature-runner.ts");
+					const { loadOrBuildFeatureRun, writeFeatureRun } = await import("../plan.ts");
+					const { appendProgress } = await import("../handoff.ts");
+					// Resume graceful×hard: continua o feature-run persistido (re-attacha worker) ou reclama órfão.
+					const rp = loadOrBuildFeatureRun(ctx.cwd, fid);
+					if (!rp) {
 						ctx.ui.notify("pi-harness: no plan to run.", "warning");
 						return;
 					}
-					ctx.ui.notify(`pi-harness: HEADLESS run of "${fid}" (FeatureRunner; pi --print children, not in-chat). Blocks until done.`);
-					const { makeRealSpawn } = await import("../feature-spawn.ts");
-					const { runLoop } = await import("../feature-runner.ts");
-					const { writeFeatureRun } = await import("../plan.ts");
-					const { appendProgress } = await import("../handoff.ts");
+					const { run, resume } = rp;
+					ctx.ui.notify(`pi-harness: HEADLESS ${resume ? "resume" : "run"} of "${fid}" (FeatureRunner; pi --print children, not in-chat). Blocks until done.`);
 					// Branch-per-feature também no headless (mesma semântica conservadora; nunca-fatal).
 					try {
 						const { ensureFeatureBranch } = await import("../branch-ops.ts");
@@ -496,12 +498,18 @@ export default function registerHarnessExtension(pi: ExtensionAPI): void {
 					const model = (ctx as { model?: { id?: string } }).model?.id;
 					const cfg = loadModelConfig();
 					const spawn = makeRealSpawn({ featureId: fid, model, config: cfg });
-					await runLoop(ctx.cwd, run, {
-						spawn,
-						persist: (r) => writeFeatureRun(ctx.cwd, r),
-						log: (ev, extra) => appendProgress(ctx.cwd, fid, ev, extra ?? {}),
-						gateSkip: skippedGateSkills(cfg), // skipScrutiny/skipUserTesting do config
-					});
+					await runLoop(
+						ctx.cwd,
+						run,
+						{
+							spawn,
+							persist: (r) => writeFeatureRun(ctx.cwd, r),
+							log: (ev, extra) => appendProgress(ctx.cwd, fid, ev, extra ?? {}),
+							gateSkip: skippedGateSkills(cfg), // skipScrutiny/skipUserTesting do config
+						},
+						undefined,
+						{ resume, heartbeatMs: 180000 },
+					);
 					ctx.ui.notify(`pi-harness: headless run ${run.status}${run.pauseReason ? ` (${run.pauseReason})` : ""}.`);
 					return;
 				}

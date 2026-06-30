@@ -11,7 +11,10 @@
  */
 import { appendProgress } from "./handoff.ts";
 import { type FeatureRun, type FeatureRunLoopDeps, type FeatureRunStatus, runLoop, type SpawnFn } from "./feature-runner.ts";
-import { buildFeatureRun, readPlan, writeFeatureRun } from "./plan.ts";
+import { loadOrBuildFeatureRun, readPlan, writeFeatureRun } from "./plan.ts";
+
+/** Heartbeat default do headless (doc 07: FTi=180000, 3 min) — beacon de vida em runs longos. */
+const HEADLESS_HEARTBEAT_MS = 180000;
 
 /** Produz plan.json a partir do request. Real: spawna `pi --print` rodando harness-feature-converge
  * (headless). Teste: escreve um plan.json fake. */
@@ -25,6 +28,8 @@ export interface HeadlessOpts {
 	persist?: (run: FeatureRun) => void;
 	log?: (ev: string, extra?: Record<string, unknown>) => void;
 	signal?: AbortSignal;
+	/** intervalo do heartbeat (default 3 min); 0 desliga. */
+	heartbeatMs?: number;
 }
 
 export type HeadlessStage = "converge" | "run";
@@ -52,19 +57,20 @@ export async function runHeadlessFeature(cwd: string, opts: HeadlessOpts): Promi
 		log("headless_converge_done", { featureId: opts.featureId, planned: !!readPlan(cwd, opts.featureId) });
 	}
 
-	const run = buildFeatureRun(cwd, opts.featureId);
-	if (!run) {
+	// 2. Run determinístico (FeatureRunner): CONTINUA o run persistido (resume graceful×hard) ou
+	// constrói fresh do plano; workers sequenciais → ship gate.
+	const rp = loadOrBuildFeatureRun(cwd, opts.featureId);
+	if (!rp) {
 		return { ok: false, stage: "converge", reason: "converge produced no plan.json (the feature did not converge)" };
 	}
-
-	// 2. Run determinístico (FeatureRunner): workers sequenciais → ship gate.
-	log("headless_run_start", { featureId: opts.featureId, steps: run.steps.length });
+	const { run, resume } = rp;
+	log("headless_run_start", { featureId: opts.featureId, steps: run.steps.length, resume });
 	const deps: FeatureRunLoopDeps = {
 		spawn: opts.spawn,
 		persist: opts.persist ?? ((r) => writeFeatureRun(cwd, r)),
 		log,
 	};
-	const final = await runLoop(cwd, run, deps, opts.signal);
+	const final = await runLoop(cwd, run, deps, opts.signal, { resume, heartbeatMs: opts.heartbeatMs ?? HEADLESS_HEARTBEAT_MS });
 	return {
 		ok: final.status === "completed",
 		stage: "run",

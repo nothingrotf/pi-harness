@@ -7,7 +7,7 @@ import { buildConvergeDispatch } from "../src/converge-dispatch.ts";
 import type { SpawnFn } from "../src/feature-runner.ts";
 import { convergePiArgs } from "../src/feature-spawn.ts";
 import { type ConvergeFn, runHeadlessFeature } from "../src/headless.ts";
-import { storePlan } from "../src/plan.ts";
+import { buildFeatureRun, storePlan, writeFeatureRun } from "../src/plan.ts";
 
 function tmp(): string {
 	return fs.mkdtempSync(path.join(os.tmpdir(), "harness-headless-"));
@@ -87,6 +87,46 @@ test("runHeadlessFeature: idempotente — plan.json existente pula o converge (r
 	});
 	assert.equal(called, false, "não re-converge se já há plan.json");
 	assert.equal(res.ok, true);
+});
+
+test("runHeadlessFeature: graceful pause então resume re-attacha e completa", async () => {
+	const d = tmp();
+	storePlan(d, { featureId: "feat-x", tasks: oneTask, assertions: ["A1"], createdAt: "t" });
+	let calls = 0;
+	const seen: boolean[] = [];
+	const spawn: SpawnFn = async (_s, ctx) => {
+		calls++;
+		seen.push(!!ctx.resume);
+		return calls === 1 ? { code: 0, aborted: true } : { code: 0, success: true };
+	};
+	const r1 = await runHeadlessFeature(d, { request: "x", featureId: "feat-x", converge: async () => {}, spawn, log: () => {} });
+	assert.equal(r1.ok, false);
+	assert.equal(r1.status, "paused");
+	assert.equal(r1.run?.steps[0].status, "in_progress", "graceful → in_progress persistido");
+	const r2 = await runHeadlessFeature(d, { request: "x", featureId: "feat-x", converge: async () => {}, spawn, log: () => {} });
+	assert.equal(r2.ok, true);
+	assert.equal(r2.status, "completed");
+	assert.equal(seen[1], true, "a 2ª chamada re-attacha (resume:true)");
+});
+
+test("runHeadlessFeature: hard-kill (status running congelado) → requeue do zero (resume:false)", async () => {
+	const d = tmp();
+	storePlan(d, { featureId: "feat-x", tasks: oneTask, assertions: ["A1"], createdAt: "t" });
+	const run = buildFeatureRun(d, "feat-x", () => "t");
+	if (!run) return;
+	run.status = "running"; // congelado por um kill sem hook
+	run.steps[0].status = "in_progress";
+	run.steps[0].attempts = 1;
+	run.steps[0].workerSessionIds = ["ws_dead"];
+	writeFeatureRun(d, run);
+	const seen: boolean[] = [];
+	const spawn: SpawnFn = async (_s, ctx) => {
+		seen.push(!!ctx.resume);
+		return { code: 0, success: true };
+	};
+	const res = await runHeadlessFeature(d, { request: "x", featureId: "feat-x", converge: async () => {}, spawn, log: () => {} });
+	assert.equal(res.ok, true);
+	assert.equal(seen[0], false, "hard-kill → re-roda do zero (resume:false), não re-attacha o worker morto");
 });
 
 test("runHeadlessFeature: worker falha → para com reason (ok:false)", async () => {
