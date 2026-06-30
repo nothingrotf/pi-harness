@@ -50,7 +50,7 @@ export function phaseGlyph(phase: Phase): string {
 	}
 }
 
-/** O badge colado no input (widget aboveEditor). */
+/** O badge colado no input (widget aboveEditor). [legado — não usado: incompatível c/ extensões de editor] */
 export function badgeText(m: HarnessMode): string {
 	if (!m.active) return "⬢ pi-harness";
 	const parts = ["⬢ pi-harness"];

@@ -2,7 +2,7 @@
  * Worker bootstrap — a primeira mensagem injetada num child de worker/validator
  * (porte da função de bootstrap do worker, docs/02). Pra steps de TASK manda rodar
  * `harness-worker-base` → a skill da task → `EndFeatureRun`. Pra steps de SHIP GATE
- * (harness-code-review/harness-qa-validator) pula o harness-worker-base e invoca o validator direto (igual ao
+ * (harness-code-review/harness-qa-validator/harness-deliver) pula o harness-worker-base e invoca o validator direto (igual ao
  * referência: validators pulam o harness-worker-base), sempre com returnToOrchestrator.
  *
  * Função pura (testável) — o spawn real injeta o retorno como primeira mensagem.

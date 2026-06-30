@@ -99,6 +99,24 @@ collide with the repo's own). Include:
   is covered by the harness-qa-validator E2E surface (no internal-mock unit test), fat/business-rule code
   gets focused per-rule tests. Reference it here so workers and validators share one standard;
   do NOT impose blanket per-layer coverage quotas.
+- **Delivery & Branching** — document the repo's VCS convention: the **branch naming template**, the
+  **base branch**, and the **merge strategy** the `harness-deliver` ship-gate step follows. Infer the
+  convention from the repo (`git branch -a` → dominant prefixes like `feat/`,`fix/`,`chore/`; the
+  default base from `git symbolic-ref refs/remotes/origin/HEAD` or the most-merged branch) and
+  **confirm the base with the user** (don't guess between `main`/`develop`/`next`).
+
+  Then ALSO write the machine-readable mirror **`.harness/profile/delivery.json`** — the harness
+  **code** reads this at run-start to create the feature branch (the prose in harness.md is for
+  humans/LLM; `delivery.json` is the source of truth the code parses). Schema:
+  ```json
+  { "branch": { "enabled": true, "template": "{type}/{key}-{slug}", "defaultType": "feat",
+                "base": "<confirmed-base>", "maxSlugLen": 40 } }
+  ```
+  Placeholders: `{type}` (feat/fix/chore, inferred from the feature), `{key}` (the Linear/Jira
+  issue, e.g. `adm-84`, dropped cleanly when absent), `{slug}` (kebab of the feature title). Match
+  `template` to the repo's real convention. Set `enabled:false` to keep committing on the current
+  branch (opt-out). At the first `/harness run`, the harness creates/switches to that branch
+  **only when on the base with a clean tree** (otherwise it respects the current branch).
 
 ## Phase 6 — Worker System → skills/<worker-type>/
 

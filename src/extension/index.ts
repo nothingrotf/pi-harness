@@ -14,10 +14,11 @@
  * ponytail: ensureProfile/converge/setup ainda são stubs (Fatias 1-3). O que está
  * vivo aqui é a camada de UX, com smoke test ao vivo pendente pro recolor do input.
  */
+import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { badgeText, featureIdFromRequest, idleMode, statusDetail, statusText, type HarnessMode } from "../mode.ts";
+import { featureIdFromRequest, idleMode, statusDetail, statusText, type HarnessMode } from "../mode.ts";
 import { buildGateModel, type GateActionValue, summarizeSnapshot } from "../readiness.ts";
 import { appendAudit, ensureReadinessInputs, readSnapshot } from "../readiness-pipeline.ts";
 import { buildAuditDispatch, buildFixDispatch } from "../readiness-dispatch.ts";
@@ -28,14 +29,21 @@ import { registerProfileStoreTool } from "../profile-store-tool.ts";
 import { registerEndFeatureRunTool } from "../endfeaturerun-tool.ts";
 import { registerPlanStoreTool } from "../plan-store-tool.ts";
 import { registerLessonsStoreTool } from "../lessons-store-tool.ts";
+import { registerDeliveryStoreTool } from "../delivery-store-tool.ts";
 import { buildConvergeDispatch } from "../converge-dispatch.ts";
 import { buildRunDispatch } from "../run-dispatch.ts";
-import { defaultModelRef, loadModelConfig, modelOptions, readPiSettings, saveModelConfig, summarizeConfig } from "../model-config.ts";
+import { defaultModelRef, loadModelConfig, modelOptions, readPiSettings, saveModelConfig, skippedGateSkills, summarizeConfig } from "../model-config.ts";
 import { buildFeatureRun, featureProgress, readFeatureRun, readPlan } from "../plan.ts";
+import { appendProgress } from "../handoff.ts";
 import { computeFingerprint } from "../fingerprint.ts";
 import { ensureProfile } from "../profile.ts";
+import { StripController } from "../control-strip.ts";
+import { readControlModel } from "../control-model.ts";
+import { mergeDecisionMessage, readDeliveryRecord } from "../delivery.ts";
+import { registerRunCardRenderer, sendRunCard } from "../run-card-view.ts";
+import { agentsFromArgs, agentsFromDetails, clearAllLiveAgents, clearLiveAgents, isSubagentTool, setLiveAgents } from "../live-agents.ts";
+import { clearMode, loadMode, saveMode } from "../mode-store.ts";
 
-const WIDGET_KEY = "harness-mode";
 const STATUS_KEY = "harness";
 
 /** Nível mínimo de readiness pra liberar sem fricção. */
@@ -43,27 +51,19 @@ const READINESS_TARGET_LEVEL = 4;
 
 
 
+/**
+ * Sinal de modo COMPATÍVEL: APENAS `setStatus` — composto pela statusline (o pi-fusiontui
+ * lê getExtensionStatuses() e o mostra; o core também renderiza setStatus). NUNCA tocamos
+ * no editor (setEditorComponent) nem em widgets aboveEditor: o pi-fusiontui é dono do editor
+ * Droid + do footer, e clobberá-los quebra a UI dele. Compatibilidade > chrome próprio.
+ */
 async function applyModeChrome(ctx: ExtensionContext, mode: HarnessMode): Promise<void> {
 	if (!ctx.hasUI) return;
-	const accent = (s: string) => ctx.ui.theme.fg("accent", s);
-	// 1. badge colado no input (sinal PRIMÁRIO, sempre)
-	ctx.ui.setWidget(WIDGET_KEY, [accent(badgeText(mode))], { placement: "aboveEditor" });
-	// 2. status no rodapé
 	ctx.ui.setStatus(STATUS_KEY, statusText(mode));
-	// 3. input recolorido (REFORÇO, opcional): isolado pra não derrubar o badge se
-	// o CustomEditor sumir numa versão futura do Pi.
-	try {
-		const { harnessEditorFactory } = await import("../harness-editor.ts");
-		ctx.ui.setEditorComponent(harnessEditorFactory(accent));
-	} catch {
-		// recolor indisponível — badge + status seguem valendo.
-	}
 }
 
 function clearModeChrome(ctx: ExtensionContext): void {
 	if (!ctx.hasUI) return;
-	ctx.ui.setWidget(WIDGET_KEY, undefined);
-	ctx.ui.setEditorComponent(undefined);
 	ctx.ui.setStatus(STATUS_KEY, undefined);
 }
 
@@ -73,7 +73,7 @@ function clearModeChrome(ctx: ExtensionContext): void {
  * lê esse env na descoberta (por chamada de subagent), então setar no load basta.
  */
 /** Modelos disponíveis (auth configurada) via o modelRegistry da sessão: ref "provider/id" + nome amigável. */
-function registryModels(ctx: ExtensionCommandContext): Array<{ ref: string; label: string }> {
+function registryModels(ctx: ExtensionContext): Array<{ ref: string; label: string }> {
 	try {
 		const reg = (ctx as unknown as { modelRegistry?: { getAvailable?: () => Array<{ provider: string; id: string; name?: string }>; getAll?: () => Array<{ provider: string; id: string; name?: string }> } }).modelRegistry;
 		const list = reg?.getAvailable?.() ?? reg?.getAll?.() ?? [];
@@ -88,7 +88,7 @@ function registryModels(ctx: ExtensionCommandContext): Array<{ ref: string; labe
  * escolha em ~/.pi/agent/pi-harness/models.json. Sem UI (print/json) → mostra o estado
  * atual. Lê o settings.json do usuário pra pré-popular default + enabledModels.
  */
-async function openModelConfig(ctx: ExtensionCommandContext): Promise<void> {
+async function openModelConfig(ctx: ExtensionContext): Promise<void> {
 	const cfg = loadModelConfig();
 	const settings = readPiSettings();
 	const fallback = defaultModelRef(settings);
@@ -128,6 +128,15 @@ function contributeAgentsDir(): void {
 export default function registerHarnessExtension(pi: ExtensionAPI): void {
 	const mode: HarnessMode = idleMode();
 	let lastCtx: ExtensionContext | undefined;
+	// Faixa de progresso sempre-visível (Feature Control §2). Vive durante converge/run.
+	const strip = new StripController();
+	// Run card (cap. 09): featureIds cujo cartão já foi inserido no transcript nesta sessão
+	// (evita duplicar ao re-disparar /harness run).
+	const cardSent = new Set<string>();
+	// Proposal confirmation pendente: setado quando store_plan persiste; consumido no agent_end.
+	let pendingProposal: string | null = null;
+	// Merge gate pendente: setado quando store_delivery grava state:"awaiting_merge"; consumido no agent_end.
+	let pendingMerge: string | null = null;
 
 	// Estágio STORE da criação do readiness (analógo do store_agent_readiness_report).
 	registerReadinessStoreTool(pi);
@@ -139,6 +148,11 @@ export default function registerHarnessExtension(pi: ExtensionAPI): void {
 	registerPlanStoreTool(pi);
 	// store_lesson — a camada de lições auto-melhorável (grounded em sinais do ship gate).
 	registerLessonsStoreTool(pi);
+	// store_delivery — record do passo de entrega (PR + Linear + CI + merge) → aba Delivery do cockpit.
+	registerDeliveryStoreTool(pi);
+	// Run card (cap. 09): renderer da mensagem custom `harness-run` que vive no transcript e
+	// se auto-atualiza (Preparing → live → Done). Enviado ao iniciar um run (sendRunCard).
+	registerRunCardRenderer(pi);
 	// Agentes dedicados pro pi-subagents (harness-readiness-auditor / harness-readiness-remediator).
 	contributeAgentsDir();
 
@@ -155,8 +169,11 @@ export default function registerHarnessExtension(pi: ExtensionAPI): void {
 			return new Set();
 		}
 	};
+	// Subagent vem de DOIS fornecedores: pi-subagents (`subagent`) e @tintinweb/pi-subagents (`Agent`).
+	// Qualquer um habilita o caminho nativo de spawn — casa os dois ao detectar/avisar.
+	const hasSubagentTool = (t: Set<string>): boolean => t.has("subagent") || t.has("Agent");
 	const toolBadge = (t: Set<string>, names: string[]): string =>
-		names.map((n) => `${n} ${t.has(n) ? "✓" : "✗"}`).join(" · ");
+		names.map((n) => `${n} ${(n === "subagent" ? hasSubagentTool(t) : t.has(n)) ? "✓" : "✗"}`).join(" · ");
 
 	const runAudit = (ctx: ExtensionCommandContext, via: string): void => {
 		const ensured = ensureReadinessInputs(ctx.cwd);
@@ -177,9 +194,99 @@ export default function registerHarnessExtension(pi: ExtensionAPI): void {
 			return;
 		}
 		const t = activeTools();
-		appendAudit(ctx.cwd, "fix_dispatched", { hasArgs: args.trim().length > 0, todo: t.has("todo"), subagent: t.has("subagent") });
-		pi.sendUserMessage(buildFixDispatch(args, { todo: t.has("todo"), subagent: t.has("subagent") }));
+		appendAudit(ctx.cwd, "fix_dispatched", { hasArgs: args.trim().length > 0, todo: t.has("todo"), subagent: hasSubagentTool(t) });
+		pi.sendUserMessage(buildFixDispatch(args, { todo: t.has("todo"), subagent: hasSubagentTool(t) }));
 		ctx.ui.notify(`pi-harness: live remediation — tools: ${toolBadge(t, ["todo", "subagent"])}`);
+	};
+
+	// Feature Control (overlay Ctrl+T): loop que reabre o overlay após o config de modelos.
+	const openControl = async (ctx: ExtensionContext, featureId: string): Promise<void> => {
+		const { showFeatureControl } = await import("../control-view.ts");
+		for (;;) {
+			const res = await showFeatureControl(ctx, featureId);
+			if (res.kind === "models") {
+				await openModelConfig(ctx);
+				continue;
+			}
+			return;
+		}
+	};
+	// Ponto de entrada: run ativo → overlay direto; senão o Runs picker → overlay.
+	const openControlEntry = async (ctx: ExtensionContext): Promise<void> => {
+		if (!ctx.hasUI) {
+			ctx.ui.notify("pi-harness: Feature Control needs the TUI.", "warning");
+			return;
+		}
+		const activeId = mode.active ? mode.featureId : undefined;
+		if (activeId && readControlModel(ctx.cwd, activeId)) return openControl(ctx, activeId);
+		const { listRuns } = await import("../runs.ts");
+		const runs = listRuns(ctx.cwd, { activeFeatureId: mode.featureId });
+		if (runs.length === 0) {
+			ctx.ui.notify('pi-harness: no runs yet — /harness "<feature>" to start one.');
+			return;
+		}
+		const { showRunsPicker } = await import("../runs-view.ts");
+		const pick = await showRunsPicker(ctx, runs);
+		if (pick.kind === "open") return openControl(ctx, pick.featureId);
+		if (pick.kind === "new") ctx.ui.notify('pi-harness: run /harness "<feature description>" to converge a new run.');
+	};
+
+	// Edita plan.json à mão (opção "Manually edit"): re-valida a cobertura e re-persiste.
+	const editPlan = async (ctx: ExtensionContext, featureId: string): Promise<void> => {
+		const planPath = path.join(ctx.cwd, ".harness", "runs", featureId, "plan.json");
+		let current = "";
+		try {
+			current = fs.readFileSync(planPath, "utf8");
+		} catch {
+			// sem plan.json (não deveria) — abre vazio
+		}
+		const edited = await ctx.ui.editor("Edit plan.json (coverage re-validated on save)", current);
+		if (edited === undefined) return;
+		try {
+			const parsed = JSON.parse(edited);
+			const { validatePlan, storePlan } = await import("../plan.ts");
+			const check = validatePlan(parsed);
+			if (!check.ok) {
+				ctx.ui.notify(`pi-harness: plan invalid — ${check.issues.slice(0, 3).join("; ")}`, "warning");
+				return;
+			}
+			storePlan(ctx.cwd, parsed);
+			ctx.ui.notify(`pi-harness: plan saved — run /harness run to execute "${featureId}".`);
+		} catch (e) {
+			ctx.ui.notify(`pi-harness: invalid JSON — ${(e as Error).message}`, "warning");
+		}
+	};
+
+	// Proposal confirmation (analog do missionProposalConfirmation): overlay após store_plan.
+	const showProposal = async (ctx: ExtensionContext, featureId: string): Promise<void> => {
+		const model = readControlModel(ctx.cwd, featureId);
+		const { showPlanProposal } = await import("../proposal-view.ts");
+		const choice = await showPlanProposal(ctx, { featureId, model, savePath: `.harness/runs/${featureId}/` });
+		if (choice.kind === "proceed") {
+			ctx.ui.notify(`pi-harness: plan approved — run /harness run to execute "${featureId}".`);
+			return;
+		}
+		if (choice.kind === "edit") return editPlan(ctx, featureId);
+		const { proposalCommentMessage, proposalRejectMessage } = await import("../proposal.ts");
+		if (choice.kind === "comment") {
+			pi.sendUserMessage(proposalCommentMessage(featureId, choice.comment));
+			ctx.ui.notify("pi-harness: approved with comment — forwarded to the orchestrator.");
+			return;
+		}
+		pi.sendUserMessage(proposalRejectMessage(featureId, choice.reason));
+		ctx.ui.notify("pi-harness: plan sent back to revise.");
+	};
+
+	// Merge gate (ship-gate step 3): overlay humano quando store_delivery grava awaiting_merge.
+	// Espelha showProposal — a escolha volta pro agente (ele executa o gh). Nunca mergeia sozinho.
+	const showMerge = async (ctx: ExtensionContext, featureId: string): Promise<void> => {
+		const record = readDeliveryRecord(ctx.cwd, featureId);
+		if (!record) return;
+		const { showMergeGate } = await import("../delivery-view.ts");
+		const choice = await showMergeGate(ctx, { featureId, record });
+		pi.sendUserMessage(mergeDecisionMessage(featureId, choice));
+		const label = choice.kind === "leave_open" ? "leave open" : choice.kind;
+		ctx.ui.notify(`pi-harness: merge gate — ${label} (forwarded to the deliver step).`);
 	};
 
 	// Reference flows as their own commands (1:1): /readiness-report and /readiness-fix.
@@ -203,6 +310,23 @@ export default function registerHarnessExtension(pi: ExtensionAPI): void {
 			await openModelConfig(ctx);
 		},
 	});
+	// Feature Control — o dashboard ao vivo (Mission Control rebrandeado). Comando + atalho Ctrl+T.
+	pi.registerCommand("harness-control", {
+		description: "Open Feature Control: live dashboard (progress, tasks, coverage, workers, handoffs) for a run.",
+		handler: async (_args: string, ctx: ExtensionCommandContext): Promise<void> => {
+			await openControlEntry(ctx);
+		},
+	});
+	try {
+		pi.registerShortcut("ctrl+t", {
+			description: "pi-harness: Feature Control",
+			handler: async (ctx: ExtensionContext): Promise<void> => {
+				await openControlEntry(ctx);
+			},
+		});
+	} catch {
+		// registerShortcut indisponível nesta versão do Pi — o comando /harness control cobre.
+	}
 
 	pi.registerCommand("harness", {
 		description: "Enter harness mode: profile setup → readiness → feature (sequential).",
@@ -213,6 +337,10 @@ export default function registerHarnessExtension(pi: ExtensionAPI): void {
 			if (sub === "exit") {
 				Object.assign(mode, idleMode());
 				clearModeChrome(ctx);
+				strip.stop(ctx);
+				cardSent.clear();
+				clearAllLiveAgents();
+				clearMode(ctx.cwd);
 				ctx.ui.notify("pi-harness: mode exited");
 				return;
 			}
@@ -223,6 +351,10 @@ export default function registerHarnessExtension(pi: ExtensionAPI): void {
 			}
 			if (sub === "models") {
 				await openModelConfig(ctx);
+				return;
+			}
+			if (sub === "control") {
+				await openControlEntry(ctx);
 				return;
 			}
 			// /harness "<feature>" --headless → CI: converge (code-initiated, gray-areas [assumido]) →
@@ -242,6 +374,7 @@ export default function registerHarnessExtension(pi: ExtensionAPI): void {
 				mode.featureId = fid;
 				mode.phase = "run";
 				await applyModeChrome(ctx, mode);
+				saveMode(ctx.cwd, mode);
 				ctx.ui.notify(`pi-harness: HEADLESS feature "${fid}" — converge (pi --print) → runner. Blocks until done.`);
 				const { makeRealConvergeFn, makeRealSpawn } = await import("../feature-spawn.ts");
 				const { runHeadlessFeature } = await import("../headless.ts");
@@ -264,9 +397,35 @@ export default function registerHarnessExtension(pi: ExtensionAPI): void {
 			if (sub === "run" || sub === "run --headless") {
 				// Execução da feature convergida (Fatia 3). DEFAULT = nativo TUI + TODO (orquestrador
 				// no chat, agentes via subagent, visíveis). --headless = FeatureRunner code-initiated.
+				// Resume (analog do "Select a mission to resume" do Droid): sem ponteiro ativo (ex.:
+				// após um /reload onde a restauração não pegou, ou sessão nova), escolhe um run do disco.
 				if (!mode.active || !mode.featureId) {
-					ctx.ui.notify('pi-harness: no active feature. Run /harness "<feature>" to converge first.', "warning");
-					return;
+					const { listRuns } = await import("../runs.ts");
+					const runs = listRuns(ctx.cwd);
+					if (runs.length === 0) {
+						ctx.ui.notify('pi-harness: no runs to resume. Run /harness "<feature>" to converge first.', "warning");
+						return;
+					}
+					let fid: string | undefined;
+					if (ctx.hasUI) {
+						const { showRunsPicker } = await import("../runs-view.ts");
+						const pick = await showRunsPicker(ctx, runs);
+						if (pick.kind === "new") {
+							ctx.ui.notify('pi-harness: run /harness "<feature description>" to converge a new run.');
+							return;
+						}
+						if (pick.kind !== "open") {
+							ctx.ui.notify("pi-harness: cancelled");
+							return;
+						}
+						fid = pick.featureId;
+					} else {
+						fid = runs[0].featureId; // headless: o mais recente
+					}
+					mode.active = true;
+					mode.featureId = fid;
+					mode.phase = "run";
+					ctx.ui.notify(`pi-harness: resuming "${fid}".`);
 				}
 				if (!readPlan(ctx.cwd, mode.featureId)) {
 					ctx.ui.notify(`pi-harness: no plan.json for "${mode.featureId}" yet — finish convergence first.`, "warning");
@@ -274,6 +433,7 @@ export default function registerHarnessExtension(pi: ExtensionAPI): void {
 				}
 				mode.phase = "run";
 				await applyModeChrome(ctx, mode);
+				saveMode(ctx.cwd, mode);
 				if (sub === "run --headless") {
 					// CI/headless: o FeatureRunner spawna `pi --print` por step (NÃO in-chat) e BLOQUEIA
 					// até terminar. Opt-in explícito — o default visível é o nativo acima.
@@ -288,19 +448,55 @@ export default function registerHarnessExtension(pi: ExtensionAPI): void {
 					const { runLoop } = await import("../feature-runner.ts");
 					const { writeFeatureRun } = await import("../plan.ts");
 					const { appendProgress } = await import("../handoff.ts");
+					// Branch-per-feature também no headless (mesma semântica conservadora; nunca-fatal).
+					try {
+						const { ensureFeatureBranch } = await import("../branch-ops.ts");
+						const br = ensureFeatureBranch(ctx.cwd, fid);
+						appendProgress(ctx.cwd, fid, "branch_ready", { branch: br.branch, action: br.kind, reason: br.reason });
+					} catch {
+						// non-fatal
+					}
 					const model = (ctx as { model?: { id?: string } }).model?.id;
-					const spawn = makeRealSpawn({ featureId: fid, model, config: loadModelConfig() });
+					const cfg = loadModelConfig();
+					const spawn = makeRealSpawn({ featureId: fid, model, config: cfg });
 					await runLoop(ctx.cwd, run, {
 						spawn,
 						persist: (r) => writeFeatureRun(ctx.cwd, r),
 						log: (ev, extra) => appendProgress(ctx.cwd, fid, ev, extra ?? {}),
+						gateSkip: skippedGateSkills(cfg), // skipScrutiny/skipUserTesting do config
 					});
 					ctx.ui.notify(`pi-harness: headless run ${run.status}${run.pauseReason ? ` (${run.pauseReason})` : ""}.`);
 					return;
 				}
 				const t = activeTools();
-				pi.sendUserMessage(buildRunDispatch(mode.featureId, { todo: t.has("todo"), subagent: t.has("subagent"), advisor: t.has("advisor"), askUser: t.has("ask_user_question") }));
+				// Branch-per-feature (run-start, determinístico/conservador): cria/troca a branch da
+				// feature só na base+limpo; senão respeita a atual. Nunca-fatal (erro de git não trava o run).
+				if (mode.featureId) {
+					try {
+						const { ensureFeatureBranch } = await import("../branch-ops.ts");
+						const br = ensureFeatureBranch(ctx.cwd, mode.featureId);
+						appendProgress(ctx.cwd, mode.featureId, "branch_ready", { branch: br.branch, action: br.kind, reason: br.reason });
+						if (br.kind === "create") ctx.ui.notify(`pi-harness: created feature branch ${br.branch} (${br.reason}).`);
+						else if (br.kind === "switch") ctx.ui.notify(`pi-harness: switched to feature branch ${br.branch}.`);
+						else if (br.kind === "skip" || br.kind === "error") ctx.ui.notify(`pi-harness: feature branch — ${br.reason} (committing on the current branch).`, "warning");
+					} catch (e) {
+						ctx.ui.notify(`pi-harness: branch step skipped (${(e as Error).message}).`, "warning");
+					}
+				}
+				// Marca o início do run no disco. O caminho NATIVO não roda o FeatureRunner (→ sem
+				// feature-run.json), então sem este evento o estado derivava como "ready"/"Unknown"
+				// pra sempre. Com run_started, deriveRunState → "running" a partir do disco.
+				if (mode.featureId) appendProgress(ctx.cwd, mode.featureId, "run_started", {});
+				pi.sendUserMessage(buildRunDispatch(mode.featureId, { todo: t.has("todo"), subagent: hasSubagentTool(t), advisor: t.has("advisor"), askUser: t.has("ask_user_question") }, loadModelConfig().gates));
 				ctx.ui.notify(`pi-harness: executing "${mode.featureId}" live — workers → ship gate. tools: ${toolBadge(t, ["todo", "subagent", "advisor", "ask_user_question"])}`);
+				if (ctx.hasUI && mode.featureId) {
+					strip.start(ctx, mode.featureId);
+					// cap. 09: dropa o cartão vivo no transcript (1x por run/sessão). Ctrl+T = cockpit.
+					if (!cardSent.has(mode.featureId)) {
+						cardSent.add(mode.featureId);
+						sendRunCard(pi, mode.featureId);
+					}
+				}
 				return;
 			}
 
@@ -333,6 +529,15 @@ export default function registerHarnessExtension(pi: ExtensionAPI): void {
 				return;
 			} else if (prof.status === "drift") {
 				ctx.ui.notify(`pi-harness: profile may be stale (changed: ${prof.changed.join(", ")}). Run /harness setup to refresh.`, "warning");
+			}
+
+			// 1.5 onboarding card (feature NOVA — sem plan.json) — analog do missionOnboarding intro, antes do gate.
+			if (request && ctx.hasUI && !readControlModel(ctx.cwd, featureIdFromRequest(request))) {
+				const { showFeatureOnboarding } = await import("../proposal-view.ts");
+				if ((await showFeatureOnboarding(ctx)) === "cancel") {
+					ctx.ui.notify("pi-harness: cancelled");
+					return;
+				}
 			}
 
 			// 2. readiness gate — projeta o snapshot num stance + ação primária. O drift
@@ -378,6 +583,7 @@ export default function registerHarnessExtension(pi: ExtensionAPI): void {
 			mode.featureId = featureIdFromRequest(request);
 			mode.phase = "converge";
 			await applyModeChrome(ctx, mode);
+			saveMode(ctx.cwd, mode);
 			// Fatia 3: dispara a harness-feature-converge ao vivo (autora feature.md/contract.md/plan.json
 			// e chama store_plan, que valida a cobertura e grava plan.json + status.json). O
 			// FeatureRunner consome plan.json via buildFeatureRun (ponte converge→runner).
@@ -387,11 +593,100 @@ export default function registerHarnessExtension(pi: ExtensionAPI): void {
 		},
 	});
 
-	// captura o ctx vivo pra poder limpar o chrome no shutdown
-	pi.on("session_start", (_event: unknown, ctx: ExtensionContext) => {
+	// Live workers (cap. 06 do overlay): o caminho NATIVO spawna cada worker como `subagent`;
+	// eles não têm handoff em disco até o EndFeatureRun, então sem observar os eventos do tool
+	// eles NÃO apareciam no Feature Control. Aqui populamos o registro em memória (live-agents)
+	// que o overlay (Active Worker + Workers) e o run card leem. Gated em mode.active (só
+	// durante um feature run — ignora subagents de readiness/setup/converge).
+	// Robusto à STALENESS de mode.phase pós-/reload: o ponteiro em memória pode voltar a idle
+	// antes do session_start restaurar, e o guard `phase === "run"` derrubava os eventos do
+	// worker (→ Active Worker vazio no overlay). Confia no DISCO: featureId + plan FROZEN
+	// (store_plan já correu = passámos do converge) ⇒ trata os subagents como workers do run.
+	const runWorkerDispatch = (): boolean => {
+		const fid = mode.featureId;
+		if (!fid) return false;
+		if (mode.phase === "run" || mode.phase === "ship") return true;
+		if (mode.phase === "converge" || mode.phase === "setup" || mode.phase === "readiness") return false;
+		const cwd = lastCtx?.cwd;
+		return !!cwd && readPlan(cwd, fid) !== null;
+	};
+	pi.on("tool_execution_start", (event) => {
+		if (!isSubagentTool(event.toolName) || !runWorkerDispatch()) return;
+		const agents = agentsFromArgs(event.args);
+		setLiveAgents(event.toolCallId, agents);
+		// Sinal DURÁVEL em disco: o caminho nativo não escreve feature-run.json nem step_started,
+		// então sem isto o overlay nunca via uma task in_progress / Active Task. Um task_started
+		// por task dispatched (ignora reviewers, cujo id é "—") sobrevive a /reload.
+		const cwd = lastCtx?.cwd;
+		const fid = mode.featureId;
+		if (cwd && fid) {
+			const seen = new Set<string>();
+			for (const a of agents) {
+				if (a.taskId === "—" || seen.has(a.taskId)) continue;
+				seen.add(a.taskId);
+				appendProgress(cwd, fid, "task_started", { taskId: a.taskId, agent: a.agent });
+			}
+		}
+	});
+	pi.on("tool_execution_update", (event) => {
+		if (!isSubagentTool(event.toolName) || !runWorkerDispatch()) return;
+		const live = agentsFromDetails(event.partialResult?.details);
+		if (live.length > 0) setLiveAgents(event.toolCallId, live);
+	});
+	// Proposal confirmation: store_plan persistiu → marca; mostra o overlay quando o agente fica
+	// idle. Também limpa o live agent quando o subagent termina (vira handoff em disco).
+	pi.on("tool_execution_end", (event, ctx) => {
+		if (isSubagentTool(event.toolName)) clearLiveAgents(event.toolCallId);
+		if (event.toolName === "store_plan" && !event.isError && mode.active && mode.featureId) pendingProposal = mode.featureId;
+		// store_delivery com awaiting_merge → abre o merge gate quando o agente ficar idle.
+		if (event.toolName === "store_delivery" && !event.isError && mode.active && mode.featureId) {
+			const rec = readDeliveryRecord(ctx.cwd, mode.featureId);
+			if (rec?.state === "awaiting_merge") pendingMerge = mode.featureId;
+		}
+	});
+	pi.on("agent_end", async (_event, ctx) => {
+		if (!ctx.hasUI) return;
+		if (pendingProposal) {
+			const fid = pendingProposal;
+			pendingProposal = null;
+			await showProposal(ctx, fid);
+		}
+		if (pendingMerge) {
+			const fid = pendingMerge;
+			pendingMerge = null;
+			await showMerge(ctx, fid);
+		}
+	});
+
+	// captura o ctx vivo + RESUME após reload/startup: o ponteiro de modo é memória, mas o run
+	// vive no disco (Droid: o runtime lê state.json). Se o run ainda existe, restaura o ponteiro.
+	pi.on("session_start", async (event, ctx) => {
 		lastCtx = ctx;
+		if (mode.active) return;
+		if (event.reason !== "reload" && event.reason !== "startup") return;
+		const restored = loadMode(ctx.cwd);
+		if (restored && readPlan(ctx.cwd, restored.featureId)) {
+			mode.active = true;
+			mode.featureId = restored.featureId;
+			mode.phase = restored.phase;
+			await applyModeChrome(ctx, mode);
+			if (ctx.hasUI && mode.phase === "run") {
+				strip.start(ctx, restored.featureId);
+				// cap. 09: re-insere o cartão vivo após reload (o transcript anterior pode ter sumido).
+				if (!cardSent.has(restored.featureId)) {
+					cardSent.add(restored.featureId);
+					sendRunCard(pi, restored.featureId);
+				}
+			}
+		} else if (restored) {
+			clearMode(ctx.cwd); // ponteiro órfão (run sumiu) — limpa
+		}
 	});
 	pi.on("session_shutdown", () => {
-		if (lastCtx) clearModeChrome(lastCtx);
+		clearAllLiveAgents();
+		if (lastCtx) {
+			clearModeChrome(lastCtx);
+			strip.stop(lastCtx);
+		}
 	});
 }

@@ -78,12 +78,15 @@ export interface FeatureRunLoopDeps {
 	onProgress?: (run: FeatureRun) => void;
 	now?: () => string;
 	budget?: number;
+	/** ship-gate skills a pular (skipScrutiny/skipUserTesting) — de skippedGateSkills(config). */
+	gateSkip?: ReadonlySet<string>;
 }
 
-/** Os dois steps do ship gate, em ordem (scrutiny → user-testing). */
+/** Os steps do ship gate, em ordem (scrutiny → user-testing → delivery). */
 export const SHIP_GATE: readonly { id: string; skillName: string }[] = [
 	{ id: "ship-gate-code-review", skillName: "harness-code-review" },
 	{ id: "ship-gate-qa-validator", skillName: "harness-qa-validator" },
+	{ id: "ship-gate-deliver", skillName: "harness-deliver" },
 ];
 
 const defaultNow = (): string => new Date().toISOString();
@@ -136,9 +139,10 @@ export function planFeatureRun(
 }
 
 /** Injeta o ship gate (harness-code-review → harness-qa-validator) no fim da fila. Idempotente via gateInjected. */
-export function injectShipGate(run: FeatureRun): void {
+export function injectShipGate(run: FeatureRun, skip: ReadonlySet<string> = new Set()): void {
 	if (run.gateInjected) return;
 	for (const g of SHIP_GATE) {
+		if (skip.has(g.skillName)) continue; // skipScrutiny→code-review; skipUserTesting→qa-validator
 		run.steps.push({ id: g.id, kind: "ship-gate", skillName: g.skillName, status: "pending", attempts: 0 });
 	}
 	run.gateInjected = true;
@@ -174,8 +178,8 @@ export async function runLoop(cwd: string, run: FeatureRun, deps: FeatureRunLoop
 		if (!step) {
 			// Tasks acabaram: injeta o ship gate 1x; depois disso → completo.
 			if (!run.gateInjected) {
-				injectShipGate(run);
-				deps.log?.("ship_gate_injected", { steps: SHIP_GATE.map((g) => g.id) });
+				injectShipGate(run, deps.gateSkip);
+				deps.log?.("ship_gate_injected", { steps: run.steps.filter((s) => s.kind === "ship-gate").map((s) => s.id) });
 				touch(run, deps);
 				continue;
 			}

@@ -15,6 +15,7 @@ import {
 	modelConfigPath,
 	modelOptions,
 	normalizeModelConfig,
+	skippedGateSkills,
 	type PiSettingsView,
 	piSettingsPath,
 	readPiSettings,
@@ -62,10 +63,21 @@ test("load/save: round-trip num agentDir isolado; ausente → defaults", () => {
 	const cfg: HarnessModelConfig = {
 		version: 1,
 		roles: { orchestrator: { model: "anthropic/claude-opus-4-8", thinking: "xhigh" }, worker: { model: "anthropic/claude-haiku-4-5" }, validator: { thinking: "high" } },
+		gates: { skipScrutiny: true, skipUserTesting: false, skipDelivery: true },
 	};
 	saveModelConfig(cfg, { agentDir: dir });
 	assert.ok(fs.existsSync(modelConfigPath({ agentDir: dir })), "gravou em pi-harness/models.json");
-	assert.deepEqual(loadModelConfig({ agentDir: dir }), cfg, "lê de volta idêntico");
+	assert.deepEqual(loadModelConfig({ agentDir: dir }), cfg, "lê de volta idêntico (incl. gates)");
+});
+
+test("gates: default OFF; normalize coáge só booleano true; skippedGateSkills mapeia", () => {
+	assert.deepEqual(defaultModelConfig().gates, { skipScrutiny: false, skipUserTesting: false, skipDelivery: false });
+	const n = normalizeModelConfig({ gates: { skipScrutiny: true, skipUserTesting: "yes", skipDelivery: "yes" } });
+	assert.deepEqual(n.gates, { skipScrutiny: true, skipUserTesting: false, skipDelivery: false }, "só `true` literal vira ON");
+	assert.deepEqual([...skippedGateSkills(n)], ["harness-code-review"]);
+	const both = normalizeModelConfig({ gates: { skipScrutiny: true, skipUserTesting: true, skipDelivery: true } });
+	assert.deepEqual([...skippedGateSkills(both)].sort(), ["harness-code-review", "harness-deliver", "harness-qa-validator"]);
+	assert.deepEqual([...skippedGateSkills(defaultModelConfig())], [], "nada skip por default");
 });
 
 test("load: JSON corrompido → defaults (não explode)", () => {

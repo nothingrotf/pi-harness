@@ -7,10 +7,11 @@ test("buildRunDispatch: todos os utilitários ativos → TODO + subagent + advis
 	assert.match(m, /harness-orchestrator/);
 	assert.match(m, /\.harness\/runs\/add-login\/plan\.json/);
 	assert.match(m, /status\.json/);
-	// TODO Plan: um por task + 2 ship-gate todos
+	// TODO Plan: um por task + 3 ship-gate todos (code-review, qa-validator, deliver)
 	assert.match(m, /`todo` tool/);
 	assert.match(m, /ship gate: harness-code-review/);
 	assert.match(m, /ship gate: harness-qa-validator/);
+	assert.match(m, /ship gate: harness-deliver/);
 	// worker via subagent (agente dedicado harness-worker), sequencial
 	assert.match(m, /`subagent` tool/);
 	assert.match(m, /agent: `harness-worker`/);
@@ -35,6 +36,31 @@ test("buildRunDispatch: sem utilitários → degrada (in-session), ainda roda o 
 	assert.match(m, /run the task in-session/);
 	assert.match(m, /harness-code-review/);
 	assert.match(m, /harness-qa-validator/);
+	assert.match(m, /harness-deliver/);
 	assert.match(m, /plan\.json/);
 	assert.match(m, /return to the user with the specific blocker/);
+});
+
+test("buildRunDispatch: gates pulam os passos do ship gate (skipScrutiny/skipUserTesting/skipDelivery)", () => {
+	const full = buildRunDispatch("f", { todo: true, subagent: true });
+	assert.match(full, /harness-code-review/);
+	assert.match(full, /harness-qa-validator/);
+	assert.match(full, /harness-deliver/);
+	assert.match(full, /ship gate: harness-deliver/);
+	const all = buildRunDispatch("f", { todo: true, subagent: true }, { skipScrutiny: true, skipUserTesting: true, skipDelivery: true });
+	assert.doesNotMatch(all, /harness-code-review/);
+	assert.doesNotMatch(all, /harness-qa-validator/);
+	assert.doesNotMatch(all, /harness-deliver/);
+	assert.match(all, /fully SKIPPED/);
+	const partial = buildRunDispatch("f", { todo: true }, { skipScrutiny: true });
+	assert.doesNotMatch(partial, /harness-code-review/);
+	assert.match(partial, /harness-qa-validator/);
+	assert.match(partial, /harness-deliver/);
+	assert.match(partial, /SKIPPED by mission config/);
+	// só delivery pulado → os outros dois rodam
+	const noDelivery = buildRunDispatch("f", { todo: true, subagent: true }, { skipDelivery: true });
+	assert.match(noDelivery, /harness-code-review/);
+	assert.match(noDelivery, /harness-qa-validator/);
+	assert.doesNotMatch(noDelivery, /harness-deliver/);
+	assert.match(noDelivery, /delivery\/deliver SKIPPED/);
 });

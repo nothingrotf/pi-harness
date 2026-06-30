@@ -36,7 +36,7 @@ effort**, NEVER the structure. Pick a tier:
 
 > **INVARIANT — never scaled away (regardless of size):** `contract.md` is FROZEN with **≥1
 > black-box assertion**, `store_plan` enforces the coverage invariant (every assertion claimed by
-> exactly one task), and the **ship gate (harness-code-review → harness-qa-validator) always runs**. Auto-sizing
+> exactly one task), and the **ship gate (harness-code-review → harness-qa-validator → harness-deliver) always runs**. Auto-sizing
 > tunes the *effort*, not the *guarantees* — a "Small" feature still gets a real contract + plan +
 > gate, just cheaply. There is no path that skips the contract, the coverage gate, or the ship gate.
 

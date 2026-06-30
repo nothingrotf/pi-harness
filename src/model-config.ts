@@ -38,9 +38,20 @@ export interface RoleChoice {
 	thinking?: Effort;
 }
 
+/** Toggles experimentais do ship gate (análogo do skipScrutiny/skipUserTesting do Droid, doc UI §8). */
+export interface GateConfig {
+	/** pula o code-review (3 eixos) no ship gate — análogo do `skipScrutiny`. */
+	skipScrutiny: boolean;
+	/** pula o qa-validator (contrato na superfície real) — análogo do `skipUserTesting`. */
+	skipUserTesting: boolean;
+	/** pula a entrega (harness-deliver: PR + Linear + CI watch + fix loop + merge/cancel). */
+	skipDelivery: boolean;
+}
+
 export interface HarnessModelConfig {
 	version: typeof MODEL_CONFIG_VERSION;
 	roles: Record<HarnessRole, RoleChoice>;
+	gates: GateConfig;
 }
 
 export interface ResolvedChoice {
@@ -49,7 +60,7 @@ export interface ResolvedChoice {
 }
 
 export function defaultModelConfig(): HarnessModelConfig {
-	return { version: MODEL_CONFIG_VERSION, roles: { orchestrator: {}, worker: {}, validator: {} } };
+	return { version: MODEL_CONFIG_VERSION, roles: { orchestrator: {}, worker: {}, validator: {} }, gates: { skipScrutiny: false, skipUserTesting: false, skipDelivery: false } };
 }
 
 export function isEffort(s: unknown): s is Effort {
@@ -93,7 +104,23 @@ export function normalizeModelConfig(raw: unknown): HarnessModelConfig {
 	if (rolesRaw && typeof rolesRaw === "object") {
 		for (const role of HARNESS_ROLES) cfg.roles[role] = sanitizeChoice((rolesRaw as Record<string, unknown>)[role]);
 	}
+	const gatesRaw = raw && typeof raw === "object" ? (raw as { gates?: unknown }).gates : undefined;
+	if (gatesRaw && typeof gatesRaw === "object") {
+		const g = gatesRaw as Record<string, unknown>;
+		cfg.gates.skipScrutiny = g.skipScrutiny === true;
+		cfg.gates.skipUserTesting = g.skipUserTesting === true;
+		cfg.gates.skipDelivery = g.skipDelivery === true;
+	}
 	return cfg;
+}
+
+/** Ship-gate skills a PULAR dado o config (skipScrutiny→code-review; skipUserTesting→qa-validator; skipDelivery→deliver). */
+export function skippedGateSkills(cfg: HarnessModelConfig | undefined): Set<string> {
+	const s = new Set<string>();
+	if (cfg?.gates?.skipScrutiny) s.add("harness-code-review");
+	if (cfg?.gates?.skipUserTesting) s.add("harness-qa-validator");
+	if (cfg?.gates?.skipDelivery) s.add("harness-deliver");
+	return s;
 }
 
 export function loadModelConfig(opts: PathOpts = {}): HarnessModelConfig {

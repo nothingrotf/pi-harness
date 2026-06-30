@@ -57,17 +57,22 @@ function panelFrame(theme: Theme, title: string, body: SelectList, hint: string,
 	return container;
 }
 
-type PanelAction = { kind: "save" } | { kind: "cancel" } | { kind: "edit"; role: HarnessRole };
+type GateKey = "skipScrutiny" | "skipUserTesting" | "skipDelivery";
+type PanelAction = { kind: "save" } | { kind: "cancel" } | { kind: "edit"; role: HarnessRole } | { kind: "toggle"; gate: GateKey };
 
 function rolesPanel(ctx: ExtensionContext, cfg: HarnessModelConfig, opts: { labels?: Record<string, string>; fallback?: string }): Promise<PanelAction> {
 	return ctx.ui.custom<PanelAction>((tui, theme, _kb, done) => {
 		const items: SelectItem[] = [
 			{ value: "save", label: "✓ Save & apply", description: "persist to ~/.pi/agent/pi-harness/models.json" },
 			...HARNESS_ROLES.map((role) => ({ value: `role:${role}`, label: role, description: roleSummary(cfg, role, opts) })),
+			{ value: "gate:skipScrutiny", label: `Skip scrutiny  [${cfg.gates.skipScrutiny ? "ON" : "OFF"}]`, description: cfg.gates.skipScrutiny ? "ship gate SKIPS harness-code-review (3-axis review)" : "harness-code-review runs at the ship gate" },
+			{ value: "gate:skipUserTesting", label: `Skip user testing  [${cfg.gates.skipUserTesting ? "ON" : "OFF"}]`, description: cfg.gates.skipUserTesting ? "ship gate SKIPS harness-qa-validator (contract on real surface)" : "harness-qa-validator runs at the ship gate" },
+			{ value: "gate:skipDelivery", label: `Skip delivery  [${cfg.gates.skipDelivery ? "ON" : "OFF"}]`, description: cfg.gates.skipDelivery ? "ship gate SKIPS harness-deliver (PR + Linear + CI watch + fix loop + merge/cancel)" : "harness-deliver runs at the ship gate (opens PR, watches CI, fixes, human merge gate)" },
 		];
 		const selectList = new SelectList(items, Math.min(items.length, 10), selectListTheme(theme));
 		selectList.onSelect = (item) => {
 			if (item.value === "save") return done({ kind: "save" });
+			if (item.value.startsWith("gate:")) return done({ kind: "toggle", gate: item.value.slice("gate:".length) as GateKey });
 			done({ kind: "edit", role: item.value.slice("role:".length) as HarnessRole });
 		};
 		selectList.onCancel = () => done({ kind: "cancel" });
@@ -126,6 +131,10 @@ export async function showModelConfig(ctx: ExtensionContext, input: ShowModelCon
 		const action = await rolesPanel(ctx, cfg, display);
 		if (action.kind === "cancel") return undefined;
 		if (action.kind === "save") return cfg;
+		if (action.kind === "toggle") {
+			cfg.gates[action.gate] = !cfg.gates[action.gate];
+			continue;
+		}
 
 		// SEQUENCIAL: model primeiro; esc no model aborta a edição (não abre o effort).
 		const role = action.role;

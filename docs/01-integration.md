@@ -15,10 +15,9 @@ Da interface de extensão (`@earendil-works/pi-coding-agent`, `ExtensionAPI` +
 |---|---|
 | Comando de entrada | `pi.registerCommand("harness", {...})` |
 | Tool (se preciso) | `pi.registerTool({...})` |
-| Badge de modo colado no input | `ctx.ui.setWidget(key, content, {placement:"aboveEditor"\|"belowEditor"})` |
-| Status compacto no rodapé | `ctx.ui.setStatus(key, text \| undefined)` |
-| Footer/header custom | `ctx.ui.setFooter(factory)` / `setHeader(factory)` |
-| Recolorir o input | `ctx.ui.setEditorComponent(factory)` + `class extends CustomEditor` |
+| **Sinal de modo/progresso (COMPATÍVEL)** | `ctx.ui.setStatus(key, text \| undefined)` — a statusline compõe (pi-fusiontui lê `getExtensionStatuses()`) |
+| Dashboard sob demanda | `ctx.ui.custom(factory)` (modal `Ctrl+T` / `/harness control`) |
+| ~~Badge aboveEditor / recolorir o input~~ | **EVITADO**: `setWidget(aboveEditor)` / `setEditorComponent` clobberam extensões donas do editor/footer (pi-fusiontui) |
 | Painel de readiness (foco de teclado) | `ctx.ui.custom(factory, {overlay:true})` |
 | Gates simples | `ctx.ui.select / confirm / input / notify` |
 | Tema | `ctx.ui.theme.fg/bg/bold`, `setTheme`, `setTitle` |
@@ -33,16 +32,17 @@ Manifesto da extensão (no `package.json`):
 ## 2. O surface mínimo da extensão
 
 ```
-registerCommand("harness", handler)    # /harness <pedido> · /harness setup · /harness status · /harness exit
-ui.setWidget("harness-mode", badge, {placement:"aboveEditor"})   # ⬢ pi-harness · <feature> · <fase>
-ui.setEditorComponent(harnessEditor)   # recolore a borda/prompt do input enquanto ativo
-ui.setStatus("harness", "<fase> · readiness L<n>")               # rodapé
-ui.custom(readinessGate, {overlay:true})                         # painel readiness (Enter/R/Esc)
-on("session_start"/"session_shutdown")  # liga/limpa o modo
+registerCommand("harness", handler)    # /harness <pedido> · setup · status · run · control · exit
+ui.setStatus("harness", "◆ <fase>")                # modo (a statusline compõe — ex.: pi-fusiontui)
+ui.setStatus("harness-progress", "██▒▒ 6/12 · T2")   # progresso (durante o run; control-strip.ts)
+ui.custom(readinessGate / featureControl / proposal)            # gate · overlay Ctrl+T · proposal
+on("session_start"/"session_shutdown" + "tool_execution_end"/"agent_end")  # liga/limpa modo + proposal
 ```
 
-**Ambos os sinais de modo ligados** (decisão): badge `aboveEditor` **e** input
-recolorido. O badge é o sinal primário (barato, sempre visível); o recolor reforça.
+**Sinal de modo via `setStatus` APENAS** (decisão de COMPATIBILIDADE): nada de
+`setWidget(aboveEditor)` nem `setEditorComponent`. Extensões de UI (pi-fusiontui) são
+donas do **editor** Droid + do **footer**; clobberá-los quebra a UI delas. A statusline
+já compõe os nossos `setStatus`. O dashboard rico é o overlay modal `Ctrl+T`.
 
 ## 3. O fluxo de entrada
 
@@ -54,14 +54,14 @@ recolorido. O badge é o sinal primário (barato, sempre visível); o recolor re
   2. ui.custom(readinessGate, {overlay})   # nível + categorias + action items
        Enter = prosseguir · R = rodar/refresh setup · Esc = cancelar
   3. on proceed:
-       cria runs/<feature-id>/ · ativa modo (badge + recolor + status)
+       cria runs/<feature-id>/ · ativa modo (status only — compatível c/ pi-fusiontui)
        → CONVERGE (gray-area-policy → contract frozen) — Fatia 3
 ```
 
 ## 4. A nuance do "modo" (honesto)
 
 O Pi **não** tem interaction-mode nativo. O nosso modo é **emulado** pela extensão:
-estado interno + badge/status/recolor persistentes até sair (`/harness exit` ou
+estado interno + `setStatus` persistente até sair (`/harness exit` ou
 shutdown). Efeito visual equivalente, mas é overlay nosso — não um modo de primeira
 classe do runtime.
 

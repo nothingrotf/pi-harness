@@ -45,8 +45,8 @@ test("runLoop: roda tasks em sequência, injeta ship gate 1x, completa", async (
 	};
 	await runLoop("/repo", run, deps(spawn));
 	assert.equal(run.status, "completed");
-	// 2 tasks + harness-code-review + harness-qa-validator, nessa ordem
-	assert.deepEqual(order, ["T1", "T2", "ship-gate-code-review", "ship-gate-qa-validator"]);
+	// 2 tasks + harness-code-review + harness-qa-validator + harness-deliver, nessa ordem
+	assert.deepEqual(order, ["T1", "T2", "ship-gate-code-review", "ship-gate-qa-validator", "ship-gate-deliver"]);
 	assert.equal(run.gateInjected, true);
 	assert.ok(run.steps.every((s) => s.status === "completed"));
 });
@@ -84,8 +84,8 @@ test("runLoop: ship gate falha (harness-code-review) → orchestrator_turn; fix 
 		return { code: 0, success: true };
 	}));
 	assert.equal(run.status, "completed");
-	// no resume corre a fix, depois harness-code-review (que estava pending) e harness-qa-validator
-	assert.deepEqual(order, ["FIX1", "ship-gate-code-review", "ship-gate-qa-validator"]);
+	// no resume corre a fix, depois harness-code-review (que estava pending), harness-qa-validator e harness-deliver
+	assert.deepEqual(order, ["FIX1", "ship-gate-code-review", "ship-gate-qa-validator", "ship-gate-deliver"]);
 });
 
 test("runLoop: budget esgotado → paused (step_retry_limit_exceeded)", async () => {
@@ -122,11 +122,23 @@ test("injectShipGate: idempotente", () => {
 	const run = planFeatureRun("feat-x", tasks("T1"), NOW);
 	injectShipGate(run);
 	injectShipGate(run);
-	assert.equal(run.steps.filter((s) => s.kind === "ship-gate").length, 2);
+	assert.equal(run.steps.filter((s) => s.kind === "ship-gate").length, 3);
 });
 
 test("nextPending: ordem do array", () => {
 	const run = planFeatureRun("feat-x", tasks("T1", "T2"), NOW);
 	run.steps[0].status = "completed";
 	assert.equal(nextPending(run)?.id, "T2");
+});
+
+test("injectShipGate: honra o skip set (skipScrutiny/skipUserTesting)", () => {
+	const r1 = planFeatureRun("f", [{ id: "T1", skillName: "w" }]);
+	injectShipGate(r1, new Set(["harness-code-review"]));
+	assert.deepEqual(
+		r1.steps.filter((s) => s.kind === "ship-gate").map((s) => s.skillName),
+		["harness-qa-validator", "harness-deliver"],
+	);
+	const r2 = planFeatureRun("f", [{ id: "T1", skillName: "w" }]);
+	injectShipGate(r2, new Set(["harness-code-review", "harness-qa-validator", "harness-deliver"]));
+	assert.equal(r2.steps.filter((s) => s.kind === "ship-gate").length, 0);
 });

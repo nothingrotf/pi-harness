@@ -51,6 +51,11 @@ export function buildConvergeDispatch(request: string, featureId: string, tools:
 		`${n++}. Finish by calling the \`store_plan\` tool with featureId="${featureId}", the structured tasks, and ALL assertion IDs from contract.md. It enforces the coverage invariant (every assertion claimed by exactly one task) and persists plan.json + status.json. Do NOT hand-write plan.json/status.json.`,
 		`${n++}. Then give a short summary: what the feature delivers, the assertions, and the task count — and tell the user to run \`/harness run\` to execute the plan.`,
 	);
+	if (!opts.headless) {
+		lines.push(
+			`${n++}. After store_plan persists, the USER reviews & approves the plan in a proposal overlay. If they REJECT, you'll receive their reason as a new message — revise feature.md/contract.md/tasks and call store_plan again. If they approve (possibly with a comment), you're done.`,
+		);
+	}
 	if (tools.todo) {
 		lines.push(`${n++}. Finally, clear the plan with the \`todo\` tool (\`action: "clear"\`) so it doesn't linger.`);
 	}
