@@ -412,7 +412,7 @@ export default function registerHarnessExtension(pi: ExtensionAPI): void {
 				mode.phase = "run";
 				await applyModeChrome(ctx, mode);
 				saveMode(ctx.cwd, mode);
-				ctx.ui.notify(`pi-harness: HEADLESS feature "${fid}" — converge (pi --print) → runner. Blocks until done.`);
+				ctx.ui.notify(`pi-harness: HEADLESS feature "${fid}" — converge (pi --print) → runner (pi --mode rpc workers). Blocks until done.`);
 				const { makeRealConvergeFn } = await import("../feature-spawn.ts");
 				const { makeRpcSpawn } = await import("../rpc-worker.ts");
 				const { runHeadlessFeature } = await import("../headless.ts");
@@ -473,8 +473,9 @@ export default function registerHarnessExtension(pi: ExtensionAPI): void {
 				await applyModeChrome(ctx, mode);
 				saveMode(ctx.cwd, mode);
 				if (sub === "run --headless") {
-					// CI/headless: o FeatureRunner spawna `pi --print` por step (NÃO in-chat) e BLOQUEIA
-					// até terminar. Opt-in explícito — o default visível é o nativo acima.
+					// CI/headless: o FeatureRunner dirige cada worker via o WIRE RPC (`pi --mode rpc`,
+					// RpcClient — src/rpc-worker.ts), NÃO in-chat, e BLOQUEIA até terminar. Opt-in explícito
+					// — o default visível é o nativo (subagents in-session) acima.
 					const fid = mode.featureId;
 					const { makeRpcSpawn } = await import("../rpc-worker.ts");
 					const { runLoop } = await import("../feature-runner.ts");
@@ -487,7 +488,7 @@ export default function registerHarnessExtension(pi: ExtensionAPI): void {
 						return;
 					}
 					const { run, resume } = rp;
-					ctx.ui.notify(`pi-harness: HEADLESS ${resume ? "resume" : "run"} of "${fid}" (FeatureRunner; pi --print children, not in-chat). Blocks until done.`);
+					ctx.ui.notify(`pi-harness: HEADLESS ${resume ? "resume" : "run"} of "${fid}" (FeatureRunner; pi --mode rpc workers, not in-chat). Blocks until done.`);
 					// Branch-per-feature também no headless (mesma semântica conservadora; nunca-fatal).
 					try {
 						const { ensureFeatureBranch } = await import("../branch-ops.ts");
