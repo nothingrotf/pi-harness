@@ -303,6 +303,17 @@ export function activeItem(plan: Plan | null, run: FeatureRun | null, disk: Disk
 		const inProgress = run.steps.find((s) => s.status === "in_progress");
 		const step = inProgress ?? (run.status === "running" ? run.steps.find((s) => s.status === "pending") : undefined);
 		if (!step) return null;
+		// 1 worker por feature: o impl/fix step (kind "task" com `tasks`) entrega várias tasks numa
+		// única sessão — a "current task" real é a sub-task com task_started mais recente (sinal do
+		// tool task_progress do worker), não o step "implement". Cai pra 1ª sub-task ainda não
+		// concluída quando ainda não chegou um task_started.
+		if (step.kind === "task" && step.tasks?.length) {
+			const subId = latestStartedTask(disk.progressRaw ?? []);
+			if (subId && step.tasks.some((t) => t.id === subId)) return activeFromId(plan, subId);
+			const done = deriveTaskStatuses(disk.handoffs ?? [], disk.progressRaw ?? []);
+			const nextSub = step.tasks.find((t) => (done.get(t.id) ?? "pending") !== "completed");
+			if (nextSub) return activeFromId(plan, nextSub.id);
+		}
 		const task = plan?.tasks.find((t) => t.id === step.id);
 		return {
 			id: step.id,
@@ -516,7 +527,11 @@ export function buildWorkerRows(run: FeatureRun | null, handoffs: PersistedHando
 		startedAt: startByTask.get(h.taskId),
 		durationMs: dur(startByTask.get(h.taskId), h.recordedAt),
 	}));
-	const activeId = run?.steps.find((s) => s.status === "in_progress")?.id ?? latestStartedTask(progressRaw);
+	// 1 worker por feature: quando o step in_progress é o impl/fix step (kind "task" com `tasks`), o
+	// worker "running" está na sub-task com task_started mais recente — não no id "implement".
+	const ipStep = run?.steps.find((s) => s.status === "in_progress");
+	const subActive = ipStep?.kind === "task" && ipStep.tasks?.length ? latestStartedTask(progressRaw) : null;
+	const activeId = (subActive && ipStep?.tasks?.some((t) => t.id === subActive) ? subActive : ipStep?.id) ?? latestStartedTask(progressRaw);
 	if (activeId && !rows.some((r) => r.status === "running" && r.taskId === activeId)) {
 		const start = startByTask.get(activeId);
 		rows.push({ workerSessionId: "—", taskId: activeId, status: "running", startedAt: start, durationMs: dur(start, undefined) });

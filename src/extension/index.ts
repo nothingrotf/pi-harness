@@ -27,6 +27,7 @@ import { buildRefreshDispatch } from "../reconcile.ts";
 import { registerReadinessStoreTool } from "../readiness-store-tool.ts";
 import { registerProfileStoreTool } from "../profile-store-tool.ts";
 import { registerEndFeatureRunTool } from "../endfeaturerun-tool.ts";
+import { registerTaskProgressTool } from "../task-progress-tool.ts";
 import { registerPlanStoreTool } from "../plan-store-tool.ts";
 import { registerLessonsStoreTool } from "../lessons-store-tool.ts";
 import { registerDeliveryStoreTool } from "../delivery-store-tool.ts";
@@ -144,6 +145,8 @@ export default function registerHarnessExtension(pi: ExtensionAPI): void {
 	registerProfileStoreTool(pi);
 	// Saída do worker/validator: registra o handoff que o FeatureRunner lê (handoff.ts).
 	registerEndFeatureRunTool(pi);
+	// Sinal de progresso por-task do worker único (1 worker por feature) → TUI granular ao vivo.
+	registerTaskProgressTool(pi);
 	// Estágio STORE da convergência: valida cobertura → grava plan.json + status.json.
 	registerPlanStoreTool(pi);
 	// store_lesson — a camada de lições auto-melhorável (grounded em sinais do ship gate).

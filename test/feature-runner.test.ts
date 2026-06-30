@@ -5,6 +5,7 @@ import {
 	type FeatureRun,
 	type FeatureRunLoopDeps,
 	grantRetryBudget,
+	IMPL_STEP_ID,
 	injectShipGate,
 	insertFixTask,
 	nextPending,
@@ -29,42 +30,49 @@ function deps(spawn: SpawnFn, extra: Partial<FeatureRunLoopDeps> = {}): FeatureR
 	return { spawn, now: NOW, ...extra };
 }
 
-test("planFeatureRun: tasks viram steps pending, sem gate ainda", () => {
+test("planFeatureRun: N tasks viram UM impl step (1 worker por feature), sem gate ainda", () => {
 	const run = planFeatureRun("feat-x", tasks("T1", "T2"), NOW);
 	assert.equal(run.featureId, "feat-x");
-	assert.equal(run.steps.length, 2);
+	assert.equal(run.steps.length, 1, "um único impl step carrega as N tasks (não N steps)");
+	assert.equal(run.steps[0].id, IMPL_STEP_ID);
+	assert.equal(run.steps[0].kind, "task");
+	assert.equal(run.steps[0].status, "pending");
+	assert.deepEqual(run.steps[0].tasks?.map((t) => t.id), ["T1", "T2"], "a lista de tasks vira o TODO interno do worker");
+	assert.deepEqual(run.steps[0].fulfills, ["A-T1", "A-T2"], "fulfills = união das tasks");
 	assert.equal(run.gateInjected, false);
-	assert.ok(run.steps.every((s) => s.kind === "task" && s.status === "pending"));
 });
 
-test("runLoop: roda tasks em sequência, injeta ship gate 1x, completa", async () => {
+test("runLoop: UM worker entrega todas as tasks, injeta ship gate 1x, completa", async () => {
 	const run = planFeatureRun("feat-x", tasks("T1", "T2"), NOW);
 	const order: string[] = [];
+	const doneTasks: string[] = [];
 	const spawn: SpawnFn = async (step) => {
 		order.push(step.id);
 		return { code: 0, success: true };
 	};
-	await runLoop("/repo", run, deps(spawn));
+	await runLoop("/repo", run, deps(spawn, { log: (ev, extra) => { if (ev === "task_completed") doneTasks.push(String(extra?.taskId)); } }));
 	assert.equal(run.status, "completed");
-	// 2 tasks + harness-code-review + harness-qa-validator + harness-deliver, nessa ordem
-	assert.deepEqual(order, ["T1", "T2", "ship-gate-code-review", "ship-gate-qa-validator", "ship-gate-deliver"]);
+	// 1 impl spawn (todas as tasks numa sessão) + os 3 passos do ship gate
+	assert.deepEqual(order, [IMPL_STEP_ID, "ship-gate-code-review", "ship-gate-qa-validator", "ship-gate-deliver"]);
+	// o runner emite task_completed por sub-task ao completar o impl step (TUI por-task fica correta)
+	assert.deepEqual(doneTasks, ["T1", "T2"]);
 	assert.equal(run.gateInjected, true);
 	assert.ok(run.steps.every((s) => s.status === "completed"));
 });
 
-test("runLoop: task falha → orchestrator_turn (step volta a pending)", async () => {
+test("runLoop: impl falha → orchestrator_turn (step volta a pending)", async () => {
 	const run = planFeatureRun("feat-x", tasks("T1", "T2"), NOW);
-	await runLoop("/repo", run, deps(spawnFrom({ T1: { code: 0, success: false } })));
+	await runLoop("/repo", run, deps(spawnFrom({ [IMPL_STEP_ID]: { code: 0, success: false } })));
 	assert.equal(run.status, "orchestrator_turn");
-	const t1 = run.steps.find((s) => s.id === "T1");
-	assert.equal(t1?.status, "pending", "falha reseta pra pending (re-tenta no resume)");
-	assert.equal(t1?.attempts, 1);
-	assert.equal(run.gateInjected, false, "não injeta o gate enquanto há task pendente");
+	const impl = run.steps.find((s) => s.id === IMPL_STEP_ID);
+	assert.equal(impl?.status, "pending", "falha reseta pra pending (re-tenta no resume)");
+	assert.equal(impl?.attempts, 1);
+	assert.equal(run.gateInjected, false, "não injeta o gate enquanto a implementação não terminou");
 });
 
 test("runLoop: returnToOrchestrator também devolve controle", async () => {
 	const run = planFeatureRun("feat-x", tasks("T1"), NOW);
-	await runLoop("/repo", run, deps(spawnFrom({ T1: { code: 0, success: true, returnToOrchestrator: true } })));
+	await runLoop("/repo", run, deps(spawnFrom({ [IMPL_STEP_ID]: { code: 0, success: true, returnToOrchestrator: true } })));
 	assert.equal(run.status, "orchestrator_turn");
 });
 
@@ -92,8 +100,8 @@ test("runLoop: ship gate falha (harness-code-review) → orchestrator_turn; fix 
 test("runLoop: budget esgotado → paused (step_retry_limit_exceeded)", async () => {
 	const run = planFeatureRun("feat-x", tasks("T1"), NOW);
 	// sempre falha; cada runLoop gasta 1 tentativa e para em orchestrator_turn → resume
-	for (let i = 0; i < 5; i++) await runLoop("/repo", run, deps(spawnFrom({ T1: { code: 1, success: false } })));
-	const last = await runLoop("/repo", run, deps(spawnFrom({ T1: { code: 1, success: false } })));
+	for (let i = 0; i < 5; i++) await runLoop("/repo", run, deps(spawnFrom({ [IMPL_STEP_ID]: { code: 1, success: false } })));
+	const last = await runLoop("/repo", run, deps(spawnFrom({ [IMPL_STEP_ID]: { code: 1, success: false } })));
 	assert.equal(last.status, "paused");
 	assert.equal(last.pauseReason, "step_retry_limit_exceeded");
 	assert.equal(run.steps[0].attempts, 5, "não passa do budget");
@@ -135,7 +143,7 @@ test("runLoop: resume re-attacha a MESMA sessão (sem nova tentativa) e continua
 
 test("runLoop: 402/usage-limit → paused (usage_limit), step resumível", async () => {
 	const run = planFeatureRun("feat-x", tasks("T1"), NOW);
-	await runLoop("/repo", run, deps(spawnFrom({ T1: { code: null, usageLimit: true } })));
+	await runLoop("/repo", run, deps(spawnFrom({ [IMPL_STEP_ID]: { code: null, usageLimit: true } })));
 	assert.equal(run.status, "paused");
 	assert.equal(run.pauseReason, "usage_limit");
 	assert.equal(run.steps[0].status, "in_progress");
@@ -154,12 +162,12 @@ test("runLoop: inactivity → requeue (step pending, tentativa contada) e segue 
 
 test("runLoop: retry-budget bonus permite re-rodar um step esgotado", async () => {
 	const run = planFeatureRun("feat-x", tasks("T1"), NOW);
-	for (let i = 0; i < 5; i++) await runLoop("/repo", run, deps(spawnFrom({ T1: { code: 1, success: false } })));
-	await runLoop("/repo", run, deps(spawnFrom({ T1: { code: 1, success: false } })));
+	for (let i = 0; i < 5; i++) await runLoop("/repo", run, deps(spawnFrom({ [IMPL_STEP_ID]: { code: 1, success: false } })));
+	await runLoop("/repo", run, deps(spawnFrom({ [IMPL_STEP_ID]: { code: 1, success: false } })));
 	assert.equal(run.status, "paused");
 	assert.equal(run.pauseReason, "step_retry_limit_exceeded");
-	grantRetryBudget(run, "T1");
-	await runLoop("/repo", run, deps(spawnFrom({ T1: { code: 0, success: true } })), undefined, { resume: true });
+	grantRetryBudget(run, IMPL_STEP_ID);
+	await runLoop("/repo", run, deps(spawnFrom({ [IMPL_STEP_ID]: { code: 0, success: true } })), undefined, { resume: true });
 	assert.equal(run.status, "completed");
 	assert.equal(run.steps[0].attempts, 6, "consumiu 1 do budget bônus");
 });
@@ -172,7 +180,7 @@ test("runLoop: preempção no resume — pending acima do in_progress roda prime
 		return { code: 0, aborted: true };
 	}), ac.signal);
 	assert.equal(run.steps[0].status, "in_progress");
-	run.steps.unshift({ id: "PRE", kind: "task", skillName: "w", status: "pending", attempts: 0, workerSessionIds: [] });
+	run.steps.unshift({ id: "PRE", kind: "task", skillName: "w", tasks: [{ id: "PRE", skillName: "w" }], status: "pending", attempts: 0, workerSessionIds: [] });
 	const order: string[] = [];
 	await runLoop("/repo", run, deps(async (s) => {
 		order.push(s.id);
@@ -180,7 +188,7 @@ test("runLoop: preempção no resume — pending acima do in_progress roda prime
 	}), undefined, { resume: true });
 	assert.equal(run.status, "completed");
 	assert.equal(order[0], "PRE", "a task preemptora corre primeiro");
-	assert.ok(order.includes("T1"), "o step preemptado re-roda depois");
+	assert.ok(order.includes(IMPL_STEP_ID), "o impl step preemptado re-roda depois");
 });
 
 test("runLoop: heartbeat toca durante um spawn longo", async () => {
@@ -206,10 +214,12 @@ test("injectShipGate: idempotente", () => {
 	assert.equal(run.steps.filter((s) => s.kind === "ship-gate").length, 3);
 });
 
-test("nextPending: ordem do array", () => {
+test("nextPending: ordem do array (impl step → ship gate)", () => {
 	const run = planFeatureRun("feat-x", tasks("T1", "T2"), NOW);
+	assert.equal(nextPending(run)?.id, IMPL_STEP_ID, "o impl step roda primeiro");
 	run.steps[0].status = "completed";
-	assert.equal(nextPending(run)?.id, "T2");
+	injectShipGate(run);
+	assert.equal(nextPending(run)?.id, "ship-gate-code-review", "depois do impl, o 1º passo do ship gate");
 });
 
 test("injectShipGate: honra o skip set (skipScrutiny/skipUserTesting)", () => {

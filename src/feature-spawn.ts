@@ -22,8 +22,8 @@ export function resolvePiBin(): string {
 	return process.env.PI_BIN || "pi";
 }
 
-/** Tasks editam código + chamam EndFeatureRun; ship-gates também spawnam reviewers (subagent). */
-const TOOLS_TASK = "read,grep,find,ls,bash,edit,write,EndFeatureRun";
+/** Tasks editam código + marcam progresso (task_progress) + chamam EndFeatureRun; ship-gates também spawnam reviewers (subagent). */
+const TOOLS_TASK = "read,grep,find,ls,bash,edit,write,task_progress,EndFeatureRun";
 const TOOLS_GATE = "read,grep,find,ls,bash,edit,write,subagent,EndFeatureRun";
 /** Converge autora os artefatos + delega a contract a subagents + chama store_plan. */
 const TOOLS_CONVERGE = "read,grep,find,ls,bash,edit,write,subagent,store_plan";
@@ -40,19 +40,29 @@ function readSkill(absDir: string): string {
 	}
 }
 
+/** Skills distintas (do profile) referenciadas pelas tasks de um step — preserva a ordem de 1ª aparição. */
+function distinctTaskSkills(step: FeatureStep): string[] {
+	const names = (step.tasks?.length ? step.tasks.map((t) => t.skillName) : [step.skillName]).filter(Boolean);
+	return [...new Set(names)];
+}
+
 /**
  * System prompt do worker child: as skills relevantes inline (como o readiness inlina
- * o auditor) + o bootstrap + uma nota de runtime. Tasks recebem harness-worker-base + a skill
- * do profile (.harness/profile/skills/<name>); ship-gates recebem a skill do validator
- * (skills/<harness-code-review|harness-qa-validator> deste pacote).
+ * o auditor) + o bootstrap + uma nota de runtime. Um worker de implementação (kind "task") é DONO
+ * da feature inteira: recebe harness-worker-base + TODAS as skills do profile que suas tasks usam
+ * (.harness/profile/skills/<name>), inlined uma vez cada — assim toda skill que ele invoca ao
+ * longo das tasks já está em contexto. Ship-gates recebem a skill do validator
+ * (skills/<harness-code-review|harness-qa-validator|harness-deliver> deste pacote).
  */
 export function buildWorkerSystemPrompt(step: FeatureStep, cwd: string, opts: { featureId: string; workerSessionId: string }): string {
 	const parts: string[] = [];
 	if (step.kind === "task") {
 		const base = readSkill(path.join(harnessSkillsDir(), "harness-worker-base"));
-		const profileSkill = readSkill(path.join(cwd, ".harness", "profile", "skills", step.skillName));
 		if (base) parts.push("# harness-worker-base\n", base);
-		if (profileSkill) parts.push(`\n# ${step.skillName}\n`, profileSkill);
+		for (const name of distinctTaskSkills(step)) {
+			const profileSkill = readSkill(path.join(cwd, ".harness", "profile", "skills", name));
+			if (profileSkill) parts.push(`\n# ${name}\n`, profileSkill);
+		}
 	} else {
 		const validator = readSkill(path.join(harnessSkillsDir(), step.skillName));
 		if (validator) parts.push(`# ${step.skillName}\n`, validator);
@@ -60,7 +70,7 @@ export function buildWorkerSystemPrompt(step: FeatureStep, cwd: string, opts: { 
 	parts.push("\n", buildWorkerBootstrap(step, opts));
 	parts.push(
 		`\n[runtime] Feature run dir: .harness/runs/${opts.featureId}/ · Profile: .harness/profile/`,
-		`ALWAYS finish by calling EndFeatureRun with featureId="${opts.featureId}", taskId="${step.id}", workerSessionId="${opts.workerSessionId}".`,
+		`ALWAYS finish by calling EndFeatureRun ONCE with featureId="${opts.featureId}", taskId="${step.id}", workerSessionId="${opts.workerSessionId}".`,
 	);
 	return parts.join("\n");
 }
@@ -90,7 +100,7 @@ export function rpcWorkerPrompt(step: FeatureStep, resume = false): string {
 	if (resume)
 		return "You were interrupted mid-work. Continue EXACTLY where you left off: check the repo state (git status, modified files), review what you already implemented, and finish the task. Do NOT restart from scratch. Call EndFeatureRun when done, then end your turn.";
 	return step.kind === "task"
-		? "Execute your assigned task per the appended instructions (harness-worker-base, then your skill); call EndFeatureRun when done, then end your turn."
+		? "Deliver this feature per the appended instructions: invoke harness-worker-base once, then work through ALL the tasks in order in this one session (your skill per task; mark task_progress; commit per task); call EndFeatureRun ONCE when every task is done, then end your turn."
 		: "Run the ship-gate validator per the appended instructions; call EndFeatureRun (returnToOrchestrator: true) when done, then end your turn.";
 }
 

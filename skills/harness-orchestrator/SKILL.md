@@ -96,13 +96,18 @@ Follow the `harness-setup` skill (Worker System section) to design your worker s
 - Determining what types of workers this repo needs
 - Creating skills that define each worker type's procedure
 The worker types are **profile-level** (stable across features, cached in `.harness/profile/skills/`), not re-authored per feature. Update them when a feature reveals a gap.
-#### How Workers Execute
-When a worker session starts:
-1. The runner pre-assigns a task to the worker (the first pending task in plan.json).
-2. The worker invokes `harness-worker-base` skill for setup (read feature.md, the repo's AGENTS.md + harness.md, run init, baseline tests).
-3. The worker invokes the specific skill you specified for that task.
-4. Ultimately, the worker returns a structured handoff. If repository code changed, the worker commits those repo changes and includes `commitId` + `repoPath` in the handoff.
-This means skills YOU create only define the work procedure and handoff fields - not the boilerplate.
+#### How Workers Execute (one worker per FEATURE, not per task)
+The granularity is the **feature**, mirroring the reference: **one worker session delivers the whole
+plan**, not one worker per task. Per-task spawning was the anti-pattern — it lost context between
+tasks (separate sessions), repeated the worker-base startup (~a dozen files + init + services) on
+every task, and multiplied tokens and wall-clock. The task decomposition is the worker's *internal*
+checklist, not a spawn boundary.
+When the implementation worker session starts:
+1. The runner hands it the **full ordered task list** from plan.json (one implementation step).
+2. The worker invokes `harness-worker-base` **once** for setup (read feature.md, the repo's AGENTS.md + harness.md, run init, baseline tests).
+3. The worker then works through **every task in order, in that single session**: for each task it invokes the skill you specified, implements + verifies it, commits the repo change with the task id in the message, and marks `task_progress`.
+4. Ultimately the worker returns **one** structured handoff for the feature (with `commitId`/`repoPath` for the repo changes).
+This means skills YOU create only define the per-task work procedure and handoff fields - not the boilerplate, and not the sequencing across tasks (the worker owns that).
 Once you've designed the worker skills (profile), proceed to create feature artifacts.
 ### 3. Creating Feature Artifacts
 You work with the cached profile and the per-feature run directory.
@@ -136,12 +141,12 @@ Note: `feature.md` (the intent + scope) is authored at the start of convergence.
 - [ ] Every assertion ID in `contract.md` is claimed by exactly one task's `fulfills`
 Once all artifacts are ready, proceed to execution.
 ### 4. Managing Execution
-**Two execution surfaces (same semantics):** in the TUI you (the orchestrator) run **HERE in the chat** and drive execution **natively** — you spawn each worker (`harness-worker`) and reviewer as a `subagent` (pi-subagents), **visible live in the UI**, tracking progress with a `todo` Plan. The blocking **code runner** (FeatureRunner) is the **headless/CI** alternative (`/harness run --headless`, spawns `pi --print` children off-chat). The rules below (sequential, preemption, attempt budget, failure→return) hold for both: the code runner enforces them deterministically; the native path follows them (budget is your discipline — cap retries and surface blockers instead of looping).
+**Two execution surfaces (same semantics):** in the TUI you (the orchestrator) run **HERE in the chat** and drive execution **natively** — you spawn **one feature worker** (`harness-worker`, owning the whole plan) and the reviewers as `subagent`s (pi-subagents), **visible live in the UI**, tracking progress with a `todo` Plan. The blocking **code runner** (FeatureRunner) is the **headless/CI** alternative (`/harness run --headless`, spawns a `pi --mode rpc` child off-chat). The rules below (one worker per feature, preemption of fix work, attempt budget, failure→return) hold for both: the code runner enforces them deterministically; the native path follows them (budget is your discipline — cap retries and surface blockers instead of looping).
 
 #### File / Commit Hygiene
 Before handing control to the runner, ensure the feature-run artifacts are up-to-date, consistent, and complete. Never commit uncommitted implementation changes from workers — all implementation code must be linked to a worker session's commit.
 #### Starting and Resuming
-Hand control to the **runner** to begin execution. **This is a blocking call** — the runner owns execution (spawns workers sequentially, one task at a time, in `plan.json` order) until it returns control to you. It returns when: a worker's handoff has actionable items (`discoveredIssues`, unfinished work, or `returnToOrchestrator=true`), the user pauses, or all tasks complete. Resuming continues the paused worker; restarting re-runs the in-progress task from scratch. **Preemption:** insert a task at the top of `plan.json` and the runner reverts the in-progress task to pending, runs the inserted one, then re-runs the preempted task later.
+Hand control to the **runner** to begin execution. **This is a blocking call** — the runner owns execution (spawns **one worker for the whole feature**, which works through the tasks in `plan.json` order in a single session) until it returns control to you. It returns when: the worker's handoff has actionable items (`discoveredIssues`, unfinished work, or `returnToOrchestrator=true`), the user pauses, or the feature completes. Resuming continues the paused worker ("continue where you left off" — it skips already-committed tasks via `git log`); restarting re-runs the feature worker from scratch. **Preemption / fixes:** insert a fix task at the top of `plan.json` (a single-task step) and the runner runs it before re-running the feature work — each fix is its own small worker session above the ship gate.
 #### Handling Worker Returns (CRITICAL)
 When the runner returns, it includes `workerHandoffs` (summaries since the last run) and `latestWorkerHandoff` (most recent, inline). How to respond:
 1. Review the handoff to understand what happened.

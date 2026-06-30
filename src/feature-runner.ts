@@ -1,20 +1,31 @@
 /**
  * FeatureRunner — generaliza o motor do ReadinessRunner (= runner de referência 1:1, docs/02)
- * pro eixo de EXECUÇÃO DE FEATURE: roda as tasks do plan.json em sequência, cada uma num
- * worker (bootstrap = harness-worker-base + a skill da task + EndFeatureRun), e quando TODAS as
- * tasks completam INJETA o ship gate (harness-code-review → harness-qa-validator) UMA vez. Qualquer
+ * pro eixo de EXECUÇÃO DE FEATURE. **Granularidade = FEATURE, não task** (paridade com a
+ * referência droid: 1 worker session = 1 feature inteira). O plan.json é decomposto em tasks
+ * ordenadas, mas elas são a LISTA DE TASKS INTERNA de UM ÚNICO worker — não N spawns. O runner
+ * monta UM step de implementação (id "implement") carregando TODAS as tasks; o worker roda o
+ * startup do harness-worker-base 1×, trabalha todas as tasks numa sessão contínua (commit por
+ * task), e chama EndFeatureRun uma vez. Quando o impl step completa INJETA o ship gate
+ * (harness-code-review → harness-qa-validator → harness-deliver) UMA vez. Qualquer
  * failure/returnToOrchestrator → status "orchestrator_turn" (para; o orchestrator cria
- * fix tasks e resume). Budget de 5 tentativas por step; pause/resume; orphan cleanup.
+ * fix tasks — steps de UMA task — e resume). Budget de 5 tentativas por step; pause/resume;
+ * orphan cleanup.
+ *
+ * Por que 1 worker por feature (e não 1 por task): spawnar um worker por task perdia o
+ * contexto entre tasks (sessões distintas), repetia o startup do worker-base (≈12 arquivos +
+ * init.sh + serviços) N vezes e multiplicava o tempo de parede. Com 1 worker o startup é pago
+ * 1×, o modelo mental persiste através das tasks, e a decomposição vira o TODO interno do
+ * worker — exatamente o modelo da referência.
  *
  * Mapeamento runner de referência → FeatureRunner:
- *   features.json (fila)                 → steps[] (tasks do plan.json)
- *   milestone completa → injeta          → todas as tasks completam → injeta ship gate
+ *   features.json (fila)                 → steps[] (1 impl step c/ as tasks + ship gate)
+ *   1 worker por FEATURE                  → 1 worker por feature (impl step carrega plan.tasks)
+ *   milestone completa → injeta          → impl step completa → injeta ship gate
  *     scrutiny + user-testing               (harness-code-review + harness-qa-validator), 1x (gateInjected)
  *   _9H = 5                               → STEP_ATTEMPT_BUDGET = 5
  *   failure / returnToOrchestrator        → status "orchestrator_turn"
  *   cleanupOrphanedWorker()               → cleanupOrphan()
  *   state.json / progress_log.jsonl       → feature-run.json / progress_log.jsonl
- *   sequencial, 1 worker por vez          → sequencial, 1 child por vez
  *
  * O loop é injetável (spawn + succeeded + persist) → 100% testável sem subprocesso
  * real (test/feature-runner.test.ts). A integração real de spawn vive à parte.
@@ -27,13 +38,30 @@ export type FeatureRunStatus = "running" | "paused" | "orchestrator_turn" | "com
 export type StepStatus = "pending" | "in_progress" | "completed" | "cancelled";
 export type StepKind = "task" | "ship-gate";
 
+/** Id estável do step de implementação único (carrega todas as tasks do plan.json). */
+export const IMPL_STEP_ID = "implement";
+
+/** Uma task do plan.json carregada DENTRO de um step de implementação (a lista interna do worker). */
+export interface PlanTaskRef {
+	id: string;
+	skillName: string;
+	description?: string;
+	fulfills?: string[];
+	preconditions?: string[];
+	expectedBehavior?: string[];
+}
+
 export interface FeatureStep {
 	id: string;
 	kind: StepKind;
-	/** worker skill (task) | "harness-code-review" | "harness-qa-validator" (ship gate). */
+	/** worker skill (task) | "harness-code-review" | "harness-qa-validator" (ship gate). Para o
+	 * impl step é só um rótulo (a skill de cada task vem de `tasks[].skillName`). */
 	skillName: string;
-	/** assertion IDs que a task completa (tasks). */
+	/** assertion IDs que o step completa (impl = união das tasks; ship-gate = vazio). */
 	fulfills?: string[];
+	/** as tasks que ESTE step (de kind "task") executa numa única sessão de worker. O impl step
+	 * carrega TODAS as tasks do plan.json; um fix step carrega a sua única task. Ausente em ship-gates. */
+	tasks?: PlanTaskRef[];
 	status: StepStatus;
 	attempts: number;
 	/** ids de sessão usados por tentativa (analog de feature.workerSessionIds, doc 07). O
@@ -148,30 +176,30 @@ export function cleanupOrphan(run: FeatureRun): void {
 	for (const s of run.steps) if (s.status === "in_progress") s.status = "pending";
 }
 
-/** Plano de execução de uma feature: N tasks (do plan.json), sem o ship gate ainda. */
-export function planFeatureRun(
-	featureId: string,
-	tasks: { id: string; skillName: string; fulfills?: string[] }[],
-	now: () => string = defaultNow,
-): FeatureRun {
+/**
+ * Plano de execução de uma feature: UM step de implementação (id "implement") carregando TODAS
+ * as tasks do plan.json — a lista de tasks INTERNA do worker único —, sem o ship gate ainda.
+ * (Antes: N task-steps = N workers. Agora: 1 worker por feature, paridade com a referência.)
+ */
+export function planFeatureRun(featureId: string, tasks: PlanTaskRef[], now: () => string = defaultNow): FeatureRun {
 	const ts = now();
-	return {
-		runId: genRunId(now),
-		featureId,
-		status: "running",
-		steps: tasks.map((t) => ({
-			id: t.id,
-			kind: "task" as const,
-			skillName: t.skillName,
-			fulfills: t.fulfills,
-			status: "pending" as const,
-			attempts: 0,
-			workerSessionIds: [],
-		})),
-		gateInjected: false,
-		createdAt: ts,
-		updatedAt: ts,
-	};
+	const fulfills = [...new Set(tasks.flatMap((t) => t.fulfills ?? []))];
+	const steps: FeatureStep[] =
+		tasks.length === 0
+			? []
+			: [
+					{
+						id: IMPL_STEP_ID,
+						kind: "task" as const,
+						skillName: tasks[0].skillName,
+						tasks: tasks.map((t) => ({ ...t })),
+						fulfills,
+						status: "pending" as const,
+						attempts: 0,
+						workerSessionIds: [],
+					},
+				];
+	return { runId: genRunId(now), featureId, status: "running", steps, gateInjected: false, createdAt: ts, updatedAt: ts };
 }
 
 /** Injeta o ship gate (harness-code-review → harness-qa-validator) no fim da fila. Idempotente via gateInjected. */
@@ -184,10 +212,14 @@ export function injectShipGate(run: FeatureRun, skip: ReadonlySet<string> = new 
 	run.gateInjected = true;
 }
 
-/** Insere uma fix task ANTES do primeiro step de ship gate (analog do insertFeatureAtTop pra fixes). */
-export function insertFixTask(run: FeatureRun, task: { id: string; skillName: string; fulfills?: string[] }): void {
+/**
+ * Insere uma fix task ANTES do primeiro step de ship gate (analog do insertFeatureAtTop pra
+ * fixes). Um fix step é um step de UMA task (carrega `tasks:[task]`) — o worker o trata igual ao
+ * impl step, mas com uma única task na lista.
+ */
+export function insertFixTask(run: FeatureRun, task: PlanTaskRef): void {
 	const gateIdx = run.steps.findIndex((s) => s.kind === "ship-gate");
-	const step: FeatureStep = { id: task.id, kind: "task", skillName: task.skillName, fulfills: task.fulfills, status: "pending", attempts: 0, workerSessionIds: [] };
+	const step: FeatureStep = { id: task.id, kind: "task", skillName: task.skillName, tasks: [{ ...task }], fulfills: task.fulfills, status: "pending", attempts: 0, workerSessionIds: [] };
 	if (gateIdx < 0) run.steps.push(step);
 	else run.steps.splice(gateIdx, 0, step);
 }
@@ -319,6 +351,10 @@ export async function runLoop(cwd: string, run: FeatureRun, deps: FeatureRunLoop
 		if (ok) {
 			step.status = "completed";
 			deps.log?.("step_completed", { id: step.id, kind: step.kind });
+			// Worker único por feature: ao completar o impl/fix step, marca CADA task que ele cobre como
+			// concluída (task_completed por taskId). Garante que a TUI por-task fica correta no fim mesmo
+			// que o worker não tenha emitido task_progress ao vivo; tasks individuais do plan.json viram ✓.
+			if (step.tasks?.length) for (const t of step.tasks) deps.log?.("task_completed", { taskId: t.id });
 			touch(run, deps);
 		} else {
 			// Falha/returnToOrchestrator: step volta a pending (próxima tentativa = worker NOVO,

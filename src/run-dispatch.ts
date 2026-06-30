@@ -1,9 +1,12 @@
 /**
  * Native dispatch for Tier-2 feature EXECUTION (Fatia 3, execução) — model-driven,
  * in-session, TUI-first, with a live TODO Plan. The model acts as the harness
- * orchestrator: reads plan.json, runs each task in a fresh worker subagent (sequential),
- * reacts to handoffs, then runs the ship gate (harness-code-review → harness-qa-validator
- * → harness-deliver).
+ * orchestrator: reads plan.json, then runs the implementation as **ONE worker that owns the whole
+ * feature** (droid parity — 1 worker session = 1 feature, NOT 1 per task: per-task spawning lost
+ * context, repeated the worker-base startup, and multiplied tokens/time). That single worker works
+ * through every task in order in one session (its profile skill per task, commit + task_progress per
+ * task) and hands off once; then the ship gate runs (harness-code-review → harness-qa-validator →
+ * harness-deliver).
  *
  * Pattern parity with the readiness/setup/converge dispatches: adaptive on which
  * companion utilities are ACTIVE (todo / subagent / advisor / ask-user-question) and
@@ -23,7 +26,7 @@ export interface GateSkips {
 export function buildRunDispatch(featureId: string, tools: DispatchTools = {}, gates: GateSkips = {}): string {
 	const runDir = `.harness/runs/${featureId}/`;
 	const lines = [
-		`Execute the converged feature's plan now, live in this session. You are the **harness orchestrator** — follow the \`harness-orchestrator\` skill. You run HERE in this chat (your tool calls stream live); every worker and reviewer you orchestrate runs as a \`subagent\` (pi-subagents) — visible live in the UI.`,
+		`Execute the converged feature's plan now, live in this session. You are the **harness orchestrator** — follow the \`harness-orchestrator\` skill. You run HERE in this chat (your tool calls stream live); the worker and reviewers you orchestrate run as a \`subagent\` (pi-subagents) — visible live in the UI.`,
 		`Feature id: ${featureId}. Run directory: ${runDir}`,
 		"",
 		`1. Read ${runDir}plan.json (the ordered tasks) and status.json. If plan.json is missing, STOP — the feature isn't converged yet (the user must run /harness "<feature>" first).`,
@@ -40,15 +43,14 @@ export function buildRunDispatch(featureId: string, tools: DispatchTools = {}, g
 		);
 	}
 	const spawn = tools.subagent
-		? "spawn a fresh worker via the `subagent` tool (agent: `harness-worker`), passing the feature id, the task ({id, description, skillName, fulfills}) and a fresh worker session id — it runs `harness-worker-base` → the task's profile skill → `EndFeatureRun`"
-		: "run the task in-session (`harness-worker-base` → the task's profile skill → `EndFeatureRun`), passing the feature id + task id so EndFeatureRun records the handoff";
-	const markStart = tools.todo ? "mark its todo in_progress; " : "";
-	const markDone = tools.todo ? " mark the todo completed;" : "";
+		? "spawn ONE fresh worker via the `subagent` tool (agent: `harness-worker`), passing the feature id, the **FULL ordered task list** from plan.json, and a fresh worker session id — it runs `harness-worker-base` **once**, then works through EVERY task in order in that single session (the task's profile skill per task; commit per task; `task_progress` per task), and calls `EndFeatureRun` once at the end"
+		: "deliver the feature in-session: invoke `harness-worker-base` once, then work through every task in plan.json order (the task's profile skill per task; commit per task), recording one `EndFeatureRun` handoff at the end";
+	const markProgress = tools.todo ? ` As the worker reports per-task progress (\`task_progress\` events in ${runDir}progress_log.jsonl and per-task commits), mark each task's todo completed.` : "";
 	const askOnBlock = tools.askUser
 		? " use the `ask_user_question` tool to ask the user (don't guess)"
 		: " return to the user with the specific blocker (don't guess)";
 	lines.push(
-		`${n++}. For each pending task, **in plan.json order, one at a time (sequential)**: ${markStart}${spawn}. Then read the task's handoff (${runDir}handoffs/): on \`successState: "success"\` →${markDone} continue. On failure / \`returnToOrchestrator\` → do NOT mark done; create a fix task at the TOP of the plan${tools.todo ? " (a new todo)" : ""}, address it, then resume. Cap at 5 attempts per task — if it still can't pass,${askOnBlock}.`,
+		`${n++}. **Run the implementation as ONE worker that owns the whole feature** — not one worker per task (per-task spawning loses context between tasks and repeats the startup): ${spawn}.${markProgress} Then read the worker's handoff (${runDir}handoffs/): on \`successState: "success"\` → continue to the ship gate. On failure / \`returnToOrchestrator\` → create a fix task at the TOP of the plan${tools.todo ? " (a new todo)" : ""}, spawn a worker for it, then resume. Cap at 5 attempts — if it still can't pass,${askOnBlock}.`,
 	);
 	const escalate = tools.advisor
 		? " Use the `advisor` tool to escalate the verdict to a stronger reviewer model where it's high-stakes (fresh-context verification beats same-model self-review)."
@@ -78,7 +80,7 @@ export function buildRunDispatch(featureId: string, tools: DispatchTools = {}, g
 	// Reinforce utility usage explicitly.
 	const utils: string[] = [];
 	if (tools.todo) utils.push("`todo` (keep the Plan live at every transition)");
-	if (tools.subagent) utils.push("`subagent` (isolate each worker/reviewer in a fresh-context session)");
+	if (tools.subagent) utils.push("`subagent` (the feature worker + each reviewer in a fresh-context session)");
 	if (tools.advisor) utils.push("`advisor` (escalate verification at the gate)");
 	if (tools.askUser) utils.push("`ask_user_question` (ask on blockers instead of guessing)");
 	if (utils.length > 0) lines.push("", `Use the available utilities: ${utils.join(", ")}.`);

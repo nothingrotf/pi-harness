@@ -496,11 +496,12 @@ test("readControlModel: null sem plan; integra plan+run+handoff+progress do disc
 	assert.equal(readControlModel(d, "feat-x"), null, "sem plan → null");
 
 	storePlan(d, plan()); // grava plan.json + status.json (pending) + plan_stored
+	// 1 worker por feature: o impl step está in_progress; os sinais POR-TASK vêm do progress/handoffs
+	// (task_progress do worker), não de N steps. T1 concluída (handoff), T2 corrente (task_started).
 	const r = buildFeatureRun(d, "feat-x", () => "2026-06-29T00:00:00.000Z");
 	assert.ok(r);
 	if (!r) return;
-	r.steps[0].status = "completed";
-	r.steps[1].status = "in_progress";
+	r.steps[0].status = "in_progress";
 	writeFeatureRun(d, r);
 	recordHandoff(
 		d,
@@ -508,7 +509,8 @@ test("readControlModel: null sem plan; integra plan+run+handoff+progress do disc
 		{ taskId: "T1", workerSessionId: "ws1", successState: "success", returnToOrchestrator: false, validatorsPassed: true, handoff: { whatWasImplemented: "did T1", whatWasLeftUndone: "", verification: { commandsRun: [] } } },
 		() => "2026-06-29T00:03:00.000Z",
 	);
-	appendProgress(d, "feat-x", "step_started", { id: "T2", attempt: 1 });
+	appendProgress(d, "feat-x", "task_completed", { taskId: "T1" });
+	appendProgress(d, "feat-x", "task_started", { taskId: "T2" });
 
 	const m = readControlModel(d, "feat-x", Date.parse("2026-06-29T00:10:00.000Z"));
 	assert.ok(m);

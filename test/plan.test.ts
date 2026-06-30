@@ -4,6 +4,8 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { buildFeatureRun, featureProgress, loadOrBuildFeatureRun, type Plan, readFeatureRun, readPlan, readStatus, storePlan, validatePlan, writeFeatureRun } from "../src/plan.ts";
+import { IMPL_STEP_ID } from "../src/feature-runner.ts";
+import { appendProgress } from "../src/handoff.ts";
 
 function tmp(): string {
 	return fs.mkdtempSync(path.join(os.tmpdir(), "harness-plan-"));
@@ -76,18 +78,21 @@ test("storePlan: emite plan_stored no progress_log.jsonl", () => {
 	assert.match(log, /"assertions":3/);
 });
 
-test("buildFeatureRun: ponte converge→runner — plan.json vira FeatureRun (steps de task)", () => {
+test("buildFeatureRun: ponte converge→runner — plan.json vira UM impl step (1 worker por feature)", () => {
 	const d = tmp();
 	storePlan(d, plan());
 	const run = buildFeatureRun(d, "feat-x", () => "2026-06-29T00:00:00.000Z");
 	assert.ok(run);
 	assert.equal(run?.featureId, "feat-x");
-	assert.equal(run?.steps.length, 3, "3 task steps (sem ship gate ainda)");
-	assert.ok(run?.steps.every((s) => s.kind === "task" && s.status === "pending"));
+	assert.equal(run?.steps.length, 1, "um único impl step carrega as 3 tasks (sem ship gate ainda)");
+	assert.equal(run?.steps[0].id, IMPL_STEP_ID);
+	assert.ok(run?.steps[0].kind === "task" && run?.steps[0].status === "pending");
 	assert.deepEqual(
-		run?.steps.map((s) => s.id),
+		run?.steps[0].tasks?.map((t) => t.id),
 		["T1", "T2", "T3"],
+		"a fila de tasks vira o TODO interno do worker",
 	);
+	assert.equal(run?.steps[0].tasks?.[2].skillName, "frontend-worker", "campos ricos preservados (skill heterogênea)");
 	assert.equal(buildFeatureRun(d, "nao-existe"), null);
 });
 
@@ -111,7 +116,7 @@ test("loadOrBuildFeatureRun: sem run persistido → fresh do plano (resume:false
 	const rp = loadOrBuildFeatureRun(d, "feat-x", () => "t");
 	assert.ok(rp);
 	assert.equal(rp?.resume, false);
-	assert.equal(rp?.run.steps.length, 3);
+	assert.equal(rp?.run.steps.length, 1, "um impl step (1 worker por feature)");
 	assert.equal(loadOrBuildFeatureRun(d, "nao-existe"), null, "sem plan → null");
 });
 
@@ -152,22 +157,19 @@ test("loadOrBuildFeatureRun: pausa por esgotamento → concede budget bônus", (
 	writeFeatureRun(d, run);
 	const rp = loadOrBuildFeatureRun(d, "feat-x");
 	assert.equal(rp?.resume, true);
-	assert.equal(rp?.run.retryBudgetBonus?.T1, 5, "step esgotado ganha budget fresco no resume");
+	assert.equal(rp?.run.retryBudgetBonus?.[IMPL_STEP_ID], 5, "impl step esgotado ganha budget fresco no resume");
 });
 
-test("featureProgress: tasks done/total (do feature-run) + assertions passed/failed (do status)", () => {
+test("featureProgress: tasks done/total (de eventos task_completed) + assertions passed/failed (do status)", () => {
 	const d = tmp();
 	assert.equal(featureProgress(d, "feat-x"), null, "sem plan → null");
 	storePlan(d, plan()); // 3 tasks, 3 assertions pending
-	// sem feature-run ainda: 0 tasks done; assertions todas pending
+	// sem progresso ainda: 0 tasks done; assertions todas pending
 	let p = featureProgress(d, "feat-x");
 	assert.deepEqual(p, { tasksTotal: 3, tasksDone: 0, assertionsTotal: 3, assertionsPassed: 0, assertionsFailed: 0 });
-	// roda o runner parcial + marca status
-	const run = buildFeatureRun(d, "feat-x", () => "2026-06-29T00:00:00.000Z");
-	if (!run) return;
-	run.steps[0].status = "completed";
-	run.steps[1].status = "completed";
-	writeFeatureRun(d, run);
+	// o worker (ou o runner ao completar o impl step) emite task_completed por task concluída
+	appendProgress(d, "feat-x", "task_completed", { taskId: "T1" });
+	appendProgress(d, "feat-x", "task_completed", { taskId: "T2" });
 	const st = readStatus(d, "feat-x");
 	if (st) {
 		st.assertions.A1 = "passed";

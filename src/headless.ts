@@ -3,8 +3,9 @@
  *   1. CONVERGE (model → plan.json): roda a harness-feature-converge em modo headless (sem usuário;
  *      gray-areas viram [assumido]) via uma ConvergeFn injetada (real: spawn `pi --print`;
  *      teste: fake que escreve plan.json).
- *   2. RUN (FeatureRunner determinístico): runLoop spawna 1 worker por task (sequencial),
- *      injeta o ship gate (harness-code-review → harness-qa-validator) e persiste o estado.
+ *   2. RUN (FeatureRunner determinístico): runLoop spawna 1 worker pra FEATURE inteira (que
+ *      percorre todas as tasks do plan.json numa sessão; paridade droid), injeta o ship gate
+ *      (harness-code-review → harness-qa-validator → harness-deliver) e persiste o estado.
  *
  * Separado do engine puro pra ser 100% testável com ConvergeFn + SpawnFn injetados.
  * Idempotente: se plan.json já existe, pula o converge e só roda (resume).

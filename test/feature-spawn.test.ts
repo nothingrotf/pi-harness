@@ -41,11 +41,13 @@ test("rpcWorkerArgs: session-backed (--session-id + --session-dir); sem wsid →
 	assert.ok(!b.includes("--session-id") && !b.includes("--no-session"), "sem wsid → sem flags de sessão");
 });
 
-test("rpcWorkerPrompt: task normal vs resume (continue where you left off)", () => {
-	assert.match(rpcWorkerPrompt(task), /Execute your assigned task/);
+test("rpcWorkerPrompt: task normal (entrega a feature inteira) vs resume (continue where you left off)", () => {
+	assert.match(rpcWorkerPrompt(task), /Deliver this feature/);
+	assert.match(rpcWorkerPrompt(task), /work through ALL the tasks in order in this one session/);
+	assert.match(rpcWorkerPrompt(task), /EndFeatureRun ONCE/);
 	assert.match(rpcWorkerPrompt(gate), /Run the ship-gate validator/);
 	assert.match(rpcWorkerPrompt(task, true), /Continue EXACTLY where you left off/);
-	assert.doesNotMatch(rpcWorkerPrompt(task, true), /Execute your assigned task/);
+	assert.doesNotMatch(rpcWorkerPrompt(task, true), /Deliver this feature/);
 });
 
 test("isUsageLimitEvent: detecta 402/usage em evento de erro; ignora output normal", () => {
@@ -65,7 +67,38 @@ test("buildWorkerSystemPrompt: task inclui harness-worker-base + skill do profil
 	assert.match(sys, /# harness-worker-base/);
 	assert.match(sys, /Worker Base Procedures/, "corpo real do harness-worker-base inlined");
 	assert.match(sys, /PROFILE-BACKEND-SKILL-BODY/, "skill do profile inlined");
-	assert.match(sys, /EndFeatureRun with featureId="feat-x", taskId="T1"/);
+	assert.match(sys, /EndFeatureRun ONCE with featureId="feat-x", taskId="T1"/);
+});
+
+test("buildWorkerSystemPrompt: impl step multi-task inlina TODAS as skills distintas do profile (1 worker, contexto único)", () => {
+	const cwd = tmp();
+	for (const [name, body] of [
+		["backend-worker", "BACKEND-BODY"],
+		["frontend-worker", "FRONTEND-BODY"],
+	] as const) {
+		const d = path.join(cwd, ".harness", "profile", "skills", name);
+		fs.mkdirSync(d, { recursive: true });
+		fs.writeFileSync(path.join(d, "SKILL.md"), body);
+	}
+	const impl: FeatureStep = {
+		id: "implement",
+		kind: "task",
+		skillName: "backend-worker",
+		tasks: [
+			{ id: "T1", skillName: "backend-worker", fulfills: ["A-1"] },
+			{ id: "T2", skillName: "frontend-worker", fulfills: ["A-2"] },
+			{ id: "T3", skillName: "backend-worker", fulfills: ["A-3"] }, // duplicada → inlined 1x
+		],
+		fulfills: ["A-1", "A-2", "A-3"],
+		status: "pending",
+		attempts: 0,
+	};
+	const sys = buildWorkerSystemPrompt(impl, cwd, { featureId: "feat-x", workerSessionId: "ws" });
+	assert.match(sys, /# harness-worker-base/);
+	assert.match(sys, /BACKEND-BODY/);
+	assert.match(sys, /FRONTEND-BODY/);
+	assert.equal(sys.match(/BACKEND-BODY/g)?.length, 1, "skill repetida entre tasks inlined uma só vez");
+	assert.match(sys, /EndFeatureRun ONCE with featureId="feat-x", taskId="implement"/);
 });
 
 test("buildWorkerSystemPrompt: ship-gate inclui a skill do validator, não o harness-worker-base", () => {

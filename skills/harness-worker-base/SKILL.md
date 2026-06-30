@@ -5,23 +5,31 @@ description: Universal worker startup + cleanup + handoff procedure every harnes
 
 # Worker Base Procedures
 
-You are a worker in a multi-agent feature delivery. This skill defines the procedures
-ALL workers follow. After startup, you invoke your task-specific skill for the actual
-work procedure.
+You are a worker in a multi-agent feature delivery. **You own the WHOLE feature** — a single
+continuous session that delivers every task in the plan, not one task in isolation. This skill
+defines the procedures ALL workers follow. After startup you work through your task list, invoking
+each task's task-specific skill for its work procedure.
 
-## Your Assigned Task
+> **Why one session for the whole feature (read this).** You run the startup below **once** and
+> your context carries across every task — the code you wrote for task 1 is already in your head
+> when you do task 2. Do NOT try to split the feature across sessions or stop after one task; that
+> loses context, repeats the startup, and wastes tokens and time. The decomposition into tasks is
+> *your* execution checklist, not a hand-off boundary.
 
-Your task is pre-assigned by the runner and shown in your bootstrap message:
+## Your Assigned Feature (an ordered list of tasks)
+
+Your bootstrap message contains the **full ordered task list** for this feature (and
+`.harness/runs/<feature-id>/plan.json` is the canonical copy). Each task has:
 - `id` — task identifier
 - `description` — what to build
-- `skillName` — the skill you must invoke for the work procedure
+- `skillName` — the skill you invoke for that task's work procedure
 - `expectedBehavior` — what success looks like
 - `fulfills` — contract assertion IDs (if present)
 
-**Your task's `fulfills` lists contract assertions that must be true after your work.**
-Read them carefully in `contract.md` before starting — they define "done". Before
-completing, ensure each would pass; if one can't be fulfilled in your scope, flag it in
-your handoff.
+**Each task's `fulfills` lists contract assertions that must be true after that task.** Read them
+in `contract.md` before starting — together they define "done" for the feature. Before finishing,
+ensure every assertion across all your tasks would pass; if one can't be fulfilled in scope, flag
+it in your handoff (don't silently drop it).
 
 **Explicit technology choices are binding.** If the feature/orchestrator specified a
 package, library, SDK, or tool, use that exact choice — don't substitute because it's
@@ -94,9 +102,31 @@ flows; keep changes focused; stay in scope (note clearly-unrelated issues in `di
 `non_blocking` prefixed "Pre-existing:" — check `harness.md` "Known Pre-Existing Issues"
 to avoid re-reporting; don't go off-track to fix them). On conflict, the repo's `AGENTS.md` wins.
 
-## Phase 2: Work (your task-specific skill)
-Invoke the skill named in your task's `skillName`. **If it doesn't exist**, do not proceed
-— EndFeatureRun with `returnToOrchestrator: true` explaining the skill is missing.
+## Phase 2: Work the task list (one continuous session)
+Work through **every task in your list, in order, in THIS session** — do not stop after one. Keep
+your own todo (the `todo` tool / a checklist) to track them. For each task, top to bottom:
+
+1. **Mark it started:** call `task_progress({ featureId, taskId, status: "started" })` so the live
+   Feature Control shows the right task.
+2. **Invoke the task's `skillName` skill** and follow its Work Procedure. **If the skill doesn't
+   exist**, do not proceed — EndFeatureRun with `returnToOrchestrator: true` explaining which skill
+   is missing.
+3. **Implement + verify** to satisfy that task's `expectedBehavior` and `fulfills` assertions
+   (write tests per the `harness-generate-tests` skill where the task warrants them).
+4. **Commit the repo change with the task id in the message** (e.g. `[<taskId>] <summary>`). One
+   commit per task gives a clean trail and is how a resumed session knows what's already done.
+5. **Mark it completed:** call `task_progress({ featureId, taskId, status: "completed" })`, then
+   move to the next task.
+
+**Resume / re-run safety (critical).** If you were restarted (a fresh attempt after a failure, or a
+hard-kill recovery), run `git log --oneline` FIRST and identify which tasks are already committed
+— **skip them**. Never redo committed work; only do the remaining pending tasks. On a graceful
+resume you continue exactly where you left off.
+
+**Stop and return early** (one `EndFeatureRun` with `returnToOrchestrator: true`) if a task is
+blocked by something outside your scope (missing dependency, unmet precondition, broken manifest,
+a decision needed) — don't burn the remaining tasks against a blocker. Report what you completed
+and what remains.
 
 ## Phase 3: Cleanup & Handoff
 
@@ -117,8 +147,10 @@ clean git status in repos you changed (commit/stash). Run-artifact-only changes 
 If you found reusable services/commands future workers need, ADD them to `services.yaml`
 (port hardcoded in `start`/`stop`/`healthcheck` + `port`; additive only).
 
-### 3.4 Call EndFeatureRun
-Report results per your task skill's Example Handoff:
+### 3.4 Call EndFeatureRun (ONCE, for the whole feature)
+After ALL tasks are done (or you hit a blocker), call `EndFeatureRun` **exactly once** for the
+feature — not once per task. Use the `taskId` from your bootstrap (the implementation step id).
+Report the aggregate result per your task skills' Example Handoff:
 ```
 EndFeatureRun({
   successState: "success" | "partial" | "failure",

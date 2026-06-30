@@ -118,16 +118,38 @@ export function readStatus(cwd: string, featureId: string): PlanStatus | null {
 	}
 }
 
+/** Ids de task com evento `task_completed` no progress_log (1 worker por feature: o sinal por-task
+ * vem do runner ao completar o impl step + do tool task_progress do worker, não de N steps). */
+function completedTaskIds(cwd: string, featureId: string): Set<string> {
+	const ids = new Set<string>();
+	try {
+		const raw = fs.readFileSync(path.join(runDir(cwd, featureId), "progress_log.jsonl"), "utf8");
+		for (const ln of raw.split("\n")) {
+			if (!ln.trim()) continue;
+			try {
+				const e = JSON.parse(ln) as { event?: string; taskId?: unknown };
+				if (e.event === "task_completed" && e.taskId != null) ids.add(String(e.taskId));
+			} catch {
+				// linha não-JSON
+			}
+		}
+	} catch {
+		// sem progress_log
+	}
+	return ids;
+}
+
 /**
- * Progresso do feature run pro `/harness status`: tasks completas/total (do feature-run.json)
- * + assertions passed/failed/total (do status.json). null se a feature não convergiu (sem plan).
+ * Progresso do feature run pro `/harness status`: tasks completas/total + assertions
+ * passed/failed/total (do status.json). null se a feature não convergiu (sem plan). tasksDone vem
+ * dos eventos task_completed (paridade nos dois paths: 1 worker por feature, sem N steps).
  */
 export function featureProgress(cwd: string, featureId: string): import("./mode.ts").ProgressSummary | null {
 	const plan = readPlan(cwd, featureId);
 	if (!plan) return null;
-	const run = readFeatureRun(cwd, featureId);
 	const status = readStatus(cwd, featureId);
-	const tasksDone = run ? run.steps.filter((s) => s.kind === "task" && s.status === "completed").length : 0;
+	const done = completedTaskIds(cwd, featureId);
+	const tasksDone = plan.tasks.filter((t) => done.has(t.id)).length;
 	let assertionsTotal = 0;
 	let assertionsPassed = 0;
 	let assertionsFailed = 0;
@@ -141,13 +163,17 @@ export function featureProgress(cwd: string, featureId: string): import("./mode.
 	return { tasksTotal: plan.tasks.length, tasksDone, assertionsTotal, assertionsPassed, assertionsFailed };
 }
 
-/** A ponte converge → runner: lê plan.json e constrói o FeatureRun (a fila de steps). null se não há plan. */
+/**
+ * A ponte converge → runner: lê plan.json e constrói o FeatureRun. Paridade droid: as tasks viram
+ * a lista INTERNA de UM step de implementação (1 worker por feature) — passa os campos ricos
+ * (description/preconditions/expectedBehavior) pra o bootstrap apresentar a fila ao worker. null se não há plan.
+ */
 export function buildFeatureRun(cwd: string, featureId: string, now?: () => string): FeatureRun | null {
 	const plan = readPlan(cwd, featureId);
 	if (!plan) return null;
 	return planFeatureRun(
 		featureId,
-		plan.tasks.map((t) => ({ id: t.id, skillName: t.skillName, fulfills: t.fulfills })),
+		plan.tasks.map((t) => ({ id: t.id, skillName: t.skillName, description: t.description, fulfills: t.fulfills, preconditions: t.preconditions, expectedBehavior: t.expectedBehavior })),
 		now,
 	);
 }

@@ -6,6 +6,7 @@ import * as path from "node:path";
 import { listRunIds, listRuns, runRow, type RunSummary } from "../src/runs.ts";
 import type { Plan } from "../src/plan.ts";
 import { buildFeatureRun, storePlan, writeFeatureRun } from "../src/plan.ts";
+import { appendProgress } from "../src/handoff.ts";
 
 function tmp(): string {
 	return fs.mkdtempSync(path.join(os.tmpdir(), "harness-runs-"));
@@ -34,13 +35,15 @@ test("listRuns: lista runs com plan, ordenado por updatedAt desc, com current e 
 	storePlan(d, plan("feat-a", "2026-06-20T00:00:00.000Z"));
 	storePlan(d, plan("feat-b", "2026-06-28T00:00:00.000Z"));
 
-	// feat-a roda parcial e marca um assertion passed → updatedAt mais novo que feat-b
+	// feat-a roda parcial (1 task concluída via task_completed) e marca um assertion passed →
+	// updatedAt mais novo que feat-b. (1 worker por feature: tasksDone vem dos eventos, não de N steps.)
 	const ra = buildFeatureRun(d, "feat-a", () => "2026-06-29T00:00:00.000Z");
 	if (ra) {
-		ra.steps[0].status = "completed";
+		ra.steps[0].status = "in_progress";
 		ra.updatedAt = "2026-06-29T12:00:00.000Z";
 		writeFeatureRun(d, ra);
 	}
+	appendProgress(d, "feat-a", "task_completed", { taskId: "T1" });
 	const stPath = path.join(d, ".harness", "runs", "feat-a", "status.json");
 	const st = JSON.parse(fs.readFileSync(stPath, "utf8"));
 	st.assertions.A1 = "passed";

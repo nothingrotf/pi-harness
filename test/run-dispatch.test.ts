@@ -12,19 +12,21 @@ test("buildRunDispatch: todos os utilitários ativos → TODO + subagent + advis
 	assert.match(m, /ship gate: harness-code-review/);
 	assert.match(m, /ship gate: harness-qa-validator/);
 	assert.match(m, /ship gate: harness-deliver/);
-	// worker via subagent (agente dedicado harness-worker), sequencial
+	// UM worker pra feature inteira (paridade droid), não um por task
 	assert.match(m, /`subagent` tool/);
 	assert.match(m, /agent: `harness-worker`/);
 	assert.match(m, /harness-worker-base/);
 	assert.match(m, /EndFeatureRun/);
-	assert.match(m, /one at a time \(sequential\)/);
+	assert.match(m, /ONE worker that owns the whole feature/);
+	assert.match(m, /FULL ordered task list/);
+	assert.doesNotMatch(m, /one worker per task\b(?! \()/, "não instrui spawn por-task");
 	// ship gate em ordem
 	assert.match(m, /harness-code-review/);
 	assert.match(m, /harness-qa-validator/);
 	// utilitários reforçados
 	assert.match(m, /`advisor`/);
 	assert.match(m, /ask_user_question/);
-	assert.match(m, /5 attempts per task/);
+	assert.match(m, /Cap at 5 attempts/);
 	assert.match(m, /Use the available utilities/);
 });
 
@@ -33,7 +35,7 @@ test("buildRunDispatch: sem utilitários → degrada (in-session), ainda roda o 
 	assert.doesNotMatch(m, /`todo` tool/);
 	assert.doesNotMatch(m, /`subagent` tool/);
 	assert.doesNotMatch(m, /`advisor`/);
-	assert.match(m, /run the task in-session/);
+	assert.match(m, /deliver the feature in-session/);
 	assert.match(m, /harness-code-review/);
 	assert.match(m, /harness-qa-validator/);
 	assert.match(m, /harness-deliver/);
