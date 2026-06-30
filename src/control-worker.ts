@@ -129,24 +129,48 @@ export function parseSessionJsonl(text: string): RawMessage[] {
 	return out;
 }
 
-/** Lê a sessão do worker (runs/<id>/sessions/<...wsid>.jsonl) e folda. [] se não há ficheiro. */
-export function readWorkerSession(cwd: string, featureId: string, wsid: string): WorkerEntry[] {
-	if (!wsid || wsid === "—") return [];
+/** Resolve o ficheiro de sessão do worker (runs/<id>/sessions/<...wsid>.jsonl). null se ausente. */
+export function findWorkerSessionFile(cwd: string, featureId: string, wsid: string): string | null {
+	if (!wsid || wsid === "—") return null;
 	const dir = path.join(runDir(cwd, featureId), "sessions");
 	let files: string[];
 	try {
 		files = fs.readdirSync(dir).filter((f) => f.endsWith(".jsonl") && f.includes(wsid));
 	} catch {
-		return [];
+		return null;
 	}
-	if (files.length === 0) return [];
-	// o mais recente (timestamp no nome) com o wsid
-	const file = files.sort().at(-1) as string;
+	if (files.length === 0) return null;
+	return path.join(dir, files.sort().at(-1) as string); // o mais recente (timestamp no nome) com o wsid
+}
+
+/**
+ * Lê a sessão do worker (jsonl) e folda — o FALLBACK tolerante (nosso parser), usado quando o
+ * reader nativo (SessionManager/get_entries, src/session-read.ts) não está disponível (testes/CI)
+ * ou falha (ficheiro a ser escrito). [] se não há ficheiro.
+ */
+export function readWorkerSession(cwd: string, featureId: string, wsid: string): WorkerEntry[] {
+	const file = findWorkerSessionFile(cwd, featureId, wsid);
+	if (!file) return [];
 	try {
-		return foldTranscript(parseSessionJsonl(fs.readFileSync(path.join(dir, file), "utf8")));
+		return foldTranscript(parseSessionJsonl(fs.readFileSync(file, "utf8")));
 	} catch {
 		return [];
 	}
+}
+
+/** Uma SessionEntry do schema oficial (estrutural, p/ não acoplar ao pacote pi nos testes). */
+export interface RawSessionEntry {
+	type?: string;
+	message?: RawMessage;
+}
+
+/**
+ * Folda as SessionEntry[] do schema OFICIAL (get_entries/SessionManager.getEntries) em entries
+ * renderáveis. Só `type:"message"` vira transcript — compaction/branch_summary/label/model_change/
+ * thinking_level_change são ignoradas (não fazem parte do mini-transcript). PURA, testável.
+ */
+export function entriesFromSessionEntries(entries: RawSessionEntry[]): WorkerEntry[] {
+	return foldTranscript((entries ?? []).filter((e) => e?.type === "message" && e.message).map((e) => e.message as RawMessage));
 }
 
 /** Sintetiza entries a partir do recentActivity de um live subagent ("bash: echo" → tool entry). */
@@ -220,12 +244,35 @@ export function pickActiveWorker(model: ControlModel, live: LiveAgent[]): Active
 	return null;
 }
 
-/** As entries do transcript do worker ativo: sessão (headless) com fallback ao live activity. */
+/**
+ * O MAPA DE CASOS da fonte do transcript do worker ativo:
+ *   "session"  → worker headless session-backed (lê o .jsonl: nativo get_entries c/ fallback ao
+ *                nosso parser; src/session-read.ts + readWorkerSession);
+ *   "activity" → subagent live-TUI (sem ficheiro próprio acessível) → recentActivity do stream;
+ *   "none"     → sem fonte (task nativa sem wsid/atividade, ou nenhum worker) → só título/placeholder.
+ */
+export function transcriptSource(aw: ActiveWorker | null): "session" | "activity" | "none" {
+	if (!aw) return "none";
+	if (aw.source === "session" && aw.wsid) return "session";
+	if (aw.recentActivity && aw.recentActivity.length > 0) return "activity";
+	return "none";
+}
+
+/**
+ * As entries do transcript do worker ativo (FALLBACK puro, sem o pacote pi): sessão em disco via
+ * o nosso parser tolerante, com fallback ao live activity. O caminho NATIVO (get_entries) vive em
+ * src/session-read.ts e é preferido pela view; este é o fallback quando o nativo é null.
+ */
 export function workerEntries(cwd: string, featureId: string, aw: ActiveWorker): WorkerEntry[] {
-	if (aw.source === "session" && aw.wsid) {
-		const e = readWorkerSession(cwd, featureId, aw.wsid);
-		if (e.length > 0) return e;
+	switch (transcriptSource(aw)) {
+		case "session": {
+			const e = readWorkerSession(cwd, featureId, aw.wsid as string);
+			if (e.length > 0) return e;
+			return aw.recentActivity && aw.recentActivity.length > 0 ? entriesFromActivity(aw.recentActivity) : [];
+		}
+		case "activity":
+			return entriesFromActivity(aw.recentActivity as string[]);
+		default:
+			return [];
 	}
-	if (aw.recentActivity && aw.recentActivity.length > 0) return entriesFromActivity(aw.recentActivity);
-	return [];
 }

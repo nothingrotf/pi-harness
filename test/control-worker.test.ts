@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { entriesFromActivity, foldTranscript, parseSessionJsonl, pickActiveWorker, readWorkerSession, summarizeToolParams } from "../src/control-worker.ts";
+import { entriesFromActivity, entriesFromSessionEntries, foldTranscript, parseSessionJsonl, pickActiveWorker, readWorkerSession, summarizeToolParams, transcriptSource, workerEntries } from "../src/control-worker.ts";
 import type { ControlModel } from "../src/control-model.ts";
 import type { LiveAgent } from "../src/live-agents.ts";
 
@@ -127,4 +127,50 @@ test("pickActiveWorker: prefere o subagent vivo (KG0); senão a row running; sen
 test("pickActiveWorker: run pausado marca status paused na row running", () => {
 	const m = model({ state: "paused", workers: [{ workerSessionId: "ws_p", taskId: "T1", status: "running" }] });
 	assert.equal(pickActiveWorker(m, [])?.status, "paused");
+});
+
+test("entriesFromSessionEntries: folda só type:message do schema oficial; ignora compaction/branch/label", () => {
+	const entries = [
+		{ type: "session", version: 1 },
+		{ type: "message", message: { role: "user", content: [{ type: "text", text: "go" }] } },
+		{ type: "model_change", provider: "anthropic", modelId: "x" },
+		{ type: "message", message: { role: "assistant", content: [{ type: "toolCall", name: "bash", arguments: { command: "ls" } }] } },
+		{ type: "compaction", summary: "…" },
+		{ type: "message", message: { role: "toolResult", content: [{ type: "text", text: "a\nb" }] } },
+		{ type: "label", label: "x" },
+	];
+	const e = entriesFromSessionEntries(entries);
+	assert.equal(e.length, 2, "user msg + tool (call+result colapsado); não-message ignoradas");
+	assert.equal(e[0].text, "go");
+	assert.equal(e[1].kind, "tool");
+	assert.equal(e[1].toolName, "bash");
+	assert.equal(e[1].result, "a\nb", "result preserva \\n cru (a view colapsa no render)");
+	assert.deepEqual(entriesFromSessionEntries([]), []);
+});
+
+test("transcriptSource: mapa de casos session / activity / none", () => {
+	assert.equal(transcriptSource(null), "none");
+	assert.equal(transcriptSource({ number: 1, id: "T1", label: "x", skill: "w", status: "running", source: "session", wsid: "ws_1" }), "session");
+	assert.equal(transcriptSource({ number: 1, id: "T1", label: "x", skill: "w", status: "running", source: "session" }), "none", "session sem wsid → none");
+	assert.equal(transcriptSource({ number: 1, id: "T1", label: "x", skill: "w", status: "running", source: "live", recentActivity: ["bash: x"] }), "activity");
+	assert.equal(transcriptSource({ number: 1, id: "T1", label: "x", skill: "w", status: "running", source: "live", recentActivity: [] }), "none");
+});
+
+test("workerEntries: session com ficheiro → entries; session sem ficheiro → cai p/ activity; activity → activity", () => {
+	const cwd = tmp();
+	const dir = path.join(cwd, ".harness", "runs", "feat-x", "sessions");
+	fs.mkdirSync(dir, { recursive: true });
+	const line = (m: unknown): string => JSON.stringify({ type: "message", message: m });
+	fs.writeFileSync(path.join(dir, "ts_ws_disk.jsonl"), line({ role: "assistant", content: [{ type: "text", text: "from disk" }] }));
+
+	const fromDisk = workerEntries(cwd, "feat-x", { number: 1, id: "T1", label: "x", skill: "w", status: "running", source: "session", wsid: "ws_disk" });
+	assert.equal(fromDisk[0]?.text, "from disk");
+
+	const noFile = workerEntries(cwd, "feat-x", { number: 1, id: "T1", label: "x", skill: "w", status: "running", source: "session", wsid: "ws_absent", recentActivity: ["bash: echo"] });
+	assert.equal(noFile[0]?.kind, "tool", "sem ficheiro → fallback ao recentActivity");
+
+	const live = workerEntries(cwd, "feat-x", { number: 1, id: "T1", label: "x", skill: "w", status: "running", source: "live", recentActivity: ["read: a.ts"] });
+	assert.equal(live[0]?.toolName, "read");
+
+	assert.deepEqual(workerEntries(cwd, "feat-x", { number: 1, id: "T1", label: "x", skill: "w", status: "running", source: "session" }), []);
 });

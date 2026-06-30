@@ -21,6 +21,7 @@ import { type ControlModel, type RunState, formatDuration, readControlModel, sta
 import { type Watcher, watchRun } from "./control-watch.ts";
 import { splitLineRender, tabRowText, truncate, wrapText } from "./control-render.ts";
 import { type ActiveWorker, pickActiveWorker, type WorkerEntry, workerEntries } from "./control-worker.ts";
+import { readNativeWorkerEntries } from "./session-read.ts";
 import {
 	type Row,
 	type TaskFilter,
@@ -218,7 +219,10 @@ export function showFeatureControl(ctx: ExtensionContext, featureId: string, opt
 				}
 				const head: string[] = [splitLineRender(left, right, w, 1, visibleWidth), ""];
 				if (sA <= 0) return head.slice(0, workerRows);
-				const entries = workerEntries(ctx.cwd, featureId, aw);
+				// Caminho NATIVO primeiro (pi 0.80.3 get_entries via SessionManager/parseSessionEntries),
+				// com fallback ao nosso parser/activity quando indisponível ou vazio (mapa de casos).
+				const native = aw.source === "session" && aw.wsid ? readNativeWorkerEntries(ctx.cwd, featureId, aw.wsid) : null;
+				const entries = native && native.length > 0 ? native : workerEntries(ctx.cwd, featureId, aw);
 				const maxItems = Math.max(1, Math.floor(sA / 2));
 				const content: string[] = [];
 				for (const e of entries.slice(-maxItems)) content.push(...renderEntry(e, w));

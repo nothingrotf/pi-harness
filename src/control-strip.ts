@@ -41,27 +41,39 @@ export function clearProgress(ctx: ExtensionContext): void {
 export class StripController {
 	private watcher?: Watcher;
 	private featureId?: string;
+	private ctx?: ExtensionContext;
 
 	start(ctx: ExtensionContext, featureId: string): void {
-		if (this.featureId === featureId && this.watcher) return;
+		if (this.featureId === featureId && this.watcher) {
+			this.ctx = ctx;
+			return;
+		}
 		this.stopWatcher();
 		this.featureId = featureId;
-		const refresh = (): void => {
-			const m = readControlModel(ctx.cwd, featureId);
-			// Alimenta o live store do run card (cap. 09): o renderer no transcript relê isto e
-			// `setProgress`/`setStatus` dispara o ciclo de render que faz o cartão ticar ao vivo.
-			setRunModel(featureId, m);
-			if (m) setProgress(ctx, m);
-			else clearProgress(ctx);
-		};
-		refresh();
-		this.watcher = watchRun(ctx.cwd, featureId, refresh);
+		this.ctx = ctx;
+		this.refresh();
+		this.watcher = watchRun(ctx.cwd, featureId, () => this.refresh());
+	}
+
+	/**
+	 * Re-lê o model + republica o status/run-card. Chamado pelo watcher de fs E por sinais NATIVOS
+	 * do pi (evento `session_tree`: a sessão do orchestrator avançou). Idempotente, no-op sem ctx/feature.
+	 */
+	refresh(): void {
+		if (!this.ctx || !this.featureId) return;
+		const m = readControlModel(this.ctx.cwd, this.featureId);
+		// Alimenta o live store do run card (cap. 09): o renderer no transcript relê isto e
+		// `setProgress`/`setStatus` dispara o ciclo de render que faz o cartão ticar ao vivo.
+		setRunModel(this.featureId, m);
+		if (m) setProgress(this.ctx, m);
+		else clearProgress(this.ctx);
 	}
 
 	stop(ctx: ExtensionContext): void {
 		this.stopWatcher();
 		if (this.featureId) clearRunModel(this.featureId);
 		this.featureId = undefined;
+		this.ctx = undefined;
 		clearProgress(ctx);
 	}
 

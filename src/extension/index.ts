@@ -700,6 +700,17 @@ export default function registerHarnessExtension(pi: ExtensionAPI): void {
 			clearMode(ctx.cwd); // ponteiro órfão (run sumiu) — limpa
 		}
 	});
+	// Sinais NATIVOS de sessão (pi 0.80.3): a árvore de sessão do orchestrator avançou (nova
+	// mensagem/turn, incl. progresso de um subagent) → re-tica o status/run-card a partir do disco,
+	// complementando o watcher de fs. Aditivo e guarded (só durante um run com UI).
+	pi.on("session_tree", (_event, ctx) => {
+		lastCtx = ctx;
+		if (ctx.hasUI && mode.active && (mode.phase === "run" || mode.phase === "ship")) strip.refresh();
+	});
+	// Sessão renomeada — mantém o ctx vivo (sem ação obrigatória; o nome não entra no nosso chrome).
+	pi.on("session_info_changed", (_event, ctx) => {
+		lastCtx = ctx;
+	});
 	pi.on("session_shutdown", () => {
 		clearAllLiveAgents();
 		if (lastCtx) {

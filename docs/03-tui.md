@@ -88,9 +88,13 @@ No host do Pi a superfície tem **três** canais:
    > do único worker running/paused (o `KG0`), ocupando ~35% do corpo (mín 4 linhas, escondida
    > em telas minúsculas; geometria `mainLayout` = `ET`/`BT`/`oT`). Título `Active Worker  #N  <id>
    > … Duration <d>` + linha em branco + entries (mensagem/tool, 2 linhas cada, `floor(sA/2)` no
-   > tail), flanqueadas só por colunas `│` (sem caixa). Fonte do transcript (`control-worker.ts`):
-   > a sessão `--session-id` do worker headless (`runs/<id>/sessions/*.jsonl` → `foldTranscript`
-   > colapsa toolCall+toolResult = o `g2H`) com fallback ao `recentActivity` do subagent vivo.
+   > tail), flanqueadas só por colunas `│` (sem caixa). **Fonte do transcript (mapa de casos,
+   > `transcriptSource`):** o caminho NATIVO `get_entries` (pi 0.80.3 — `parseSessionEntries` em
+   > `src/session-read.ts`, read-only/cacheado) sobre a sessão `--session-id` do worker headless
+   > (`runs/<id>/sessions/*.jsonl`), com **fallback** ao nosso parser tolerante (`control-worker.ts`,
+   > `foldTranscript` = o `g2H`) e, em último caso, ao `recentActivity` do subagent vivo. O
+   > `entriesFromSessionEntries` ignora entries não-message (compaction/branch/model_change/custom).
+   > O evento nativo `session_tree` (+ o watcher de fs) re-tica o cockpit ao vivo.
    overlayOptions:{width:"100%",maxHeight:"100%",anchor:"top-left",margin:0}})`; o render lê
    `tui.terminal.rows/columns` e emite EXATAMENTE `rows` linhas opacas.
 
