@@ -63,9 +63,10 @@ test("proposalRejectMessage: instrui revisão + novo store_plan", () => {
 	assert.match(proposalRejectMessage("feat-x", ""), /\(no reason given\)/);
 });
 
-test("proposalCommentMessage: aprovado + guidance; manda rodar /harness run", () => {
+test("proposalCommentMessage: aprovado + steering; execução começa automaticamente (sem /harness run)", () => {
 	const msg = proposalCommentMessage("feat-x", "prefer in-memory store");
 	assert.match(msg, /APPROVED the plan/);
 	assert.match(msg, /prefer in-memory store/);
-	assert.match(msg, /\/harness run/);
+	assert.match(msg, /execution is starting/i);
+	assert.doesNotMatch(msg, /\/harness run/);
 });

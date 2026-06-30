@@ -257,24 +257,61 @@ export default function registerHarnessExtension(pi: ExtensionAPI): void {
 		}
 	};
 
+	// Inicia o run NATIVO da feature (compartilhado por `/harness run` e pela APROVAÇÃO do
+	// proposal — aprovar o plano JÁ dispara a execução, sem um `/harness run` separado).
+	// Faz branch-per-feature (não-fatal) + run_started + buildRunDispatch + cartão vivo.
+	// `steering` (aprovação com comentário) é prefixado ao dispatch como guidance de execução.
+	// O modo já deve estar em phase "run" (o caller transiciona antes — paridade com /harness run).
+	const startFeatureRun = async (ctx: ExtensionContext, featureId: string, steering?: string): Promise<void> => {
+		const t = activeTools();
+		// Branch-per-feature (run-start, determinístico/conservador): cria/troca a branch da
+		// feature só na base+limpo; senão respeita a atual. Nunca-fatal (erro de git não trava o run).
+		try {
+			const { ensureFeatureBranch } = await import("../branch-ops.ts");
+			const br = ensureFeatureBranch(ctx.cwd, featureId);
+			appendProgress(ctx.cwd, featureId, "branch_ready", { branch: br.branch, action: br.kind, reason: br.reason });
+			if (br.kind === "create") ctx.ui.notify(`pi-harness: created feature branch ${br.branch} (${br.reason}).`);
+			else if (br.kind === "switch") ctx.ui.notify(`pi-harness: switched to feature branch ${br.branch}.`);
+			else if (br.kind === "skip" || br.kind === "error") ctx.ui.notify(`pi-harness: feature branch — ${br.reason} (committing on the current branch).`, "warning");
+		} catch (e) {
+			ctx.ui.notify(`pi-harness: branch step skipped (${(e as Error).message}).`, "warning");
+		}
+		// Marca o início do run no disco (deriveRunState → "running" a partir do disco).
+		appendProgress(ctx.cwd, featureId, "run_started", {});
+		const dispatch = buildRunDispatch(featureId, { todo: t.has("todo"), subagent: hasSubagentTool(t), advisor: t.has("advisor"), askUser: t.has("ask_user_question") }, loadModelConfig().gates);
+		pi.sendUserMessage(steering ? `${steering}\n\n${dispatch}` : dispatch);
+		ctx.ui.notify(`pi-harness: executing "${featureId}" live — workers → ship gate. tools: ${toolBadge(t, ["todo", "subagent", "advisor", "ask_user_question"])}`);
+		if (ctx.hasUI) {
+			strip.start(ctx, featureId);
+			// cap. 09: dropa o cartão vivo no transcript (1x por run/sessão). Ctrl+T = cockpit.
+			if (!cardSent.has(featureId)) {
+				cardSent.add(featureId);
+				sendRunCard(pi, featureId);
+			}
+		}
+	};
+
 	// Proposal confirmation (analog do missionProposalConfirmation): overlay após store_plan.
+	// Aprovar (proceed | comment) NÃO pede um `/harness run` — já inicia a execução aqui.
 	const showProposal = async (ctx: ExtensionContext, featureId: string): Promise<void> => {
 		const model = readControlModel(ctx.cwd, featureId);
 		const { showPlanProposal } = await import("../proposal-view.ts");
 		const choice = await showPlanProposal(ctx, { featureId, model, savePath: `.harness/runs/${featureId}/` });
-		if (choice.kind === "proceed") {
-			ctx.ui.notify(`pi-harness: plan approved — run /harness run to execute "${featureId}".`);
-			return;
-		}
 		if (choice.kind === "edit") return editPlan(ctx, featureId);
 		const { proposalCommentMessage, proposalRejectMessage } = await import("../proposal.ts");
-		if (choice.kind === "comment") {
-			pi.sendUserMessage(proposalCommentMessage(featureId, choice.comment));
-			ctx.ui.notify("pi-harness: approved with comment — forwarded to the orchestrator.");
+		if (choice.kind === "reject") {
+			pi.sendUserMessage(proposalRejectMessage(featureId, choice.reason));
+			ctx.ui.notify("pi-harness: plan sent back to revise.");
 			return;
 		}
-		pi.sendUserMessage(proposalRejectMessage(featureId, choice.reason));
-		ctx.ui.notify("pi-harness: plan sent back to revise.");
+		// Aprovado: transiciona o modo p/ run e DISPARA a execução (comentário = steering).
+		mode.active = true;
+		mode.featureId = featureId;
+		mode.phase = "run";
+		await applyModeChrome(ctx, mode);
+		saveMode(ctx.cwd, mode);
+		const steering = choice.kind === "comment" ? proposalCommentMessage(featureId, choice.comment) : undefined;
+		await startFeatureRun(ctx, featureId, steering);
 	};
 
 	// Merge gate (ship-gate step 3): overlay humano quando store_delivery grava awaiting_merge.
@@ -468,35 +505,8 @@ export default function registerHarnessExtension(pi: ExtensionAPI): void {
 					ctx.ui.notify(`pi-harness: headless run ${run.status}${run.pauseReason ? ` (${run.pauseReason})` : ""}.`);
 					return;
 				}
-				const t = activeTools();
-				// Branch-per-feature (run-start, determinístico/conservador): cria/troca a branch da
-				// feature só na base+limpo; senão respeita a atual. Nunca-fatal (erro de git não trava o run).
-				if (mode.featureId) {
-					try {
-						const { ensureFeatureBranch } = await import("../branch-ops.ts");
-						const br = ensureFeatureBranch(ctx.cwd, mode.featureId);
-						appendProgress(ctx.cwd, mode.featureId, "branch_ready", { branch: br.branch, action: br.kind, reason: br.reason });
-						if (br.kind === "create") ctx.ui.notify(`pi-harness: created feature branch ${br.branch} (${br.reason}).`);
-						else if (br.kind === "switch") ctx.ui.notify(`pi-harness: switched to feature branch ${br.branch}.`);
-						else if (br.kind === "skip" || br.kind === "error") ctx.ui.notify(`pi-harness: feature branch — ${br.reason} (committing on the current branch).`, "warning");
-					} catch (e) {
-						ctx.ui.notify(`pi-harness: branch step skipped (${(e as Error).message}).`, "warning");
-					}
-				}
-				// Marca o início do run no disco. O caminho NATIVO não roda o FeatureRunner (→ sem
-				// feature-run.json), então sem este evento o estado derivava como "ready"/"Unknown"
-				// pra sempre. Com run_started, deriveRunState → "running" a partir do disco.
-				if (mode.featureId) appendProgress(ctx.cwd, mode.featureId, "run_started", {});
-				pi.sendUserMessage(buildRunDispatch(mode.featureId, { todo: t.has("todo"), subagent: hasSubagentTool(t), advisor: t.has("advisor"), askUser: t.has("ask_user_question") }, loadModelConfig().gates));
-				ctx.ui.notify(`pi-harness: executing "${mode.featureId}" live — workers → ship gate. tools: ${toolBadge(t, ["todo", "subagent", "advisor", "ask_user_question"])}`);
-				if (ctx.hasUI && mode.featureId) {
-					strip.start(ctx, mode.featureId);
-					// cap. 09: dropa o cartão vivo no transcript (1x por run/sessão). Ctrl+T = cockpit.
-					if (!cardSent.has(mode.featureId)) {
-						cardSent.add(mode.featureId);
-						sendRunCard(pi, mode.featureId);
-					}
-				}
+				// Run nativo: branch + run_started + dispatch + cartão vivo (compartilhado com a aprovação do proposal).
+				if (mode.featureId) await startFeatureRun(ctx, mode.featureId);
 				return;
 			}
 

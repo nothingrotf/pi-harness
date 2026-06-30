@@ -49,8 +49,8 @@ export interface ProposalOption {
 
 /** As 4 opções (rebrand das do missionProposalConfirmation). */
 export const PROPOSAL_OPTIONS: ProposalOption[] = [
-	{ value: "proceed", label: "Proceed with the plan", description: "approve — ready to run" },
-	{ value: "comment", label: "Proceed with comment", description: "approve + steering guidance for execution" },
+	{ value: "proceed", label: "Proceed with the plan", description: "approve — starts running now" },
+	{ value: "comment", label: "Proceed with comment", description: "approve + steering — starts running now" },
 	{ value: "edit", label: "Manually edit plan", description: "open plan.json in the editor" },
 	{ value: "reject", label: "No, and explain why", description: "send it back to revise" },
 ];
@@ -77,11 +77,11 @@ export function proposalRejectMessage(featureId: string, reason: string): string
 	].join("\n");
 }
 
-/** Aprovado com comentário: guidance pra incorporar na execução; o plano segue aprovado. */
+/** Aprovado com comentário: steering pra incorporar na execução, que JÁ está começando (sem /harness run). */
 export function proposalCommentMessage(featureId: string, comment: string): string {
 	return [
-		`The user APPROVED the plan for "${featureId}" with a comment to apply during execution:`,
+		`The user APPROVED the plan for "${featureId}" and execution is starting now.`,
+		"Apply this steering guidance throughout execution:",
 		comment || "(empty comment)",
-		"Acknowledge it briefly; the plan is approved — tell the user to run `/harness run`.",
 	].join("\n");
 }
