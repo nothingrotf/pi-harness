@@ -42,11 +42,26 @@ deixa `pending` e é destravado por budget bônus no resume.
 - **Heartbeat backend (`XUA`).** É liveness de daemon REMOTO (cloud computer), não o
   beacon de mission; irrelevante pro modo feature local.
 
+## Worker driver: WIRE RPC nativo (`pi --mode rpc`) — substitui o `pi --print`
+O worker headless NÃO é mais um `pi --print --mode json` one-shot. Desde a pi 0.80.3
+(RPC nativo) ele é dirigido pelo **WIRE RPC** via o **`RpcClient` oficial** (`src/rpc-worker.ts`,
+`makeRpcSpawn`): `RpcClient.start()` spawna `pi --mode rpc` session-backed (`--session-id`/`-dir`),
+`client.prompt(rpcWorkerPrompt)` dispara o turno, observa os **AgentEvents** (`onEvent`) e ao
+`agent_end` lê o handoff (EndFeatureRun) → o mesmo `SpawnOutcome`. Os sinais de resiliência agora
+vêm do stream estruturado:
+- **inatividade** = watchdog event-based (reset a cada AgentEvent) → `inactivity` → requeue;
+- **402/usage** = `isUsageLimitEvent` sobre os AgentEvents → `client.abort()` → pausa resumível;
+- **abort (graceful)** = `client.abort()` (interrompe; o transcript `--session-id` fica p/ resume) + `stop()`.
+
+O `RpcClient` é carregado por **dynamic import lazy/guarded** (+ `clientFactory` injetável) — o
+driver é 100% testável sem o pacote pi e nunca quebra o load. A **converge** headless
+(`makeRealConvergeFn`) segue via `pi --print` (one-shot sem transcript a observar). O antigo
+`makeRealSpawn`/`piArgs` (worker `--print`) foi **removido**.
+
 ## Limite honesto
-O **caminho headless** (`pi --print`) agora tem paridade funcional com o doc 07
-(resume real, graceful×hard, inactivity, 402, heartbeat, budget bônus, preempção).
-O **caminho live-TUI** herda resiliência do próprio pi (sessão do orchestrator +
-Plan `todo` sobrevivem a `/reload`); o supervisor acima cobre os workers que ele
-spawna via `pi --print` no headless. Smoke ao vivo com kills reais permanece como
-validação de campo (os modos de falha estão provados por testes determinísticos com
-spawn/child injetados).
+O **caminho headless** tem paridade funcional com o doc 07 (resume real, graceful×hard,
+inactivity, 402, heartbeat, budget bônus, preempção), agora sobre o **wire RPC**. O
+**caminho live-TUI** herda resiliência do próprio pi (sessão do orchestrator + Plan `todo`
+sobrevivem a `/reload`). O driver RPC foi validado ao vivo (spawn real `pi --mode rpc` →
+prompt → abort graceful → stop) + os modos de falha (success/402/inactivity/abort/indisponível)
+por testes determinísticos com um `RpcClient` fake injetado.

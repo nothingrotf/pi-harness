@@ -413,7 +413,8 @@ export default function registerHarnessExtension(pi: ExtensionAPI): void {
 				await applyModeChrome(ctx, mode);
 				saveMode(ctx.cwd, mode);
 				ctx.ui.notify(`pi-harness: HEADLESS feature "${fid}" — converge (pi --print) → runner. Blocks until done.`);
-				const { makeRealConvergeFn, makeRealSpawn } = await import("../feature-spawn.ts");
+				const { makeRealConvergeFn } = await import("../feature-spawn.ts");
+				const { makeRpcSpawn } = await import("../rpc-worker.ts");
 				const { runHeadlessFeature } = await import("../headless.ts");
 				const model = (ctx as { model?: { id?: string } }).model?.id;
 				const cfg = loadModelConfig(); // per-role model+effort overrides (global)
@@ -421,7 +422,7 @@ export default function registerHarnessExtension(pi: ExtensionAPI): void {
 					request,
 					featureId: fid,
 					converge: makeRealConvergeFn({ model, config: cfg }),
-					spawn: makeRealSpawn({ featureId: fid, model, config: cfg }),
+					spawn: makeRpcSpawn({ featureId: fid, model, config: cfg }),
 				});
 				ctx.ui.notify(
 					res.ok
@@ -475,7 +476,7 @@ export default function registerHarnessExtension(pi: ExtensionAPI): void {
 					// CI/headless: o FeatureRunner spawna `pi --print` por step (NÃO in-chat) e BLOQUEIA
 					// até terminar. Opt-in explícito — o default visível é o nativo acima.
 					const fid = mode.featureId;
-					const { makeRealSpawn } = await import("../feature-spawn.ts");
+					const { makeRpcSpawn } = await import("../rpc-worker.ts");
 					const { runLoop } = await import("../feature-runner.ts");
 					const { loadOrBuildFeatureRun, writeFeatureRun } = await import("../plan.ts");
 					const { appendProgress } = await import("../handoff.ts");
@@ -497,7 +498,7 @@ export default function registerHarnessExtension(pi: ExtensionAPI): void {
 					}
 					const model = (ctx as { model?: { id?: string } }).model?.id;
 					const cfg = loadModelConfig();
-					const spawn = makeRealSpawn({ featureId: fid, model, config: cfg });
+					const spawn = makeRpcSpawn({ featureId: fid, model, config: cfg });
 					await runLoop(
 						ctx.cwd,
 						run,

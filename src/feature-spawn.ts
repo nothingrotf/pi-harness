@@ -1,22 +1,21 @@
 /**
- * Integração real do FeatureRunner: spawna um WORKER child por step via `pi --print`
- * (processo novo = contexto fresco), o analog code-initiated do spawnWorkerSession do
- * runner de referência. Separado do engine (puro) pra mantê-lo 100% testável com SpawnFn
- * injetado. Aqui vivem: o system prompt do worker (harness-worker-base + a skill, inline,
- * como o readiness faz com o auditor), os args do `pi --print` (puros) e o spawn real
- * que lê o handoff (EndFeatureRun) pra reportar success ao runner.
+ * Builders PUROS da integração real do FeatureRunner. O WORKER é dirigido pelo WIRE RPC
+ * (`pi --mode rpc` via o RpcClient oficial) em src/rpc-worker.ts; aqui ficam só as peças
+ * PURAS e testáveis: o system prompt do worker (harness-worker-base + a skill inline), os
+ * args de launch do `pi --mode rpc` (rpcWorkerArgs), a mensagem do prompt (rpcWorkerPrompt),
+ * o detector de usage-limit (isUsageLimitEvent, sobre os AgentEvents do stream RPC) e o
+ * timeout de inatividade. A CONVERGE headless continua via `pi --print` (makeRealConvergeFn)
+ * — um one-shot que só autora artefatos + chama store_plan, sem transcript ao vivo a observar.
  */
 import { spawn as cpSpawn } from "node:child_process";
-import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildConvergeDispatch } from "./converge-dispatch.ts";
-import type { FeatureStep, SpawnCtx, SpawnFn, SpawnOutcome } from "./feature-runner.ts";
-import { handoffOutcome } from "./handoff.ts";
+import type { FeatureStep } from "./feature-runner.ts";
 import type { ConvergeFn } from "./headless.ts";
-import { type HarnessModelConfig, type ResolvedChoice, resolveChoice, roleForStep } from "./model-config.ts";
+import { type HarnessModelConfig, type ResolvedChoice, resolveChoice } from "./model-config.ts";
 import { buildWorkerBootstrap } from "./worker-bootstrap.ts";
 
 export function resolvePiBin(): string {
@@ -67,40 +66,38 @@ export function buildWorkerSystemPrompt(step: FeatureStep, cwd: string, opts: { 
 }
 
 /**
- * Args do `pi --print` por step (puro — testável). `choice` = modelo+effort resolvidos
- * pro role do step (worker/validator); ambos opcionais (undefined → herda o do parent).
+ * Args de LAUNCH do `pi --mode rpc` por step (puro — testável). NÃO inclui `--mode rpc` (o
+ * RpcClient adiciona) nem o prompt posicional (vai pelo comando `prompt`, ver rpcWorkerPrompt).
+ * `choice` = modelo+effort resolvidos pro role do step; ambos opcionais (undefined → herda do parent).
  */
-export function piArgs(
-	step: FeatureStep,
-	systemPromptPath: string,
-	choice: ResolvedChoice = {},
-	opts: { workerSessionId?: string; sessionDir?: string; resume?: boolean } = {},
-): string[] {
+export function rpcWorkerArgs(step: FeatureStep, systemPromptPath: string, choice: ResolvedChoice = {}, opts: { workerSessionId?: string; sessionDir?: string } = {}): string[] {
 	const tools = step.kind === "task" ? TOOLS_TASK : TOOLS_GATE;
-	const task = opts.resume
-		? "You were interrupted mid-work. Continue EXACTLY where you left off: check the repo state (git status, modified files), review what you already implemented, and finish the task. Do NOT restart from scratch. Call EndFeatureRun when done, then end your turn."
-		: step.kind === "task"
-			? "Execute your assigned task per the appended instructions (harness-worker-base, then your skill); call EndFeatureRun when done, then end your turn."
-			: "Run the ship-gate validator per the appended instructions; call EndFeatureRun (returnToOrchestrator: true) when done, then end your turn.";
-	const args = ["--print", "--mode", "json"];
+	const args: string[] = [];
 	if (opts.workerSessionId) {
-		// Worker SESSION-BACKED: transcript persistente (`--session-id` reusa a sessão se existir),
-		// o que habilita resume real ("continue where you left off") em vez de re-rodar do zero.
+		// Worker SESSION-BACKED: `--session-id` reusa a sessão se existir (transcript persistente) →
+		// resume real ("continue where you left off") + o painel Active Worker lê o `.jsonl`.
 		args.push("--session-id", opts.workerSessionId);
 		if (opts.sessionDir) args.push("--session-dir", opts.sessionDir);
-	} else {
-		args.push("--no-session"); // sem id (back-compat) → efêmero
 	}
 	if (choice.model) args.push("--model", choice.model);
 	if (choice.thinking) args.push("--thinking", choice.thinking);
-	args.push("--tools", tools, "--append-system-prompt", systemPromptPath, task);
+	args.push("--tools", tools, "--append-system-prompt", systemPromptPath);
 	return args;
 }
 
+/** A mensagem do comando `prompt` RPC do worker: task normal vs resume ("continue where you left off"). PURA. */
+export function rpcWorkerPrompt(step: FeatureStep, resume = false): string {
+	if (resume)
+		return "You were interrupted mid-work. Continue EXACTLY where you left off: check the repo state (git status, modified files), review what you already implemented, and finish the task. Do NOT restart from scratch. Call EndFeatureRun when done, then end your turn.";
+	return step.kind === "task"
+		? "Execute your assigned task per the appended instructions (harness-worker-base, then your skill); call EndFeatureRun when done, then end your turn."
+		: "Run the ship-gate validator per the appended instructions; call EndFeatureRun (returnToOrchestrator: true) when done, then end your turn.";
+}
+
 /**
- * Heurística pura (testável) p/ detectar um evento de usage-limit/402 no stream JSON do
- * `pi --print --mode json` (analog do unrecoverable_usage_402 do doc 07). Conservadora:
- * só dispara em eventos que parecem ERRO e mencionam billing/quota/402.
+ * Heurística pura (testável) p/ detectar um evento de usage-limit/402 no stream de AgentEvents do
+ * `pi --mode rpc` (analog do unrecoverable_usage_402 do doc 07). Conservadora: só dispara em
+ * eventos que parecem ERRO e mencionam billing/quota/402.
  */
 export function isUsageLimitEvent(obj: unknown): boolean {
 	if (!obj || typeof obj !== "object") return false;
@@ -113,7 +110,8 @@ export function isUsageLimitEvent(obj: unknown): boolean {
 	return /error|failed|fatal/.test(type) || o.error != null || /"(error|fatal)"/.test(blob);
 }
 
-function writePromptFile(prompt: string): { file: string; dir: string } {
+/** Escreve o system prompt num ficheiro temporário (lido pelo `--append-system-prompt`). Exportado p/ o rpc-worker. */
+export function writePromptFile(prompt: string): { file: string; dir: string } {
 	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-harness-feature-"));
 	const file = path.join(dir, "system.md");
 	fs.writeFileSync(file, prompt, { mode: 0o600 });
@@ -124,21 +122,6 @@ function writePromptFile(prompt: string): { file: string; dir: string } {
 export function workerInactivityMs(): number {
 	const raw = Number(process.env.HARNESS_WORKER_INACTIVITY_MS);
 	return Number.isFinite(raw) && raw > 0 ? raw : 600000;
-}
-
-export interface RealSpawnOpts {
-	featureId: string;
-	bin?: string;
-	/** Modelo herdado do parent (fallback quando o role não fixa um). */
-	model?: string;
-	/** Overrides de modelo+effort por role (worker/validator); ver model-config.ts. */
-	config?: HarnessModelConfig;
-	onEvent?: (step: FeatureStep, evt: { type?: string; toolName?: string }) => void;
-	spawnImpl?: typeof cpSpawn;
-	/** gerador de worker session id (injetável p/ teste; fallback quando o ctx não traz um). */
-	genSessionId?: () => string;
-	/** timeout de inatividade do child (ms); default workerInactivityMs(). 0 = desliga. */
-	inactivityMs?: number;
 }
 
 export function makeLineParser(onJson: (obj: unknown) => void): (chunk: string) => void {
@@ -161,12 +144,6 @@ export function makeLineParser(onJson: (obj: unknown) => void): (chunk: string) 
 	};
 }
 
-/**
- * SpawnFn de produção pro FeatureRunner: spawna `pi --print` pro step no cwd do repo,
- * herdando env (model/auth). Depois do child fechar, LÊ o handoff (EndFeatureRun) pra
- * reportar success/returnToOrchestrator — o exit code sozinho não basta (espelha o
- * auditSucceeded do readiness).
- */
 // ─────────────────────────────────────────────────────────────────────────────
 // Converge child (o elo headless converge→runner — src/headless.ts)
 
@@ -239,95 +216,3 @@ export function makeRealConvergeFn(opts: RealConvergeOpts = {}): ConvergeFn {
 		});
 }
 
-export function makeRealSpawn(opts: RealSpawnOpts): SpawnFn {
-	const bin = opts.bin ?? resolvePiBin();
-	const spawnImpl = opts.spawnImpl ?? cpSpawn;
-	const genId = opts.genSessionId ?? (() => `ws_${randomUUID().slice(0, 8)}`);
-	const inactivityMs = opts.inactivityMs ?? workerInactivityMs();
-	return (step: FeatureStep, ctx: SpawnCtx): Promise<SpawnOutcome> => {
-		// Worker SESSION-BACKED: o id vem do engine (resume re-attacha o mesmo); fallback gera um.
-		const workerSessionId = ctx.workerSessionId ?? genId();
-		const sessionDir = path.join(ctx.cwd, ".harness", "runs", opts.featureId, "sessions");
-		try {
-			fs.mkdirSync(sessionDir, { recursive: true });
-		} catch {
-			// best-effort
-		}
-		const sys = buildWorkerSystemPrompt(step, ctx.cwd, { featureId: opts.featureId, workerSessionId });
-		const { file, dir } = writePromptFile(sys);
-		const args = piArgs(step, file, resolveChoice(opts.config, roleForStep(step), opts.model), { workerSessionId, sessionDir, resume: ctx.resume });
-		return new Promise<SpawnOutcome>((resolve) => {
-			const child = spawnImpl(bin, args, { cwd: ctx.cwd, stdio: ["ignore", "pipe", "pipe"], env: process.env });
-			let settled = false;
-			let idle: ReturnType<typeof setTimeout> | null = null;
-			const clearIdle = () => {
-				if (idle) clearTimeout(idle);
-				idle = null;
-			};
-			const done = (out: SpawnOutcome) => {
-				if (settled) return;
-				settled = true;
-				clearIdle();
-				try {
-					fs.rmSync(dir, { recursive: true, force: true });
-				} catch {
-					// best-effort
-				}
-				if (onAbort) ctx.signal?.removeEventListener?.("abort", onAbort);
-				resolve(out);
-			};
-			const kill = () => {
-				try {
-					child.kill("SIGTERM");
-				} catch {
-					// ignore
-				}
-			};
-			// Watchdog de inatividade (doc 07: session_inactivity → morte do worker). Resetado a cada
-			// chunk de stdout; ao disparar, mata o child e reporta inactivity (o runner faz requeue).
-			const armIdle = () => {
-				if (!inactivityMs || inactivityMs <= 0) return;
-				clearIdle();
-				idle = setTimeout(() => {
-					kill();
-					done({ code: null, inactivity: true });
-				}, inactivityMs);
-				(idle as { unref?: () => void }).unref?.();
-			};
-			armIdle();
-			const onAbort = ctx.signal
-				? () => {
-						kill();
-						done({ code: null, aborted: true });
-					}
-				: undefined;
-			if (ctx.signal && onAbort) {
-				if (ctx.signal.aborted) onAbort();
-				else ctx.signal.addEventListener("abort", onAbort, { once: true });
-			}
-			if (child.stdout) {
-				// Cada linha JSON: reseta o watchdog, detecta 402/usage-limit (auto-pausa), repassa onEvent.
-				const feed = makeLineParser((o) => {
-					if (isUsageLimitEvent(o)) {
-						kill();
-						done({ code: null, usageLimit: true });
-						return;
-					}
-					opts.onEvent?.(step, o as { type?: string });
-				});
-				child.stdout.setEncoding("utf8");
-				child.stdout.on("data", (chunk: string) => {
-					armIdle();
-					feed(chunk);
-				});
-			}
-			// Sucesso/returnToOrchestrator vêm do handoff que o child escreveu via EndFeatureRun.
-			const finish = (code: number | null) => {
-				const out = handoffOutcome(ctx.cwd, opts.featureId, step.id);
-				done({ code, success: out.success, returnToOrchestrator: out.returnToOrchestrator });
-			};
-			child.on("error", () => finish(1));
-			child.on("close", (code) => finish(code));
-		});
-	};
-}
