@@ -28,6 +28,32 @@ export function splitLineRender(left: string, right: string, width: number, padX
 	return `${pad}${left}${" ".repeat(gap)}${right}${pad}`;
 }
 
+/**
+ * Quebra `s` em até `maxLines` linhas de ≤`width` colunas (word-slice; o `xG0` do cap. 08a).
+ * Colapsa whitespace; a última linha trunca com reticência se ainda sobra texto.
+ */
+export function wrapText(s: string, width: number, maxLines: number): string[] {
+	const w = Math.max(1, Math.floor(width));
+	const max = Math.max(1, Math.floor(maxLines));
+	const words = String(s ?? "").replace(/\s+/g, " ").trim().split(" ").filter(Boolean);
+	if (words.length === 0) return [];
+	const lines: string[] = [];
+	let cur = "";
+	for (const word of words) {
+		const next = cur ? `${cur} ${word}` : word;
+		if (next.length <= w) {
+			cur = next;
+		} else {
+			if (cur) lines.push(cur);
+			cur = word;
+			if (lines.length >= max) break;
+		}
+	}
+	if (lines.length < max && cur) lines.push(cur);
+	if (lines.length > max) lines.length = max;
+	return lines.map((l) => (l.length > w ? truncate(l, w) : l));
+}
+
 /** Trunca pra `n` colunas com reticência (texto plano; sem ANSI). */
 export function truncate(s: string, n: number): string {
 	if (n <= 0) return "";

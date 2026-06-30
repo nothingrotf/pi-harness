@@ -15,11 +15,12 @@
 import type { ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 import { type Component, matchesKey, type SelectItem, SelectList, sliceByColumn, visibleWidth } from "@earendil-works/pi-tui";
 import { selectListTheme } from "./control-frame.ts";
-import { drawMain, drawSub, mainBodyRows, subBodyRows } from "./control-draw.ts";
+import { drawMain, drawSub, mainLayout, subBodyRows } from "./control-draw.ts";
 import { type ControlView, type FooterItem, controlMidPos, footerItems } from "./control-screen.ts";
 import { type ControlModel, type RunState, formatDuration, readControlModel, stateLabel, stripParts, taskIcon } from "./control-model.ts";
 import { type Watcher, watchRun } from "./control-watch.ts";
-import { splitLineRender, tabRowText, truncate } from "./control-render.ts";
+import { splitLineRender, tabRowText, truncate, wrapText } from "./control-render.ts";
+import { type ActiveWorker, pickActiveWorker, type WorkerEntry, workerEntries } from "./control-worker.ts";
 import {
 	type Row,
 	type TaskFilter,
@@ -181,16 +182,50 @@ export function showFeatureControl(ctx: ExtensionContext, featureId: string, opt
 				for (const l of log.lines) out.push(dim(` ${truncate(l, w - 1)}`));
 				return out;
 			};
-			const workerLine = (m: ControlModel): string => {
-				// Workers ao vivo (subagents rodando agora) primeiro — ainda não existem em disco.
-				const live = liveActiveWorkerText(listLiveAgents());
-				if (live) return ` ${accentB("Active Worker")}  ${dim("·")}  ${live}  ${theme.fg("success", "● live")}`;
-				const running = m.workers.find((x) => x.status === "running");
-				if (running) return ` ${accentB("Active Worker")}  ·  #${running.taskId}  ·  ${shortId(running.workerSessionId)}  ·  running  ${dim("(live logs in the native subagent stream)")}`;
-				// Caminho NATIVO sem live registry (ex.: pós-/reload): a task ativa do disco (task_started)
-				// ainda diz QUAL worker corre, mesmo sem o wsid (que só chega no handoff).
-				if (m.active) return ` ${accentB("Active Worker")}  ·  #${m.active.id}  ·  running  ${dim("(live logs in the native subagent stream)")}`;
-				return ` ${accentB("Active Worker")}  ${dim("—  (no worker running)")}`;
+			// Banda Active Worker (cap. 08a) — mini-transcript AO VIVO do único worker running/paused:
+			// título (#N · id · Duration) + linha em branco + entries (mensagem/tool, 2 linhas cada).
+			const renderEntry = (e: WorkerEntry, w: number): string[] => {
+				if (e.kind === "message") {
+					const glyph = e.role === "user" ? ">" : e.role === "assistant" ? "⛬" : "●";
+					const gtone = e.role === "system" ? "secondary" : "accent";
+					const body = wrapText(e.text ?? "", Math.max(1, w - 4), 2);
+					const l1 = ` ${theme.bold(theme.fg(gtone, glyph))} ${theme.fg("secondary", body[0] ?? "")}`;
+					return body[1] ? [l1, `   ${theme.fg("secondary", body[1])}`] : [l1, ""];
+				}
+				const label = e.toolName ?? "tool";
+				const params = truncate(e.params ?? "", Math.max(0, w - label.length - 4));
+				const l1 = ` ${theme.bold(theme.fg("accent", label))}  ${dim(params)}`;
+				if (e.result && e.result.trim()) {
+					const marker = e.isError ? "✗" : "→";
+					const tone = e.isError ? "error" : "muted";
+					return [l1, `   ${theme.fg(tone, marker)} ${theme.fg(tone, truncate(e.result.replace(/\s+/g, " ").trim(), Math.max(0, w - 5)))}`];
+				}
+				return [l1, ""];
+			};
+			const buildWorkerBand = (aw: ActiveWorker, workerRows: number, w: number): string[] => {
+				const sA = Math.max(0, workerRows - 2);
+				const idText = truncate(aw.id, Math.max(8, Math.floor(w * 0.45)));
+				const statusTag = aw.status === "paused" ? `  ${theme.fg("warning", "⏸ paused")}` : `  ${theme.fg("success", "● live")}`;
+				const left = `${accentB("Active Worker")}  ${theme.fg("muted", `#${aw.number}`)}  ${dim(idText)}${statusTag}`;
+				let right: string;
+				if (aw.durationMs !== undefined && aw.durationMs >= 0) {
+					right = `${dim("Duration")} ${theme.fg("muted", formatDuration(aw.durationMs) || "0s")}`;
+				} else {
+					const stats: string[] = [];
+					if (aw.toolCount) stats.push(`${aw.toolCount} tool${aw.toolCount === 1 ? "" : "s"}`);
+					if (aw.tokens) stats.push(`${aw.tokens >= 1000 ? `${Math.round(aw.tokens / 1000)}k` : aw.tokens} tokens`);
+					right = dim(stats.join(" · ") || "live");
+				}
+				const head: string[] = [splitLineRender(left, right, w, 1, visibleWidth), ""];
+				if (sA <= 0) return head.slice(0, workerRows);
+				const entries = workerEntries(ctx.cwd, featureId, aw);
+				const maxItems = Math.max(1, Math.floor(sA / 2));
+				const content: string[] = [];
+				for (const e of entries.slice(-maxItems)) content.push(...renderEntry(e, w));
+				if (entries.length === 0) content.push(dim("   (no worker activity yet)"));
+				while (content.length < sA) content.push("");
+				if (content.length > sA) content.length = sA;
+				return [...head, ...content];
 			};
 
 			// Paint theme-backed pro painel de Delivery (lógica pura de layout vive em delivery.ts).
@@ -237,14 +272,18 @@ export function showFeatureControl(ctx: ExtensionContext, featureId: string, opt
 					const midPos = controlMidPos(cols);
 					const leftW = midPos - 1;
 					const rightW = Math.max(8, cols - midPos - 2);
-					const body = mainBodyRows(rows);
+					const liveAgents = listLiveAgents();
+					// O único worker ativo (running/paused) — o `KG0`. Define se a banda (~35%) aparece.
+					const aw = pickActiveWorker(m, liveAgents);
+					const { bodyRows, workerRows } = mainLayout(rows, !!aw);
 					// Active task efetiva: o disco (m.active) ou, no nativo antes do task_started chegar, o
 					// subagent vivo — mantém o painel Active Task e a row realçada coerentes com o worker.
-					const liveId = listLiveAgents()[0]?.taskId;
+					const liveId = liveAgents[0]?.taskId;
 					const activeId = m.active?.id ?? (liveId && liveId !== "—" ? liveId : undefined);
-					const left = leftColumn(m, leftW, body, activeId);
-					const right = rightColumn(m, rightW, body);
-					return drawMain(cols, rows, { header: headerLine(cols, m), bar: barLine(cols, m), left, right, worker: workerLine(m), footer: footerLine("main"), midPos }, deps);
+					const left = leftColumn(m, leftW, bodyRows, activeId);
+					const right = rightColumn(m, rightW, bodyRows);
+					const band = aw && workerRows > 0 ? buildWorkerBand(aw, workerRows, cols - 2) : [];
+					return drawMain(cols, rows, { header: headerLine(cols, m), bar: barLine(cols, m), left, right, worker: band, footer: footerLine("main"), midPos }, deps);
 				}
 
 				if (view === "task_detail" && detailTaskId) {

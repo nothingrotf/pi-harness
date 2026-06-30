@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { drawMain, drawSub, fullRow, mainBodyRows, rule, subBodyRows, twoRow } from "../src/control-draw.ts";
+import { drawMain, drawSub, fullRow, mainBodyRows, mainLayout, rule, subBodyRows, twoRow } from "../src/control-draw.ts";
 
 // Sem deps → identidade + `.length`: testa a GEOMETRIA pura (sem ANSI).
 
@@ -55,9 +55,24 @@ function deps() {
 	return {}; // identidade
 }
 
-test("drawMain: produz EXATAMENTE rows linhas, cada uma com cols colunas", () => {
+test("mainLayout: banda Active Worker reclama ~35% com worker; 0 sem worker; soma = interior", () => {
+	const withW = mainLayout(24, true);
+	const no = mainLayout(24, false);
+	assert.equal(withW.bodyRows + withW.workerRows, 24 - 9, "oT+BT = ET = rows-9");
+	assert.equal(no.workerRows, 0);
+	assert.equal(no.bodyRows, 24 - 9);
+	assert.ok(withW.workerRows >= 4, "banda mín 4 quando há espaço");
+	assert.ok(withW.workerRows <= Math.ceil((24 - 9) * 0.4), "~35% (não domina)");
+	// tela minúscula: sem espaço pra banda útil → esconde (workerRows 0), corpo >=1
+	const tiny = mainLayout(12, true);
+	assert.ok(tiny.bodyRows >= 1);
+	assert.equal(mainBodyRows(24, false), 24 - 9);
+});
+
+test("drawMain: produz EXATAMENTE rows linhas com a banda Active Worker (multi-linha)", () => {
 	const cols = 60;
 	const rows = 24;
+	const { bodyRows, workerRows } = mainLayout(rows, true);
 	const out = drawMain(
 		cols,
 		rows,
@@ -66,7 +81,7 @@ test("drawMain: produz EXATAMENTE rows linhas, cada uma com cols colunas", () =>
 			bar: " ● Running ████▒▒  3/8",
 			left: ["Active Task", "  [T2] x"],
 			right: ["Progress Log"],
-			worker: " Active Worker: #2",
+			worker: [" Active Worker  #2  T2          Duration 2m", "", " ⛬ assistant text"],
 			footer: " F Tasks  W Workers  Esc",
 			midPos: 30,
 		},
@@ -75,19 +90,20 @@ test("drawMain: produz EXATAMENTE rows linhas, cada uma com cols colunas", () =>
 	assert.equal(out.length, rows);
 	for (const l of out) assert.equal(l.length, cols, `linha "${l}" deve ter ${cols} cols`);
 	assert.equal(out[0][0], "┌");
-	assert.equal(out[0][cols - 1], "┐");
-	assert.equal(out[rows - 1][0], "└");
 	assert.equal(out[rows - 1][cols - 1], "┘");
-	// régua de split (┬) na linha 4 (0-idx), join (┴) logo antes do worker
+	// split (┬) na linha 4; join (┴) logo após as bodyRows; banda começa logo depois do join
 	assert.equal(out[4][30], "┬");
-	assert.equal(out.length, 10 + mainBodyRows(rows));
+	const joinIdx = 5 + bodyRows;
+	assert.equal(out[joinIdx][30], "┴", "join ┴ após as linhas de duas colunas");
+	assert.match(out[joinIdx + 1], /Active Worker  #2  T2/, "título da banda logo após o join");
+	assert.equal(out.length, 9 + bodyRows + workerRows);
 });
 
-test("drawMain: corpo de duas colunas preenche a altura (linhas extras viram vazias)", () => {
-	const out = drawMain(40, 16, { header: " H", bar: " B", left: ["only-left"], right: [], worker: " W", footer: " F", midPos: 20 }, deps());
-	// linha 5 (primeira do corpo) tem o conteúdo; uma linha de corpo posterior é vazia mas ainda emoldurada
+test("drawMain: sem worker (worker:[]) → colunas enchem, sem banda", () => {
+	const out = drawMain(40, 16, { header: " H", bar: " B", left: ["only-left"], right: [], worker: [], footer: " F", midPos: 20 }, deps());
+	assert.equal(out.length, 16);
 	assert.match(out[5], /^│only-left/);
-	const lastBody = out[5 + mainBodyRows(16) - 1];
+	const lastBody = out[5 + mainLayout(16, false).bodyRows - 1];
 	assert.equal(lastBody[0], "│");
 	assert.equal(lastBody[lastBody.length - 1], "│");
 });

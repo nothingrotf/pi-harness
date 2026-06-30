@@ -81,8 +81,16 @@ No host do Pi a superfície tem **três** canais:
    composição segue *steerable*, e `ctrl+t` é o atalho "abrir o cockpit".
 3. **Overlay denso full-screen sob demanda** (`Ctrl+T` / `/harness control`): o dashboard
    completo **hand-drawn** que cobre a tela inteira (cap. 08) — cantos quadrados `┌┐└┘`,
-   header band, barra, 2 colunas com divisor `┬…┴`, faixa Active Worker, footer bar,
+   header band, barra, 2 colunas com divisor `┬…┴`, **banda Active Worker**, footer bar,
    sub-views (Tasks/Workers/Coverage) e drilldowns. `ctx.ui.custom(factory, {overlay:true,
+
+   > **Banda Active Worker (cap. 08a, 1:1).** NÃO é uma linha — é um **mini-transcript ao vivo**
+   > do único worker running/paused (o `KG0`), ocupando ~35% do corpo (mín 4 linhas, escondida
+   > em telas minúsculas; geometria `mainLayout` = `ET`/`BT`/`oT`). Título `Active Worker  #N  <id>
+   > … Duration <d>` + linha em branco + entries (mensagem/tool, 2 linhas cada, `floor(sA/2)` no
+   > tail), flanqueadas só por colunas `│` (sem caixa). Fonte do transcript (`control-worker.ts`):
+   > a sessão `--session-id` do worker headless (`runs/<id>/sessions/*.jsonl` → `foldTranscript`
+   > colapsa toolCall+toolResult = o `g2H`) com fallback ao `recentActivity` do subagent vivo.
    overlayOptions:{width:"100%",maxHeight:"100%",anchor:"top-left",margin:0}})`; o render lê
    `tui.terminal.rows/columns` e emite EXATAMENTE `rows` linhas opacas.
 

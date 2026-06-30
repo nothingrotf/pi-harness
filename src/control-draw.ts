@@ -113,25 +113,43 @@ export interface MainParts {
 	left: string[];
 	/** coluna direita (Progress Log). */
 	right: string[];
-	/** faixa Active Worker (1 linha). */
-	worker: string;
+	/**
+	 * Banda Active Worker (cap. 08a): N linhas (`workerRows`) = título + linha em branco +
+	 * mini-transcript do worker vivo. [] quando nenhum worker roda (a banda some, as colunas
+	 * crescem). Cada linha já vem colorida/cortada pelo caller; a moldura `│ … │` é do fullRow.
+	 */
+	worker: string[];
 	/** barra de footer (1 linha): `F Tasks   W Workers   …`. */
 	footer: string;
 	/** coluna do `│` divisor (alinha com `┬`/`┴`). */
 	midPos: number;
 }
 
-/** Quantas linhas de corpo (duas colunas) o main view tem pra uma tela de `rows`. */
-export function mainBodyRows(rows: number): number {
-	return Math.max(1, rows - 10);
+/**
+ * Split da altura interior do main entre as DUAS COLUNAS (`bodyRows`/`oT`) e a banda
+ * Active Worker (`workerRows`/`BT`) — o `ET`/`BT`/`oT` do cap. 08a. Com worker vivo a banda
+ * reclama ~35% (mín 4, escondida em telas minúsculas); sem worker, BT=0 e as colunas enchem.
+ * Interior ET = `rows-9` (9 linhas fixas: topo+header+régua+barra+split+join+régua+footer+base).
+ */
+export function mainLayout(rows: number, hasWorker: boolean): { bodyRows: number; workerRows: number } {
+	const ET = Math.max(2, Math.floor(rows) - 9);
+	let BT = hasWorker ? Math.max(4, Math.floor(ET * 0.35)) : 0;
+	if (BT > ET - 1) BT = ET - 1; // garante >=1 linha de corpo de duas colunas
+	if (BT < 2) BT = 0; // sem espaço pra uma banda útil → esconde
+	return { bodyRows: Math.max(1, ET - BT), workerRows: BT };
+}
+
+/** Quantas linhas de corpo (duas colunas) o main tem (compat; = bodyRows com worker vivo). */
+export function mainBodyRows(rows: number, hasWorker = false): number {
+	return mainLayout(rows, hasWorker).bodyRows;
 }
 
 /**
- * Main view full-screen: topo · header · régua · barra · split(┬) · K linhas de 2 colunas ·
- * join(┴) · worker · régua · footer · base. Total = 10 + K = `rows`.
+ * Main view full-screen: topo · header · régua · barra · split(┬) · oT linhas de 2 colunas ·
+ * join(┴) · BT linhas de banda Active Worker · régua · footer · base. Total = 9 + oT + BT = `rows`.
  */
 export function drawMain(cols: number, rows: number, parts: MainParts, deps: DrawDeps = {}): string[] {
-	const bodyRows = mainBodyRows(rows);
+	const { bodyRows, workerRows } = mainLayout(rows, parts.worker.length > 0);
 	const lines: string[] = [];
 	lines.push(rule(cols, { left: TL, right: TR }, deps));
 	lines.push(fullRow(cols, parts.header, deps));
@@ -140,7 +158,7 @@ export function drawMain(cols: number, rows: number, parts: MainParts, deps: Dra
 	lines.push(rule(cols, { mid: MT, midPos: parts.midPos }, deps));
 	for (let k = 0; k < bodyRows; k++) lines.push(twoRow(cols, parts.left[k] ?? "", parts.right[k] ?? "", parts.midPos, deps));
 	lines.push(rule(cols, { mid: MB, midPos: parts.midPos }, deps));
-	lines.push(fullRow(cols, parts.worker, deps));
+	for (let k = 0; k < workerRows; k++) lines.push(fullRow(cols, parts.worker[k] ?? "", deps));
 	lines.push(rule(cols, {}, deps));
 	lines.push(fullRow(cols, parts.footer, deps));
 	lines.push(rule(cols, { left: BL, right: BR }, deps));
