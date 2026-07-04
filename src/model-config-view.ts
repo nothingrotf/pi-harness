@@ -12,6 +12,7 @@
  */
 import { DynamicBorder, type ExtensionContext, type Theme } from "@earendil-works/pi-coding-agent";
 import { Container, type SelectItem, SelectList, Spacer, Text } from "@earendil-works/pi-tui";
+import { clipToWidth } from "./control-frame.ts";
 import {
 	defaultModelRef,
 	type Effort,
@@ -78,7 +79,13 @@ function rolesPanel(ctx: ExtensionContext, cfg: HarnessModelConfig, opts: { labe
 		selectList.onCancel = () => done({ kind: "cancel" });
 		const container = panelFrame(theme, TITLE, selectList, NAV_HINT, SUBTITLE);
 		return {
-			render: (w) => container.render(w),
+			render: (w) => {
+				try {
+					return container.render(w);
+				} catch (e) {
+					return [clipToWidth(` ⚠ render error: ${(e as Error).message}`, w), " Esc / Ctrl+C"];
+				}
+			},
 			invalidate: () => container.invalidate(),
 			handleInput: (data) => {
 				selectList.handleInput(data);
@@ -96,7 +103,13 @@ function pickOne(ctx: ExtensionContext, title: string, items: SelectItem[]): Pro
 		selectList.onCancel = () => done(undefined);
 		const container = panelFrame(theme, `⬢ ${title}`, selectList, "enter select · esc keep current");
 		return {
-			render: (w) => container.render(w),
+			render: (w) => {
+				try {
+					return container.render(w);
+				} catch (e) {
+					return [clipToWidth(` ⚠ render error: ${(e as Error).message}`, w), " Esc / Ctrl+C"];
+				}
+			},
 			invalidate: () => container.invalidate(),
 			handleInput: (data) => {
 				selectList.handleInput(data);

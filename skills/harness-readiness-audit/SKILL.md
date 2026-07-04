@@ -144,7 +144,7 @@ If ANY validation check fails, STOP and revise before proceeding.
    • After calling the tool, present a structured report in this EXACT format:
 ```markdown
 # Level
-<Output the achieved level: Level 1, Level 2, Level 3, Level 4, Level 5 or Level 6>
+<Output the achieved level: Level 1, Level 2, Level 3, Level 4 or Level 5>
 # Applications
 <List all applications discovered with their descriptions>
 Example:

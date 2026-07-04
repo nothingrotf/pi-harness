@@ -59,7 +59,17 @@ export function watchRun(cwd: string, featureId: string, onChange: () => void, o
 	const watchers: fs.FSWatcher[] = [];
 	const tryWatch = (p: string, recursive: boolean): void => {
 		try {
-			watchers.push(fs.watch(p, { recursive }, fire));
+			const w = fs.watch(p, { recursive }, fire);
+			// FSWatcher é EventEmitter: um 'error' SEM listener (dir apagado/renomeado, EMFILE) crasha
+			// o processo inteiro. Fecha o watcher e deixa o poll cobrir.
+			w.on("error", () => {
+				try {
+					w.close();
+				} catch {
+					// já fechado
+				}
+			});
+			watchers.push(w);
 		} catch {
 			// dir inexistente / recursive não suportado — o poll cobre
 		}

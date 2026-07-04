@@ -19,6 +19,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { writeJsonAtomic } from "./plan.ts";
 
 export const HARNESS_ROLES = ["orchestrator", "worker", "validator"] as const;
 export type HarnessRole = (typeof HARNESS_ROLES)[number];
@@ -135,7 +136,7 @@ export function loadModelConfig(opts: PathOpts = {}): HarnessModelConfig {
 export function saveModelConfig(cfg: HarnessModelConfig, opts: PathOpts = {}): void {
 	const file = modelConfigPath(opts);
 	fs.mkdirSync(path.dirname(file), { recursive: true });
-	fs.writeFileSync(file, `${JSON.stringify(normalizeModelConfig(cfg), null, 2)}\n`);
+	writeJsonAtomic(file, normalizeModelConfig(cfg));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

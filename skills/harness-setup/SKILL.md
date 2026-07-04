@@ -19,9 +19,9 @@ artifacts and stamps `profile.json` (the fingerprint) — you never hand-write i
 ## Delegation (from the orchestrator)
 
 Your context window is finite. **Delegate hands-on extraction and analysis to
-subagents** (Task tool) and synthesize their reports. Brownfield extraction across a
+subagents** (the `Agent` tool) and synthesize their reports. Brownfield extraction across a
 real repo is exactly where a single shallow context pass fails — split it per area.
-Every Task prompt must state the exact output path/schema and require the subagent to
+Every `Agent` prompt must state the exact output path/schema and require the subagent to
 **return the filepaths it wrote**. You keep: structural overview, synthesis, user
 interaction, sequencing.
 

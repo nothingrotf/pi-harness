@@ -97,3 +97,12 @@ test("appendProgress: append-only com timestamp", () => {
 	assert.match(log, /"tasks":3/);
 	assert.match(log, /"ts":"2026-06-29T00:00:00.000Z"/);
 });
+
+test("runDir: path traversal via featureId é neutralizado (EndFeatureRun/store_* vêm de workers)", () => {
+	const base = runDir("/repo", "feat-x");
+	assert.ok(base.endsWith(path.join(".harness", "runs", "feat-x")));
+	for (const evil of ["../../etc", "..", "a/../../b", "..\\..\\win"]) {
+		const d = runDir("/repo", evil);
+		assert.ok(d.startsWith(path.join("/repo", ".harness", "runs") + path.sep), `"${evil}" não escapa de runs/ (→ ${d})`);
+	}
+});

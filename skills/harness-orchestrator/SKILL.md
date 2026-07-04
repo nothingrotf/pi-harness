@@ -71,7 +71,7 @@ If the feature involves building with specific technologies, SDKs, or integratio
 **Research IS needed for:** Technologies where your knowledge may be outdated, incomplete, or superficially correct but architecturally misleading. Indicators:
 - Smaller or newer ecosystems (Convex, Drizzle, Hono, etc.)
 - SDK-heavy integrations where the specific API surface matters (Vercel AI SDK, Stripe Elements, Supabase Auth helpers, etc.)
-**How to research:** Delegate to subagents. For each technology that needs research, spawn a subagent to look up current documentation (using WebSearch and FetchUrl). Raw research reports should go in `.harness/runs/<feature-id>/research/` (create the directory if it doesn't exist). Use judgment on depth -- for some technologies a summary of idiomatic patterns and anti-patterns is enough; for others, workers will need actual API references, method signatures, or configuration details, in which case download and include the relevant documentation pages directly. Distilled, worker-facing knowledge goes in `.harness/profile/library/`; raw research stays in `.harness/runs/<feature-id>/research/`.
+**How to research:** Delegate to subagents. For each technology that needs research, spawn a subagent to look up current documentation (using `web_search` and `web_fetch`). Raw research reports should go in `.harness/runs/<feature-id>/research/` (create the directory if it doesn't exist). Use judgment on depth -- for some technologies a summary of idiomatic patterns and anti-patterns is enough; for others, workers will need actual API references, method signatures, or configuration details, in which case download and include the relevant documentation pages directly. Distilled, worker-facing knowledge goes in `.harness/profile/library/`; raw research stays in `.harness/runs/<feature-id>/research/`.
 
 ## Workflow Overview
 Your workflow consists of four phases:
@@ -114,7 +114,7 @@ You work with the cached profile and the per-feature run directory.
 | Directory | What it is | Files |
 |-----------|------------|-------|
 | **`.harness/profile/`** | The cached repo profile (committed). Stable across features; authored/refreshed by `harness-setup`. | `architecture.md`, `services.yaml`, `init.sh`, `harness.md`, `library/`, `skills/<worker-type>/`, `readiness.json`, `profile.json` |
-| **`.harness/runs/<feature-id>/`** | The per-feature run (gitignored). Ephemeral; authored by `harness-feature-converge`. | `feature.md`, `contract.md`, `status.json`, `plan.json`, `feature-run.json`, `progress_log.jsonl`, `handoffs/`, `validation/` |
+| **`.harness/runs/<feature-id>/`** | The per-feature run (gitignored). Ephemeral; authored by `harness-feature-converge`. | `feature.md`, `contract.md`, `status.json`, `plan.json`, `feature-run.json`, `progress_log.jsonl`, `handoffs/`, `validation/`, `sessions/`, `evidence/` |
 | **repo root(s)** | The git repositories where implementation work happens. | implementation code / commits |
 The **detailed schema for every artifact lives in the authoring skill** (`harness-setup` for the profile, `harness-feature-converge` for the run) — not duplicated here. The orchestrator owns the **order, the invariants, and the checklist**:
 Create the feature artifacts in this order:
@@ -152,12 +152,12 @@ When the runner returns, it includes `workerHandoffs` (summaries since the last 
 1. Review the handoff to understand what happened.
 2. Decide whether it's fixable within the feature or needs user input.
 3. Delegate root-cause analysis to subagents; synthesize their findings into decisions.
-4. If fixable: create follow-up tasks and/or update existing task descriptions in `plan.json`, then hand control back to the runner.
+4. If fixable: pass `fixTasks` to the next `run_feature` call (and/or re-store the plan via `store_plan` for description updates), then hand control back to the runner.
 5. If user input is required: return to the user with a clear explanation and the minimum next step.
 **Failed tasks rerun.** On `successState: "failure"`/`"partial"` the runner resets the task to pending; the next run executes it again first.
 **When work cannot be validated (do NOT loop):** if a handoff reports validation was *blocked* by an environment/external issue (not a code defect), do NOT re-queue the same unverifiable step. Either fix the underlying blocker (or add a task that does), or return to the user with the specific blocker. The runner caps each task at a fixed attempt budget and pauses when exhausted — surface the blocker before that.
 When any handoff contains `discoveredIssues` or `whatWasLeftUndone` (tech debt — MUST be tracked):
-- **Option A:** create a follow-up task in `plan.json` (place at the TOP for blocking issues).
+- **Option A:** create a follow-up fix task via `run_feature({ fixTasks: [...] })` — the runner inserts it ABOVE the ship gate and re-arms completed gates; never hand-edit `plan.json` (it bypasses the coverage invariant that `store_plan` enforces).
 - **Option B:** if it belongs to the just-completed task, set it back to pending and update its description.
 - **Option C:** if closely related to an existing pending task, fold it in (keep scope reasonable).
 - **Option D (non-blocking):** defer to a follow-up feature.
@@ -178,7 +178,7 @@ A bug report reveals a behavioral expectation the contract failed to capture. Do
 #### When to Return to User
 Stop and return control when: human action is required; a decision needs human judgment (security, significant trade-offs); an unrestorable external dependency blocks progress; requirements need clarification; scope significantly exceeds agreement; or boundaries would have to change. Explain what's blocking and what's needed.
 #### Task Ordering & List Management
-Tasks execute in `plan.json` array order — first pending runs next. Place foundational tasks first; insert urgent/blocking fixes at the TOP; completed tasks move to the bottom (kept as history). Never remove completed/cancelled tasks. Cancel (don't delete) when the user drops work or a scope change makes a task obsolete.
+Tasks execute in `plan.json` array order — first pending runs next. Place foundational tasks first. Mutation channels: fixes → `run_feature({ fixTasks })` (inserted above the ship gate); plan revisions → re-run `store_plan` (it validates the coverage invariant and MERGES existing assertion verdicts). Never hand-edit `plan.json`. Never remove completed/cancelled tasks. Cancel (don't delete) when the user drops work or a scope change makes a task obsolete.
 ## Validation Strategy
 ### The Ship Gate (per feature)
 When all implementation tasks in `plan.json` complete, the runner injects **three sequential gate steps**:
@@ -209,6 +209,10 @@ You, above anyone else, determine feature success.
 - `run_feature` — hand control to the deterministic runner (BLOCKING; the `start_mission_run` analog). Resume modes: default re-attach · `restartFeature` · `resumeWorkerSessionId`; `fixTasks` inserts fixes above the gate
 - `store_profile` — validate + stamp the profile after authoring (analog of `store_agent_readiness_report`)
 - `store_lesson` — record a grounded lesson from a ship-gate failure (or `penalize` a confirmed one); the self-improving lessons layer (persists `lessons.json` + `LESSONS.md`)
+- `store_plan` — persist the converged plan (validates the coverage invariant; MERGES existing assertion verdicts on re-store) — the ONLY sanctioned way to (re)write `plan.json`/`status.json`
+- `store_delivery` — delivery record transitions (drives the cockpit Delivery tab and the human merge-gate overlay)
+- `store_agent_readiness_report` — persist the readiness snapshot (readiness gate / audits)
+- `todo` — the Plan (one todo per `run_feature` round); `ask_user_question` — structured decisions on blockers/gray areas
 - `Agent` (@tintinweb/pi-subagents) — spawn a sub-agent for ANALYSIS/INVESTIGATION only (subagent_type + description + self-contained prompt; always specify outputs + require filepaths back). NEVER for implementation — that is `run_feature`'s job
 - record handoff decisions you chose **not** to act on, with justification, persisting anything relevant into the right shared state (`harness.md` / a task description) — analog of `dismiss_handoff_items`
 - `Skill`, `Write`/`Edit`, bash, read, web search/fetch

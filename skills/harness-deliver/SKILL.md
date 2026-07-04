@@ -64,7 +64,8 @@ printf '%s' "$(jq -n --arg b "$BRANCH" --arg body "$PR_BODY" --arg fid "<feature
 ```
 If you cannot resolve the harness package path, fall back to scanning yourself with the rules
 above. If `linearIssueIds`/`jiraIssueKeys` are empty and there are `candidateKeys`, and an
-`ask_user_question` tool is available, confirm the issue once; otherwise note "no issue linked" —
+`ask_user_question` tool is available (it is NOT in runner-driven gate sessions — only when this
+skill runs in the orchestrator chat), confirm the issue once; otherwise note "no issue linked" —
 **a missing link is non-fatal** (it only widens `attributionGaps` in analytics, doc `09` §5.2).
 
 ## 2) Assemble & open the PR
@@ -104,8 +105,9 @@ Iterate red → green, **one actionable failure at a time**:
 3. **Apply the smallest safe fix.** **Scope guard:**
    - ✅ Free to fix: lint/format, type errors, flaky/config/CI-infra, obvious test wiring.
    - 🛑 **Product-logic / behavioral changes require a human checkpoint** — if green demands changing
-     business logic (or a test that encodes a contract assertion), STOP and ask the user via
-     `ask_user_question` (or return to the orchestrator with the specific decision). Don't silently
+     business logic (or a test that encodes a contract assertion), STOP and **return to the
+     orchestrator with the specific decision needed** (call `store_delivery` `state:"ci_blocked"`,
+     then `EndFeatureRun` — `ask_user_question` is NOT in the gate-worker tool list). Don't silently
      alter behavior to force green.
    - 🚫 Never disable, skip, `xfail`, or delete a check to fake green.
 4. **Push and re-check.** `git push`, then re-run `gh pr checks --watch --fail-fast`. Call
@@ -135,9 +137,11 @@ If `mergeable` is false for a non-CI reason (conflicts, required reviews), **don
 only for a genuinely mergeable PR. (No `ask_user_question` here — the overlay *is* the interface.)
 
 ## 6) Return
-The final `store_delivery` (Step 5.2) is the record. **Return to the orchestrator** with: PR url,
-linked issue(s), final CI state, and the merge decision. The feature's contract was already green
-before this step — delivery state (merged/open/cancelled) is reported, not a gate on assertion success.
+The final `store_delivery` (Step 5.2) is the record. Then call **`EndFeatureRun`** ONCE with
+`returnToOrchestrator: true` (like every ship-gate step — without it the runner records no handoff
+and treats the attempt as failed) summarizing: PR url, linked issue(s), final CI state, and the
+merge decision. The feature's contract was already green before this step — delivery state
+(merged/open/cancelled) is reported, not a gate on assertion success. End your turn immediately after.
 
 ## Guardrails (the contract of this gate)
 - **Never merge without explicit user confirmation.** The merge-gate overlay is the only path to a

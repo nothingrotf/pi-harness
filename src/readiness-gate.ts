@@ -16,6 +16,7 @@
 import { DynamicBorder, type ExtensionContext, type Theme } from "@earendil-works/pi-coding-agent";
 import { Container, type SelectItem, SelectList, Spacer, Text } from "@earendil-works/pi-tui";
 import type { GateActionValue, GateModel, Tone } from "./readiness.ts";
+import { clipToWidth } from "./control-frame.ts";
 
 const TITLE = "⬢ pi-harness · readiness gate";
 const NAV_HINT = "enter select · ↑↓ move · r re-audit · esc cancel";
@@ -80,7 +81,13 @@ export function showReadinessGate(ctx: ExtensionContext, model: GateModel): Prom
 		const container = buildPanel(theme, model, selectList);
 
 		return {
-			render: (w) => container.render(w),
+			render: (w) => {
+				try {
+					return container.render(w);
+				} catch (e) {
+					return [clipToWidth(` ⚠ render error: ${(e as Error).message}`, w), " Esc / Ctrl+C"];
+				}
+			},
 			invalidate: () => container.invalidate(),
 			handleInput: (data) => {
 				// atalho global: re-auditar

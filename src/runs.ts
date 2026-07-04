@@ -6,7 +6,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { type AssertionCounts, type ProgressCounts, readControlModel, relTime, type RunState, stateIcon, stateLabel } from "./control-model.ts";
-import { readFeatureRun, readPlan } from "./plan.ts";
+import { readFeatureRun, readPlan, writeJsonAtomic } from "./plan.ts";
 
 export interface RunSummary {
 	featureId: string;
@@ -107,15 +107,35 @@ export function isValidRunId(id: string): boolean {
  * (ex.: nunca o run ATIVO no processo). O featureId dos artefatos internos (plan.json etc.)
  * é REESCRITO onde é usado como chave (plan/status/feature-run), pra manter a coerência.
  */
+function isPidAlive(pid: number): boolean {
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
 export function renameRun(cwd: string, oldId: string, newId: string): RenameResult {
 	const next = newId.trim();
 	if (!next) return { ok: false, reason: "empty name" };
 	if (!isValidRunId(next)) return { ok: false, reason: "invalid name (use letters, digits, - _ .)" };
+	// oldId também passa pelo guard: a função é exportada e um id com separadores renomearia FORA de runs/
+	if (!isValidRunId(oldId)) return { ok: false, reason: "invalid source id" };
 	if (next === oldId) return { ok: true, featureId: oldId };
 	const from = path.join(runsRoot(cwd), oldId);
 	const to = path.join(runsRoot(cwd), next);
 	if (!fs.existsSync(from)) return { ok: false, reason: `run "${oldId}" not found` };
 	if (fs.existsSync(to)) return { ok: false, reason: `a run named "${next}" already exists` };
+	// Não renomeia um run A CORRER (incl. noutro processo — headless): o runner continuaria a
+	// persistir no path antigo e o estado órfão divergiria silenciosamente. O sinal é o run.lock
+	// com pid VIVO (status "running" persistido também sobra após hard-kill — esse pode renomear).
+	try {
+		const lock = JSON.parse(fs.readFileSync(path.join(from, "run.lock"), "utf8")) as { pid?: number };
+		if (typeof lock.pid === "number" && isPidAlive(lock.pid)) return { ok: false, reason: `run is active in another process (pid ${lock.pid}) — pause it before renaming` };
+	} catch {
+		// sem lock/corrompido — segue (rename seguro)
+	}
 	try {
 		fs.renameSync(from, to);
 	} catch (e) {
@@ -128,7 +148,7 @@ export function renameRun(cwd: string, oldId: string, newId: string): RenameResu
 			const obj = JSON.parse(fs.readFileSync(p, "utf8")) as Record<string, unknown>;
 			if (obj && typeof obj === "object" && "featureId" in obj) {
 				obj.featureId = next;
-				fs.writeFileSync(p, `${JSON.stringify(obj, null, 2)}\n`);
+				writeJsonAtomic(p, obj);
 			}
 		} catch {
 			// ausente/corrompido — segue

@@ -116,8 +116,10 @@ list, the `next_task` tool is the source of truth. Loop until it says you're don
    (write tests per the `harness-generate-tests` skill where the task warrants them).
 4. **Commit the repo change with the task id in the message** (e.g. `[<taskId>] <summary>`). You
    **MUST commit before moving on** — `next_task` re-hands you the same task until a commit lands
-   (that git-HEAD check is how the harness marks the task done deterministically, without trusting
-   the message or you to self-report).
+   (that git check is how the harness marks the task done deterministically, without trusting
+   the message or you to self-report). The gate requires a **NEW commit on top** of the recorded
+   HEAD (ancestry-checked): `git commit --amend` or a rebase moves HEAD but does NOT advance the
+   task — always add a fresh commit.
 5. **Call `next_task` again** for the following task.
 
 **Resume / re-run safety (critical).** If you were restarted (a fresh attempt after a failure, or a

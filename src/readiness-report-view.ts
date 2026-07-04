@@ -10,6 +10,7 @@
 import { DynamicBorder, type ExtensionContext, type Theme } from "@earendil-works/pi-coding-agent";
 import { Container, type SelectItem, SelectList, Spacer, Text } from "@earendil-works/pi-tui";
 import { type ReadinessSnapshot, renderReadinessReport } from "./readiness.ts";
+import { clipToWidth } from "./control-frame.ts";
 
 const TITLE = "⬢ pi-harness · readiness report";
 const NAV_HINT = "↑↓ scroll · enter/esc close";
@@ -47,7 +48,13 @@ export function showReadinessReport(ctx: ExtensionContext, snapshot: ReadinessSn
 		container.addChild(border());
 
 		return {
-			render: (w) => container.render(w),
+			render: (w) => {
+				try {
+					return container.render(w);
+				} catch (e) {
+					return [clipToWidth(` ⚠ render error: ${(e as Error).message}`, w), " Esc / Ctrl+C"];
+				}
+			},
 			invalidate: () => container.invalidate(),
 			handleInput: (data) => {
 				list.handleInput(data);

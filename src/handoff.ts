@@ -48,7 +48,12 @@ export interface PersistedHandoff extends EndFeatureRunPayload {
 }
 
 export function runDir(cwd: string, featureId: string): string {
-	return path.join(cwd, ".harness", "runs", featureId);
+	// Guard de path traversal NO CHOKEPOINT: featureId vem de tool calls de workers (EndFeatureRun,
+	// next_task, store_*) — um id com separadores ou ".." escaparia de .harness/runs/. Ids legítimos
+	// (slugs) passam intactos.
+	let id = featureId.replace(/[\\/]/g, "-").replace(/\.{2,}/g, ".");
+	if (!id || id === ".") id = "_invalid";
+	return path.join(cwd, ".harness", "runs", id);
 }
 
 /**
