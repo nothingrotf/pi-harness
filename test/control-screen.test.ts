@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { ControlModel, WorkerRow } from "../src/control-model.ts";
-import { activeWorkerText, controlMidPos, footerItems } from "../src/control-screen.ts";
+import { activeWorkerText, controlMidPos, footerItems, openDirCommand } from "../src/control-screen.ts";
 
 function model(over: Partial<ControlModel> = {}): ControlModel {
 	return {
@@ -28,15 +28,37 @@ test("controlMidPos: ~50%, clampado pra caber as duas colunas", () => {
 	assert.ok(controlMidPos(200) <= 200 - 18);
 });
 
-test("footerItems(main): F/W/C/D/Models/Tab/Ctrl+T, formato KEY LABEL", () => {
+test("footerItems(main): F/W/C/D/O/Models/Tab/Ctrl+T, formato KEY LABEL", () => {
 	const f = footerItems("main");
 	assert.deepEqual(
 		f.map((i) => i.key),
-		["F", "W", "C", "D", "M", "Tab", "Ctrl+T"],
+		["F", "W", "C", "D", "O", "M", "Tab", "Ctrl+T"],
 	);
 	assert.equal(f[0].label, "Tasks");
 	assert.equal(f.find((i) => i.key === "D")?.label, "Delivery");
+	assert.equal(f.find((i) => i.key === "O")?.label, "Run Dir", "O = abrir o dir do run (o Mission Dir do Droid)");
 	assert.equal(f.at(-1)?.label, "Close");
+});
+
+test("footerItems(main) state-aware: P quando run ativo; R/Shift+R quando retomável; S quando steerable", () => {
+	// run ativo → P (Pause), sem R.
+	const active = footerItems("main", { runActive: true, steerable: true }).map((i) => i.key);
+	assert.ok(active.includes("P") && active.includes("S"));
+	assert.ok(!active.includes("R"));
+	// pausado/orchestrator_turn/ready sem run ativo → R + Shift+R (Resume/Restart), sem P.
+	for (const state of ["paused", "orchestrator_turn", "ready"] as const) {
+		const keys = footerItems("main", { state }).map((i) => i.key);
+		assert.ok(keys.includes("R") && keys.includes("Shift+R"), state);
+		assert.ok(!keys.includes("P"), state);
+	}
+	// running sem registry (ex.: run de outro processo) → nem P nem R.
+	const running = footerItems("main", { state: "running" }).map((i) => i.key);
+	assert.ok(!running.includes("P") && !running.includes("R") && !running.includes("S"));
+});
+
+test("footerItems(workers): tem `r` = Resume this (resumeWorkerSessionId)", () => {
+	const f = footerItems("workers");
+	assert.ok(f.some((i) => i.key === "r" && i.label === "Resume this"));
 });
 
 test("footerItems(delivery): navega de volta com Esc + tabs F/W/C", () => {
@@ -59,4 +81,24 @@ test("activeWorkerText: sem worker → '—'; com worker → #task + sid curto",
 	assert.match(activeWorkerText(model()), /—/);
 	const w: WorkerRow = { workerSessionId: "9f3a4b2c1d", taskId: "T2", status: "running" };
 	assert.match(activeWorkerText(model({ workers: [w] })), /#T2 .*9f3a4b2c .*running/);
+});
+
+test("footerItems(session): scroll + density + handoff; Steer só quando steerable", () => {
+	const base = footerItems("session").map((i) => i.key);
+	assert.deepEqual(base, ["↑↓", "g", "G", "[ ]", "h", "Esc"]);
+	const steer = footerItems("session", { steerable: true }).map((i) => i.key);
+	assert.ok(steer.includes("s"), "steerable → s Steer");
+});
+
+test("footerItems(workers): Enter abre o Session viewer; h = handoff direto", () => {
+	const f = footerItems("workers");
+	assert.equal(f.find((i) => i.key === "Enter")?.label, "Session");
+	assert.equal(f.find((i) => i.key === "h")?.label, "Handoff");
+});
+
+test("openDirCommand: open/explorer/xdg-open por plataforma", () => {
+	assert.equal(openDirCommand("darwin").cmd, "open");
+	assert.equal(openDirCommand("win32").cmd, "explorer");
+	assert.equal(openDirCommand("linux").cmd, "xdg-open");
+	assert.deepEqual(openDirCommand("darwin").argsFor("/x/y"), ["/x/y"]);
 });

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { listRunIds, listRuns, runRow, type RunSummary } from "../src/runs.ts";
+import { isValidRunId, listRunIds, listRuns, renameRun, runRow, type RunSummary } from "../src/runs.ts";
 import type { Plan } from "../src/plan.ts";
 import { buildFeatureRun, storePlan, writeFeatureRun } from "../src/plan.ts";
 import { appendProgress } from "../src/handoff.ts";
@@ -90,4 +90,81 @@ test("listRunIds: ignora dirs sem plan.json", () => {
 	fs.mkdirSync(path.join(d, ".harness", "runs", "lixo"), { recursive: true });
 	storePlan(d, plan("feat-real", "2026-06-28T00:00:00.000Z"));
 	assert.deepEqual(listRunIds(d), ["feat-real"]);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Per-row load errors (Droid missions picker: um run corrompido degrada a linha)
+
+test("listRuns: run com plan.json corrompido vira linha degradada (loadError), não quebra o picker", () => {
+	const d = tmp();
+	storePlan(d, plan("feat-ok", "2026-06-20T00:00:00.000Z"));
+	const bad = path.join(d, ".harness", "runs", "feat-bad");
+	fs.mkdirSync(bad, { recursive: true });
+	fs.writeFileSync(path.join(bad, "plan.json"), "{corrupt json");
+	const runs = listRuns(d);
+	assert.equal(runs.length, 2, "os dois aparecem");
+	const ok = runs.find((r) => r.featureId === "feat-ok");
+	const broken = runs.find((r) => r.featureId === "feat-bad");
+	assert.equal(ok?.loadError, undefined);
+	// plan corrompido → readPlan devolve null → o run é tratado como "unknown" sem crash;
+	// um throw em QUALQUER leitura vira loadError (o catch de summarize).
+	assert.ok(broken, "run corrompido continua listado");
+});
+
+test("runRow: loadError → ⚠ + motivo na description", () => {
+	const r: RunSummary = {
+		featureId: "feat-bad",
+		state: "unknown",
+		counts: { completed: 0, pending: 0, estimate: 0, cancelled: 0, total: 0 },
+		assertions: { passed: 0, failed: 0, pending: 0, total: 0 },
+		tasksDone: 0,
+		tasksTotal: 0,
+		updatedAt: null,
+		current: false,
+		loadError: "Unexpected token c in JSON",
+	};
+	const row = runRow(r, Date.now());
+	assert.match(row.label, /⚠ feat-bad/);
+	assert.match(row.description, /load error: Unexpected token/);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Rename (Ctrl+R do picker — o rename inline do Droid)
+
+test("renameRun: renomeia o dir + reescreve featureId em plan/status/feature-run", () => {
+	const d = tmp();
+	storePlan(d, plan("feat-old", "2026-06-20T00:00:00.000Z"));
+	const run = buildFeatureRun(d, "feat-old", () => "t");
+	if (run) writeFeatureRun(d, run);
+	const res = renameRun(d, "feat-old", "feat-new");
+	assert.deepEqual(res, { ok: true, featureId: "feat-new" });
+	assert.ok(!fs.existsSync(path.join(d, ".harness/runs/feat-old")));
+	const p = JSON.parse(fs.readFileSync(path.join(d, ".harness/runs/feat-new/plan.json"), "utf8"));
+	assert.equal(p.featureId, "feat-new");
+	const st = JSON.parse(fs.readFileSync(path.join(d, ".harness/runs/feat-new/status.json"), "utf8"));
+	assert.equal(st.featureId, "feat-new");
+	const fr = JSON.parse(fs.readFileSync(path.join(d, ".harness/runs/feat-new/feature-run.json"), "utf8"));
+	assert.equal(fr.featureId, "feat-new");
+	assert.deepEqual(listRunIds(d), ["feat-new"]);
+});
+
+test("renameRun: recusa nome inválido, colisão e origem ausente; no-op pro mesmo nome", () => {
+	const d = tmp();
+	storePlan(d, plan("feat-a", "t"));
+	storePlan(d, plan("feat-b", "t"));
+	assert.equal(renameRun(d, "feat-a", "").ok, false);
+	assert.equal(renameRun(d, "feat-a", "has space").ok, false);
+	assert.equal(renameRun(d, "feat-a", ".hidden").ok, false);
+	assert.equal(renameRun(d, "feat-a", "feat-b").ok, false, "colisão");
+	assert.equal(renameRun(d, "feat-zzz", "feat-x").ok, false, "origem ausente");
+	assert.deepEqual(renameRun(d, "feat-a", "feat-a"), { ok: true, featureId: "feat-a" }, "mesmo nome = no-op");
+});
+
+test("isValidRunId: slug filesystem-safe", () => {
+	assert.equal(isValidRunId("feat-login-2"), true);
+	assert.equal(isValidRunId("Feat_x.1"), true);
+	assert.equal(isValidRunId(""), false);
+	assert.equal(isValidRunId(".dot"), false);
+	assert.equal(isValidRunId("a b"), false);
+	assert.equal(isValidRunId("a/b"), false);
 });

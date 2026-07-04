@@ -20,17 +20,33 @@ export function rangeLabel(start: number, end: number, total: number): string {
 /**
  * Justifica left/right na largura dada (space-between), medindo com `widthOf` (injetado
  * = visibleWidth no runtime, = .length nos testes) pra ignorar ANSI. Gap mínimo 1.
+ * NUNCA excede `width` (o pi-tui aborta em linha larga): se não cabe, trunca o right
+ * (depois o left) via `clip` (injetado = sliceByColumn ANSI-safe no runtime, `.slice` nos testes).
  */
-export function splitLineRender(left: string, right: string, width: number, padX: number, widthOf: (s: string) => number): string {
+export function splitLineRender(
+	left: string,
+	right: string,
+	width: number,
+	padX: number,
+	widthOf: (s: string) => number,
+	clip: (s: string, w: number) => string = (s, w) => s.slice(0, Math.max(0, w)),
+): string {
 	const pad = " ".repeat(padX);
 	const inner = Math.max(0, width - padX * 2);
-	const gap = Math.max(1, inner - widthOf(left) - widthOf(right));
-	return `${pad}${left}${" ".repeat(gap)}${right}${pad}`;
+	const l = widthOf(left) > inner ? clip(left, inner) : left;
+	let r = right;
+	const roomRight = inner - widthOf(l) - 1;
+	if (r && widthOf(r) > roomRight) r = roomRight > 0 ? clip(r, roomRight) : "";
+	if (!r) return `${pad}${l}${pad}`;
+	const gap = Math.max(1, inner - widthOf(l) - widthOf(r));
+	return `${pad}${l}${" ".repeat(gap)}${r}${pad}`;
 }
 
 /**
  * Quebra `s` em até `maxLines` linhas de ≤`width` colunas (word-slice; o `xG0` do cap. 08a).
  * Colapsa whitespace; a última linha trunca com reticência se ainda sobra texto.
+ * LIMITAÇÃO: mede com `.length` (colunas ≠ chars p/ emoji/CJK e ANSI) — só alimentar com texto
+ * plano e SEMPRE clipar o output final com clipToWidth/cell antes de devolver ao pi-tui.
  */
 export function wrapText(s: string, width: number, maxLines: number): string[] {
 	const w = Math.max(1, Math.floor(width));

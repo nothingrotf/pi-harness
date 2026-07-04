@@ -186,6 +186,54 @@ export function entriesFromActivity(recentActivity: string[]): WorkerEntry[] {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Session viewer (droid §7b: "Worker Session") — densidade `[`/`]` + scroll/follow-tail. PURO.
+
+/** Densidade do transcript (linhas por entry), 1..5 — default 4 (o do Droid). */
+export const SESSION_DENSITY_MIN = 1;
+export const SESSION_DENSITY_MAX = 5;
+export const SESSION_DENSITY_DEFAULT = 4;
+
+/** `[` = -1 (mais denso) · `]` = +1 (mais espaçado), clampado 1..5. */
+export function cycleDensity(cur: number, delta: 1 | -1): number {
+	return Math.max(SESSION_DENSITY_MIN, Math.min(SESSION_DENSITY_MAX, cur + delta));
+}
+
+export interface ScrollWindow {
+	/** índice da primeira linha visível. */
+	start: number;
+	/** quantas linhas renderizar. */
+	count: number;
+	/** true = colado ao fim (follow-tail: novas linhas empurram a janela). */
+	follow: boolean;
+	/** "12-24 of 60" (1-based) — "" quando tudo cabe. */
+	range: string;
+}
+
+/**
+ * Janela de scroll do session viewer: `offset` null = FOLLOW TAIL (a janela cola no fim e
+ * acompanha o stream); numérico = ancorada em `offset` (primeira linha visível). Um offset
+ * que alcança o fim volta a follow (o "scroll to bottom re-engages follow" do Droid).
+ */
+export function sessionWindow(total: number, offset: number | null, capacity: number): ScrollWindow {
+	const cap = Math.max(1, Math.floor(capacity));
+	if (total <= cap) return { start: 0, count: total, follow: true, range: "" };
+	const maxStart = total - cap;
+	const follow = offset === null || offset >= maxStart;
+	const start = follow ? maxStart : Math.max(0, offset as number);
+	return { start, count: cap, follow, range: `${start + 1}-${start + cap} of ${total}` };
+}
+
+/** Novo offset ao rolar (`delta` linhas). null = estava em follow → ancora a partir do fim. */
+export function scrollOffset(total: number, offset: number | null, capacity: number, delta: number): number | null {
+	const cap = Math.max(1, Math.floor(capacity));
+	if (total <= cap) return null;
+	const maxStart = total - cap;
+	const cur = offset === null ? maxStart : Math.min(offset, maxStart);
+	const next = Math.max(0, cur + delta);
+	return next >= maxStart ? null : next; // alcançou o fim → re-engaja follow
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Seleção do worker ativo (o `KG0`: o ÚNICO running/paused) + suas entries
 
 export interface ActiveWorker {
@@ -201,9 +249,13 @@ export interface ActiveWorker {
 	source: "session" | "live";
 	/** headless: o worker session id (→ readWorkerSession). */
 	wsid?: string;
+	/** live-TUI (@tintinweb): o agent record id → localiza o `.output` JSONL do transcript real. */
+	agentId?: string;
 	durationMs?: number;
 	toolCount?: number;
 	tokens?: number;
+	/** live-TUI: o tool em execução agora (pro fallback da banda quando não há transcript). */
+	currentTool?: string;
 	/** live-TUI: atividades recentes do subagent (→ entriesFromActivity). */
 	recentActivity?: string[];
 }
@@ -222,8 +274,10 @@ export function pickActiveWorker(model: ControlModel, live: LiveAgent[]): Active
 			skill: la.agent.replace(/^harness-/, ""),
 			status: "running",
 			source: "live",
+			agentId: la.agentId,
 			toolCount: la.toolCount,
 			tokens: la.tokens,
+			currentTool: la.currentTool,
 			recentActivity: la.recentActivity,
 		};
 	}

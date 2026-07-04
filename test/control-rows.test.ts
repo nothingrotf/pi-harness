@@ -9,12 +9,16 @@ import {
 	filterTasks,
 	handoffLines,
 	mainLines,
+	parseNumbered,
 	progressLogLines,
 	TASK_FILTERS,
 	taskDetailLines,
 	taskDisplayRows,
+	taskTabLabels,
+	taskWindow,
 	WORKER_FILTERS,
 	workerDisplayRows,
+	workerTabLabels,
 } from "../src/control-rows.ts";
 import type { PersistedHandoff } from "../src/handoff.ts";
 
@@ -74,6 +78,26 @@ test("deliveryLines: null → 'no PR yet'; com record → PR + CI + merge", () =
 	assert.match(out, /awaiting human gate/);
 });
 
+test("taskWindow: auto-scroll mantém a task ativa visível (o bug do '12: 8 + 4 more' escondendo a 9)", () => {
+	// tudo cabe → sem janela nem indicadores.
+	assert.deepEqual(taskWindow(5, 0, 7), { start: 0, count: 5, above: 0, below: 0 });
+	// 12 tasks, ativa = 9 (0-based 8), capacidade 7 linhas → janela centrada, a 9 aparece.
+	const w = taskWindow(12, 8, 7);
+	assert.ok(8 >= w.start && 8 < w.start + w.count, "a task ativa (idx 8) está dentro da janela");
+	assert.equal(w.count + (w.above > 0 ? 1 : 0) + (w.below > 0 ? 1 : 0), 7, "total de linhas = capacity");
+	assert.ok(w.above > 0, "mostra '↑ N more' pras done que rolaram pra cima");
+	// ativa no topo → só '+N more' embaixo; ativa no fim → só '↑ N' em cima.
+	const top = taskWindow(12, 0, 7);
+	assert.deepEqual([top.start, top.above], [0, 0]);
+	assert.ok(top.below > 0 && 0 < top.start + top.count);
+	const bot = taskWindow(12, 11, 7);
+	assert.equal(bot.below, 0);
+	assert.ok(bot.above > 0 && 11 >= bot.start && 11 < bot.start + bot.count);
+	// budget minúsculo → janela simples, ainda com a ativa visível.
+	const tiny = taskWindow(12, 8, 2);
+	assert.ok(8 >= tiny.start && 8 < tiny.start + tiny.count);
+});
+
 test("cycleFilter: avança ciclicamente e dá a volta", () => {
 	assert.equal(cycleFilter(TASK_FILTERS, "all"), "pending");
 	assert.equal(cycleFilter(TASK_FILTERS, "cancelled"), "all");
@@ -111,15 +135,37 @@ test("coverageDisplayRows/coverageSummary: invariante assertion→task→status"
 	assert.equal(coverageSummary(m2), "0/1 passed · 1 uncovered");
 });
 
-test("progressLogLines: tail das últimas N + range; vazio → placeholder", () => {
+test("progressLogLines: janela newest-first + range; vazio → placeholder", () => {
 	const m = model();
 	const v = progressLogLines(m, 2, 60);
 	assert.equal(v.lines.length, 2, "só as 2 últimas");
-	assert.match(v.lines[0], /T1 completed/);
+	assert.match(v.lines[0], /T2 started/, "newest-first: a mais recente no topo (Droid §1b)");
+	assert.match(v.lines[1], /T1 completed/);
+	assert.equal(v.entries.length, 2);
 	assert.equal(v.range, "2-3 of 3");
 	const empty = progressLogLines(model({ progress: [] }), 5);
 	assert.deepEqual(empty.lines, ["(no progress entries yet)"]);
 	assert.equal(empty.range, "");
+});
+
+test("taskTabLabels/workerTabLabels: contagem por filtro (o `All (8) │ Pending (3)` do Droid)", () => {
+	const m = model();
+	assert.deepEqual(taskTabLabels(m), ["All (3)", "Pending (1)", "In Progress (1)", "Completed (1)", "Cancelled (0)"]);
+	// live agents entram em All/Active
+	assert.deepEqual(workerTabLabels(m, 2), ["All (4)", "Active (3)", "Completed (1)", "Failed (0)"]);
+	assert.deepEqual(workerTabLabels(m), ["All (2)", "Active (1)", "Completed (1)", "Failed (0)"]);
+});
+
+test("parseNumbered (K2H): `(1) … (2) …` → itens numerados; sem marcador → 1 item por linha", () => {
+	const n = parseNumbered("(1) add CI (2) run go test");
+	assert.deepEqual(n, [
+		{ number: "1", text: "add CI" },
+		{ number: "2", text: "run go test" },
+	]);
+	assert.deepEqual(parseNumbered("l1\nl2\nl3"), [{ text: "l1" }, { text: "l2" }, { text: "l3" }]);
+	assert.deepEqual(parseNumbered("   "), []);
+	// preâmbulo antes do 1º marcador vira item sem número
+	assert.deepEqual(parseNumbered("intro (1) one"), [{ text: "intro" }, { number: "1", text: "one" }]);
 });
 
 test("mainLines: duas colunas (divisor │) com Active Task, Tasks, Progress Log + Active Worker", () => {
@@ -146,6 +192,22 @@ test("taskDetailLines: seções + truncagem de descrição (expand)", () => {
 	const expanded = taskDetailLines(m, "T9", true).join("\n");
 	assert.match(expanded, /l4/, "expandido mostra todas as linhas");
 	assert.match(taskDetailLines(m, "nope", false).join("\n"), /not found/);
+});
+
+test("taskDetailLines: Description numerada (K2H) + tag (current)/(completed) na última sessão", () => {
+	const running = model({
+		tasks: [task({ id: "T2", status: "in_progress", description: "(1) first step (2) second step" })],
+		workers: [{ workerSessionId: "wsaaaaaa11", taskId: "T2", status: "running" }],
+	});
+	const out = taskDetailLines(running, "T2", false).join("\n");
+	assert.match(out, /\(1\) first step/, "K2H numera a descrição");
+	assert.match(out, /\(2\) second step/);
+	assert.match(out, /wsaaaaaa  running  \(current\)/, "task in_progress → (current)");
+	const done = model({
+		tasks: [task({ id: "T1", status: "completed", description: "x" })],
+		workers: [{ workerSessionId: "wsbbbbbb22", taskId: "T1", status: "success", recordedAt: "z" }],
+	});
+	assert.match(taskDetailLines(done, "T1", false).join("\n"), /wsbbbbbb  success  \(completed\)/);
 });
 
 test("handoffLines: Summary/Undone/Discovered Issues do EndFeatureRun; vazios + faltando", () => {

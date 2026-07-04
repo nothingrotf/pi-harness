@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { drawMain, drawSub, fullRow, mainBodyRows, mainLayout, rule, subBodyRows, twoRow } from "../src/control-draw.ts";
+import { cnuRow, drawMain, drawSub, fullRow, mainBodyRows, mainLayout, rule, subBodyRows, twoRow } from "../src/control-draw.ts";
 
 // Sem deps → identidade + `.length`: testa a GEOMETRIA pura (sem ANSI).
 
@@ -49,6 +49,17 @@ test("twoRow: divisor alinha com `┬`/`┴` do mesmo midPos", () => {
 	const row = twoRow(cols, "L", "R", midPos);
 	assert.equal(split[midPos], "┬");
 	assert.equal(row[midPos], "│");
+});
+
+test("cnuRow: coluna direita vira régua `│ L ├──┤`, `├` no midPos (o cnu do Droid)", () => {
+	const cols = 20;
+	const midPos = 8;
+	const r = cnuRow(cols, "AT", midPos);
+	assert.equal(r.length, cols);
+	assert.equal(r[0], "│");
+	assert.equal(r[midPos], "├", "`├` exatamente no midPos (alinha com twoRow/┬)");
+	assert.equal(r[cols - 1], "┤");
+	assert.equal(r, "│AT     ├──────────┤");
 });
 
 function deps() {
@@ -119,4 +130,29 @@ test("drawSub: rows exatas, header+corpo+footer emoldurados", () => {
 	assert.match(out[1], /Tasks \(3\)/);
 	assert.match(out[2], /All . Pending/);
 	assert.equal(out.length, 5 + 2 + subBodyRows(rows, 2));
+});
+
+test("drawMain: rightDivider vira a metade direita em régua naquela linha (cnu)", () => {
+	const cols = 50;
+	const rows = 22;
+	const { bodyRows } = mainLayout(rows, false);
+	const dividerAt = 2;
+	const right = Array.from({ length: bodyRows }, (_, k) => (k === dividerAt ? "" : `R${k}`));
+	const out = drawMain(cols, rows, { header: " H", bar: " B", left: ["Active Task", "  card"], right, worker: [], footer: " F", midPos: 25, rightDivider: dividerAt }, deps());
+	const dividerLine = out[5 + dividerAt];
+	assert.equal(dividerLine[25], "├", "`├` no midPos na linha do divisor");
+	assert.equal(dividerLine[cols - 1], "┤");
+	assert.match(dividerLine, /^│/, "esquerda continua emoldurada/fluindo");
+});
+
+test("drawSub: chrome persistente (header+barra do Feature Control) → look inset", () => {
+	const cols = 50;
+	const rows = 22;
+	const out = drawSub(cols, rows, { chrome: { header: " ⛬ Feature Control", bar: " ● Running ██▒▒ 3/8" }, headerRows: [" Tasks (3)"], body: ["✓ T1"], footer: " Esc back" }, deps());
+	assert.equal(out.length, rows);
+	for (const l of out) assert.equal(l.length, cols);
+	assert.match(out[1], /Feature Control/, "banda de título persiste no topo");
+	assert.match(out[3], /Running .*3\/8/, "barra de progresso persiste");
+	assert.match(out[5], /Tasks \(3\)/, "cabeçalho do sub-view vem abaixo do chrome");
+	assert.equal(out.length, 9 + 1 + subBodyRows(rows, 1, true));
 });

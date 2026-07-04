@@ -29,7 +29,7 @@ import {
 
 const TITLE = "⬢ pi-harness · models per role";
 const NAV_HINT = "enter edit (model → effort) · ↑↓ move · esc cancel";
-const SUBTITLE = "Governs harness-spawned children (headless runner · converge). The live in-session orchestrator uses your Pi session model.";
+const SUBTITLE = "Governs runner-driven children: workers + validators (run_feature / headless) · headless converge. The live orchestrator (this chat) uses your Pi session model.";
 
 function selectListTheme(theme: Theme) {
 	return {

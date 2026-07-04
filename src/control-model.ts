@@ -16,6 +16,7 @@ import {
 	readPlan,
 	readStatus,
 } from "./plan.ts";
+import { IMPL_STEP_ID } from "./feature-runner.ts";
 import type { FeatureRun, FeatureRunStatus, StepStatus } from "./feature-runner.ts";
 import { type PersistedHandoff, runDir } from "./handoff.ts";
 import { loadModelConfig } from "./model-config.ts";
@@ -166,7 +167,7 @@ const TASK_ICON: Record<TaskStatusV, string> = {
 	in_progress: "●",
 	returned: "↩",
 	pending: "○",
-	cancelled: "✘",
+	cancelled: "✗", // glifo 1:1 com o Droid (lnu/onu) e consistente com delivery/readiness
 };
 export function taskIcon(s: TaskStatusV): string {
 	return TASK_ICON[s];
@@ -266,9 +267,15 @@ export function buildTaskRows(plan: Plan | null, run: FeatureRun | null, disk: D
 	const stepById = new Map<string, StepStatus>();
 	for (const s of run?.steps ?? []) if (s.kind === "task") stepById.set(s.id, s.status);
 	const derived = deriveTaskStatuses(disk.handoffs ?? [], disk.progressRaw ?? []);
+	// Backstop FINAL (git-free) — paridade com o headless FeatureRunner (feature-runner.ts:357): um
+	// handoff de SUCESSO do impl step (IMPL_STEP_ID cobre TODAS as tasks) implica todas completas.
+	// A fonte de verdade AO VIVO por task é o tool `next_task` (grava task_started/task_completed nas
+	// fronteiras) — este é só o coalesce do fim, caso o worker feche direto sem exaurir o loop.
+	const implSuccess = (disk.handoffs ?? []).some((h) => h.taskId === IMPL_STEP_ID && h.successState === "success");
 	return plan.tasks.map((t) => {
 		const stepSt = stepById.get(t.id);
-		const status: TaskStatusV = stepSt !== undefined ? stepStatusToTask(stepSt) : derived.get(t.id) ?? "pending";
+		let status: TaskStatusV = stepSt !== undefined ? stepStatusToTask(stepSt) : derived.get(t.id) ?? "pending";
+		if (status !== "completed" && status !== "cancelled" && implSuccess) status = "completed";
 		return {
 			id: t.id,
 			skillName: t.skillName,
@@ -304,8 +311,8 @@ export function activeItem(plan: Plan | null, run: FeatureRun | null, disk: Disk
 		const step = inProgress ?? (run.status === "running" ? run.steps.find((s) => s.status === "pending") : undefined);
 		if (!step) return null;
 		// 1 worker por feature: o impl/fix step (kind "task" com `tasks`) entrega várias tasks numa
-		// única sessão — a "current task" real é a sub-task com task_started mais recente (sinal do
-		// tool task_progress do worker), não o step "implement". Cai pra 1ª sub-task ainda não
+		// única sessão — a "current task" real é a sub-task com task_started mais recente (o tool
+		// `next_task` grava um por task), não o step "implement". Cai pra 1ª sub-task ainda não
 		// concluída quando ainda não chegou um task_started.
 		if (step.kind === "task" && step.tasks?.length) {
 			const subId = latestStartedTask(disk.progressRaw ?? []);
@@ -466,7 +473,7 @@ const WORKER_ICON: Record<WorkerStatusV, string> = {
 	running: "●",
 	success: "✓",
 	partial: "◐",
-	failed: "✘",
+	failed: "✗", // 1:1 com o enu do Droid
 	returned: "↩",
 };
 export function workerIcon(s: WorkerStatusV): string {
@@ -534,7 +541,10 @@ export function buildWorkerRows(run: FeatureRun | null, handoffs: PersistedHando
 	const activeId = (subActive && ipStep?.tasks?.some((t) => t.id === subActive) ? subActive : ipStep?.id) ?? latestStartedTask(progressRaw);
 	if (activeId && !rows.some((r) => r.status === "running" && r.taskId === activeId)) {
 		const start = startByTask.get(activeId);
-		rows.push({ workerSessionId: "—", taskId: activeId, status: "running", startedAt: start, durationMs: dur(start, undefined) });
+		// wsid da sessão VIVA: a row running é keyed à sub-task ativa (T1..), mas a SESSÃO pertence ao
+		// step in_progress (1 worker por feature) — sem isto o Active Worker não acha o .jsonl e cai
+		// no placeholder "working…" mesmo com o transcript a crescer em disco.
+		rows.push({ workerSessionId: ipStep?.workerSessionIds?.at(-1) ?? "—", taskId: activeId, status: "running", startedAt: start, durationMs: dur(start, undefined) });
 	}
 	// #n por ordem de início (startedAt → recordedAt) ascendente — estável.
 	[...rows].sort((a, b) => (a.startedAt ?? a.recordedAt ?? "").localeCompare(b.startedAt ?? b.recordedAt ?? "")).forEach((r, i) => {
@@ -561,6 +571,8 @@ export interface ProgressEntry {
 	ts: string;
 	rel: string;
 	text: string;
+	/** segmentos coloridos (o Enu do Droid) — a view pinta cada um com o seu tom. */
+	segments: ProgressSegment[];
 }
 
 /** Tempo relativo curto: "just now" / "2m" / "1h" / "3d". */
@@ -590,6 +602,57 @@ export function formatDuration(ms: number | undefined): string {
 	if (m < 60) return `${m}m ${String(s % 60).padStart(2, "0")}s`;
 	const h = Math.floor(m / 60);
 	return `${h}h ${String(m % 60).padStart(2, "0")}m`;
+}
+
+// Coloração por-segmento do progress log (o `Enu` do Droid, doc UI 08b §1d). Rebrand task/step:
+// id como "ref" (accent), ícones por estado (✓ success / ✗ error / ↩ warning), verbo secundário.
+// Tons = ThemeColor válidos do pi (NB: não existe "secondary" no tema — fg() lança; usa "muted").
+export type SegTone = "accent" | "success" | "error" | "warning" | "muted" | "dim";
+
+export interface ProgressSegment {
+	text: string;
+	tone: SegTone;
+}
+
+const SEG = (text: string, tone: SegTone): ProgressSegment => ({ text, tone });
+
+/**
+ * Segmentos coloridos de um evento (o analog do `Enu`): o id da task em `accent` (o "ref" teal do
+ * Droid), o ícone terminal por estado, o verbo em `secondary`. O join dos `.text` é IDÊNTICO ao
+ * `formatProgressEntry` (a view colore; o texto plano continua o mesmo p/ fallback/testes).
+ */
+export function progressSegments(e: ProgressRaw): ProgressSegment[] {
+	const id = str(e.id ?? e.taskId);
+	switch (e.event) {
+		case "plan_stored":
+			return [SEG("plan stored: ", "muted"), SEG(`${str(e.tasks)} tasks`, "accent"), SEG(" / ", "dim"), SEG(`${str(e.assertions)} assertions`, "accent")];
+		case "run_started":
+			return e.message ? [SEG("run started", "muted"), SEG(`: ${str(e.message)}`, "dim")] : [SEG("run started", "muted")];
+		case "branch_ready":
+			return e.branch ? [SEG("branch ready", "muted"), SEG(`: ${str(e.branch)}`, "accent")] : [SEG("branch ready", "muted")];
+		case "step_started":
+			return [SEG(id, "accent"), SEG(" started", "muted"), ...(e.attempt ? [SEG(` (attempt ${str(e.attempt)})`, "dim")] : [])];
+		case "task_started":
+			return [SEG("task ", "muted"), SEG(id, "accent"), SEG(" started", "muted")];
+		case "step_completed":
+			return [SEG(id, "accent"), SEG(" completed ", "muted"), SEG("✓", "success")];
+		case "task_completed":
+			return [SEG("task ", "muted"), SEG(id, "accent"), SEG(" completed ", "muted"), SEG("✓", "success")];
+		case "step_returned":
+			return [SEG(id, "accent"), SEG(" returned", "warning"), ...(e.returnToOrchestrator ? [SEG(" → orchestrator", "dim")] : [])];
+		case "task_returned":
+			return [SEG("task ", "muted"), SEG(id, "accent"), SEG(" returned → orchestrator", "warning")];
+		case "step_error":
+			return [SEG(id, "accent"), SEG(` error: ${str(e.error)}`, "error")];
+		case "task_failed":
+			return [SEG("task ", "muted"), SEG(id, "accent"), SEG(" failed", "error")];
+		case "step_paused":
+			return [SEG(id, "accent"), SEG(` paused (${str(e.reason)})`, "warning")];
+		case "ship_gate_injected":
+			return [SEG("ship gate injected ", "muted"), SEG("(code-review → qa-validator)", "dim")];
+		default:
+			return [SEG(str(e.event) || "(event)", "dim")];
+	}
 }
 
 /** Mapeia um evento cru numa linha humana (rebrand: "Worker #N ..." → task/step). */
@@ -627,7 +690,7 @@ export function formatProgressEntry(e: ProgressRaw): string {
 
 /** Projeta os eventos crus em entries renderizáveis (ordem preservada: mais antigo → recente). */
 export function buildProgressEntries(raw: ProgressRaw[], now: number): ProgressEntry[] {
-	return raw.map((e) => ({ ts: str(e.ts), rel: relTime(e.ts, now), text: formatProgressEntry(e) }));
+	return raw.map((e) => ({ ts: str(e.ts), rel: relTime(e.ts, now), text: formatProgressEntry(e), segments: progressSegments(e) }));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -688,6 +751,8 @@ export function stripParts(model: ControlModel, barWidth = 16): StripParts {
 	let active = "idle";
 	if (model.active) {
 		active = model.active.kind === "ship-gate" ? `ship gate: ${model.active.skillName.replace("harness-", "")}` : `task ${model.active.id}`;
+		// vai pra statusline via setStatus (sem clip downstream garantido): task ids longos truncam
+		if (active.length > 32) active = `${active.slice(0, 31)}…`;
 	} else if (model.state === "completed") {
 		active = "all done";
 	}
@@ -729,9 +794,8 @@ export function buildControlModel(input: ControlInputs): ControlModel {
 	const tasks = buildTaskRows(input.plan, input.run, disk);
 	const active = activeItem(input.plan, input.run, disk);
 	// Destaque ÚNICO e CONSISTENTE com o painel Active Task: a flag `active` da row segue
-	// EXCLUSIVAMENTE o activeItem. No nativo várias tasks podem ser in_progress (ex.: T1 returned
-	// + T2 a correr) mas só uma é o worker vivo; e quando não há sinal de qual corre (activeItem
-	// null) NENHUMA row fica destacada — evita o mismatch "Active Task: Waiting" + row realçada.
+	// EXCLUSIVAMENTE o activeItem (o `next_task` emite um task_started por task, então o ativo anda
+	// sozinho). Quando não há sinal de qual corre (activeItem null) NENHUMA row fica destacada.
 	for (const t of tasks) t.active = active !== null && t.id === active.id;
 	const tasksTotal = input.plan?.tasks.length ?? 0;
 	const tasksDone = tasks.filter((t) => t.status === "completed").length;

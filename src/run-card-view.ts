@@ -7,6 +7,7 @@
  */
 import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
 import type { Component } from "@earendil-works/pi-tui";
+import { clipToWidth } from "./control-frame.ts";
 import { type RunCard, buildRunCard } from "./run-card.ts";
 import { getRunModel } from "./run-store.ts";
 import { listLiveAgents } from "./live-agents.ts";
@@ -46,8 +47,10 @@ export function registerRunCardRenderer(pi: ExtensionAPI): void {
 		if (!featureId) return undefined;
 		const component: Component = {
 			// Lê o snapshot vivo + os subagents rodando agora (cap. 09): re-renderiza a cada ciclo
-			// do TUI (pi-subagents anima ~80ms), então o Worker tica ao vivo no transcript.
-			render: (_width: number): string[] => colorizeCard(theme, buildRunCard(getRunModel(featureId), { liveAgents: listLiveAgents() })),
+			// do TUI (@tintinweb/pi-subagents anima ~80ms), então o Worker tica ao vivo no transcript.
+			// CLIP obrigatório: o pi-tui aborta a app inteira numa linha > width, e o card carrega
+			// conteúdo dinâmico ilimitado (task ids, activity snippets) — re-renderiza a cada ciclo.
+			render: (width: number): string[] => colorizeCard(theme, buildRunCard(getRunModel(featureId), { liveAgents: listLiveAgents() })).map((l) => clipToWidth(l, width)),
 			invalidate: (): void => {},
 		};
 		return component;

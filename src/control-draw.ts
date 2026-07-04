@@ -101,6 +101,22 @@ export function twoRow(cols: number, left: string, right: string, midPos: number
 	return border(VBAR) + cell(left, leftW, widthOf, clip) + border(VBAR) + cell(right, rightW, widthOf, clip) + border(VBAR);
 }
 
+/**
+ * Linha-divisor de COLUNA DIREITA (o `cnu` do Droid, doc UI 08b §1e): `│ <L> ├───┤`. A coluna
+ * esquerda segue fluindo o seu conteúdo (Active Task), enquanto a direita vira uma régua —
+ * separando visualmente Tasks (acima) de Progress Log (abaixo) DENTRO da metade direita. O `├`
+ * cai exatamente no `midPos` (= a coluna do `│` divisor do twoRow / do `┬`/`┴` das réguas).
+ */
+export function cnuRow(cols: number, left: string, midPos: number, deps: DrawDeps = {}): string {
+	const border = deps.border ?? ID;
+	const widthOf = deps.widthOf ?? LEN;
+	const clip = deps.clip ?? SLICE;
+	const i = Math.max(1, Math.min(midPos, cols - 2));
+	const leftW = Math.max(0, i - 1);
+	const rightW = Math.max(0, cols - i - 2);
+	return border(VBAR) + cell(left, leftW, widthOf, clip) + border(ML) + border(H.repeat(rightW)) + border(MR);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Montagem das telas (full-screen): produzem EXATAMENTE `rows` linhas.
 
@@ -123,6 +139,12 @@ export interface MainParts {
 	footer: string;
 	/** coluna do `│` divisor (alinha com `┬`/`┴`). */
 	midPos: number;
+	/**
+	 * Índice (em `bodyRows`) da linha onde a COLUNA DIREITA vira uma régua `├──┤` (o `cnu`): separa
+	 * a lista de Tasks (acima) do Progress Log (abaixo) dentro da metade direita, espelhando o Droid.
+	 * A esquerda continua a fluir `left[k]`. `undefined` → sem divisor (todas as linhas são twoRow).
+	 */
+	rightDivider?: number;
 }
 
 /**
@@ -156,7 +178,10 @@ export function drawMain(cols: number, rows: number, parts: MainParts, deps: Dra
 	lines.push(rule(cols, {}, deps));
 	lines.push(fullRow(cols, parts.bar, deps));
 	lines.push(rule(cols, { mid: MT, midPos: parts.midPos }, deps));
-	for (let k = 0; k < bodyRows; k++) lines.push(twoRow(cols, parts.left[k] ?? "", parts.right[k] ?? "", parts.midPos, deps));
+	for (let k = 0; k < bodyRows; k++) {
+		if (parts.rightDivider === k) lines.push(cnuRow(cols, parts.left[k] ?? "", parts.midPos, deps));
+		else lines.push(twoRow(cols, parts.left[k] ?? "", parts.right[k] ?? "", parts.midPos, deps));
+	}
 	lines.push(rule(cols, { mid: MB, midPos: parts.midPos }, deps));
 	for (let k = 0; k < workerRows; k++) lines.push(fullRow(cols, parts.worker[k] ?? "", deps));
 	lines.push(rule(cols, {}, deps));
@@ -172,22 +197,37 @@ export interface SubParts {
 	body: string[];
 	/** barra de footer (hints). */
 	footer: string;
+	/**
+	 * Chrome PERSISTENTE do Feature Control (o look "inset" 1:1 do cap. 08 §2): quando presente, o
+	 * sub-view mantém a banda de título + a barra de progresso do main por cima do seu próprio
+	 * cabeçalho — renderiza DENTRO da moldura do Mission Control, não como caixa separada.
+	 * `undefined` → caixa autônoma (compat / loading frame).
+	 */
+	chrome?: { header: string; bar: string };
 }
 
-/** Quantas linhas de corpo um sub-view tem (dado o nº de linhas de cabeçalho). */
-export function subBodyRows(rows: number, headerLines: number): number {
-	return Math.max(1, rows - (5 + headerLines));
+/** Quantas linhas de corpo um sub-view tem (header + chrome opcional descontados). */
+export function subBodyRows(rows: number, headerLines: number, hasChrome = false): number {
+	const chrome = hasChrome ? 4 : 0; // banda de título + régua + barra + régua
+	return Math.max(1, rows - (5 + headerLines + chrome));
 }
 
 /**
- * Sub-view full-screen (Tasks/Workers/Coverage/detalhe): topo · headerRows · régua · K linhas
- * de corpo · régua · footer · base. As laterais `│ … │` dão o look "inset" do cap. 08 (§6).
+ * Sub-view full-screen (Tasks/Workers/Coverage/detalhe): topo · [chrome: header · régua · barra ·
+ * régua] · headerRows · régua · K linhas de corpo · régua · footer · base. As laterais `│ … │` dão
+ * o look "inset" do cap. 08 (§6); com `chrome`, o título+barra do Feature Control PERSISTEM (§2).
  */
 export function drawSub(cols: number, rows: number, parts: SubParts, deps: DrawDeps = {}): string[] {
 	const h = parts.headerRows.length;
-	const bodyRows = subBodyRows(rows, h);
+	const bodyRows = subBodyRows(rows, h, !!parts.chrome);
 	const lines: string[] = [];
 	lines.push(rule(cols, { left: TL, right: TR }, deps));
+	if (parts.chrome) {
+		lines.push(fullRow(cols, parts.chrome.header, deps));
+		lines.push(rule(cols, {}, deps));
+		lines.push(fullRow(cols, parts.chrome.bar, deps));
+		lines.push(rule(cols, {}, deps));
+	}
 	for (const hr of parts.headerRows) lines.push(fullRow(cols, hr, deps));
 	lines.push(rule(cols, {}, deps));
 	for (let k = 0; k < bodyRows; k++) lines.push(fullRow(cols, parts.body[k] ?? "", deps));

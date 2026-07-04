@@ -20,6 +20,8 @@ export interface RunSummary {
 	updatedAt: string | null;
 	/** o run atualmente ativo na sessão (marcado `●`); setado pelo caller. */
 	current: boolean;
+	/** erro ao carregar ESTE run (dir corrompido) — a linha degrada, o picker não quebra (Droid: per-row load errors). */
+	loadError?: string;
 }
 
 function runsRoot(cwd: string): string {
@@ -41,29 +43,45 @@ export function listRunIds(cwd: string): string[] {
 }
 
 function summarize(cwd: string, featureId: string, activeFeatureId?: string): RunSummary {
-	// Reusa o modelo completo (mesma derivação do overlay: estado + counts da barra a partir
-	// dos sinais em disco) — garante que o picker mostra o MESMO progresso que o Feature Control.
-	const model = readControlModel(cwd, featureId);
-	const plan = readPlan(cwd, featureId);
-	const run = readFeatureRun(cwd, featureId);
-	let updatedAt: string | null = run?.updatedAt ?? plan?.createdAt ?? null;
-	if (!updatedAt) {
-		try {
-			updatedAt = fs.statSync(path.join(runsRoot(cwd), featureId)).mtime.toISOString();
-		} catch {
-			updatedAt = null;
+	// Per-row load errors (Droid missions picker): um run corrompido degrada A LINHA (⚠ + motivo),
+	// nunca derruba o picker inteiro. O try/catch envolve toda a derivação deste run.
+	try {
+		// Reusa o modelo completo (mesma derivação do overlay: estado + counts da barra a partir
+		// dos sinais em disco) — garante que o picker mostra o MESMO progresso que o Feature Control.
+		const model = readControlModel(cwd, featureId);
+		const plan = readPlan(cwd, featureId);
+		const run = readFeatureRun(cwd, featureId);
+		let updatedAt: string | null = run?.updatedAt ?? plan?.createdAt ?? null;
+		if (!updatedAt) {
+			try {
+				updatedAt = fs.statSync(path.join(runsRoot(cwd), featureId)).mtime.toISOString();
+			} catch {
+				updatedAt = null;
+			}
 		}
+		return {
+			featureId,
+			state: model?.state ?? "unknown",
+			counts: model?.counts ?? { completed: 0, pending: 0, estimate: 0, cancelled: 0, total: 0 },
+			assertions: model?.assertions ?? { passed: 0, failed: 0, pending: 0, total: 0 },
+			tasksDone: model?.tasksDone ?? 0,
+			tasksTotal: model?.tasksTotal ?? 0,
+			updatedAt,
+			current: featureId === activeFeatureId,
+		};
+	} catch (e) {
+		return {
+			featureId,
+			state: "unknown",
+			counts: { completed: 0, pending: 0, estimate: 0, cancelled: 0, total: 0 },
+			assertions: { passed: 0, failed: 0, pending: 0, total: 0 },
+			tasksDone: 0,
+			tasksTotal: 0,
+			updatedAt: null,
+			current: featureId === activeFeatureId,
+			loadError: (e as Error).message || "failed to load run",
+		};
 	}
-	return {
-		featureId,
-		state: model?.state ?? "unknown",
-		counts: model?.counts ?? { completed: 0, pending: 0, estimate: 0, cancelled: 0, total: 0 },
-		assertions: model?.assertions ?? { passed: 0, failed: 0, pending: 0, total: 0 },
-		tasksDone: model?.tasksDone ?? 0,
-		tasksTotal: model?.tasksTotal ?? 0,
-		updatedAt,
-		current: featureId === activeFeatureId,
-	};
 }
 
 /** Os runs ordenados por updatedAt desc (mais recente primeiro). */
@@ -73,12 +91,63 @@ export function listRuns(cwd: string, opts: { activeFeatureId?: string } = {}): 
 		.sort((a, b) => (b.updatedAt ?? "").localeCompare(a.updatedAt ?? ""));
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Rename (o Ctrl+R inline do missions picker do Droid) — renomeia o DIRETÓRIO do run.
+
+export type RenameResult = { ok: true; featureId: string } | { ok: false; reason: string };
+
+/** id válido de run: slug filesystem-safe (mesma família do featureIdFromRequest). */
+export function isValidRunId(id: string): boolean {
+	return /^[a-z0-9][a-z0-9._-]*$/i.test(id) && id.length <= 80 && !id.startsWith(".");
+}
+
+/**
+ * Renomeia um run (`.harness/runs/<old>` → `<new>`): valida o novo id, recusa colisão/ausente.
+ * PURA de política (fs only) — o caller (view/extensão) decide se o run pode ser renomeado
+ * (ex.: nunca o run ATIVO no processo). O featureId dos artefatos internos (plan.json etc.)
+ * é REESCRITO onde é usado como chave (plan/status/feature-run), pra manter a coerência.
+ */
+export function renameRun(cwd: string, oldId: string, newId: string): RenameResult {
+	const next = newId.trim();
+	if (!next) return { ok: false, reason: "empty name" };
+	if (!isValidRunId(next)) return { ok: false, reason: "invalid name (use letters, digits, - _ .)" };
+	if (next === oldId) return { ok: true, featureId: oldId };
+	const from = path.join(runsRoot(cwd), oldId);
+	const to = path.join(runsRoot(cwd), next);
+	if (!fs.existsSync(from)) return { ok: false, reason: `run "${oldId}" not found` };
+	if (fs.existsSync(to)) return { ok: false, reason: `a run named "${next}" already exists` };
+	try {
+		fs.renameSync(from, to);
+	} catch (e) {
+		return { ok: false, reason: (e as Error).message };
+	}
+	// Reescreve o featureId nos artefatos-chave (tolerante: um ficheiro ausente/corrompido não desfaz o rename).
+	for (const f of ["plan.json", "status.json", "feature-run.json"]) {
+		const p = path.join(to, f);
+		try {
+			const obj = JSON.parse(fs.readFileSync(p, "utf8")) as Record<string, unknown>;
+			if (obj && typeof obj === "object" && "featureId" in obj) {
+				obj.featureId = next;
+				fs.writeFileSync(p, `${JSON.stringify(obj, null, 2)}\n`);
+			}
+		} catch {
+			// ausente/corrompido — segue
+		}
+	}
+	return { ok: true, featureId: next };
+}
+
 /**
  * Linha do picker pra um run (PURA, testável): label = marcador `●` (run atual) + ícone
  * de estado + featureId; description = estado · assertions passed/total (ou tasks) · updated.
  */
 export function runRow(run: RunSummary, now: number): { label: string; description: string } {
 	const marker = run.current ? "● " : "  ";
+	if (run.loadError) {
+		// Linha degradada (Droid: per-row load error): ⚠ + motivo; o run continua selecionável? Não —
+		// a description explica; o Enter no picker deve avisar (a view decide).
+		return { label: `${marker}⚠ ${run.featureId}`, description: `load error: ${run.loadError}` };
+	}
 	const label = `${marker}${stateIcon(run.state)} ${run.featureId}`;
 	const parts = [stateLabel(run.state)];
 	if (run.counts.total > 0) parts.push(`${run.counts.completed}/${run.counts.total}${run.counts.estimate > 0 ? ` [+${run.counts.estimate}]` : ""}`);

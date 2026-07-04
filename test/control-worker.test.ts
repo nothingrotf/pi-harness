@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { entriesFromActivity, entriesFromSessionEntries, foldTranscript, parseSessionJsonl, pickActiveWorker, readWorkerSession, summarizeToolParams, transcriptSource, workerEntries } from "../src/control-worker.ts";
+import { SESSION_DENSITY_DEFAULT, cycleDensity, entriesFromActivity, entriesFromSessionEntries, foldTranscript, parseSessionJsonl, pickActiveWorker, readWorkerSession, scrollOffset, sessionWindow, summarizeToolParams, transcriptSource, workerEntries } from "../src/control-worker.ts";
 import type { ControlModel } from "../src/control-model.ts";
 import type { LiveAgent } from "../src/live-agents.ts";
 
@@ -173,4 +173,38 @@ test("workerEntries: session com ficheiro → entries; session sem ficheiro → 
 	assert.equal(live[0]?.toolName, "read");
 
 	assert.deepEqual(workerEntries(cwd, "feat-x", { number: 1, id: "T1", label: "x", skill: "w", status: "running", source: "session" }), []);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Session viewer (droid §7b): densidade + janela de scroll com follow-tail
+
+test("cycleDensity: clampa 1..5", () => {
+	assert.equal(cycleDensity(4, 1), 5);
+	assert.equal(cycleDensity(5, 1), 5);
+	assert.equal(cycleDensity(2, -1), 1);
+	assert.equal(cycleDensity(1, -1), 1);
+	assert.equal(SESSION_DENSITY_DEFAULT, 4, "default 4 (o do Droid)");
+});
+
+test("sessionWindow: tudo cabe → janela completa em follow, sem range", () => {
+	assert.deepEqual(sessionWindow(5, null, 10), { start: 0, count: 5, follow: true, range: "" });
+});
+
+test("sessionWindow: follow-tail (offset null) cola no fim; offset ancora; offset no fim re-engaja follow", () => {
+	const tail = sessionWindow(50, null, 10);
+	assert.deepEqual([tail.start, tail.count, tail.follow], [40, 10, true]);
+	assert.equal(tail.range, "41-50 of 50");
+	const anchored = sessionWindow(50, 12, 10);
+	assert.deepEqual([anchored.start, anchored.follow], [12, false]);
+	assert.equal(anchored.range, "13-22 of 50");
+	assert.equal(sessionWindow(50, 45, 10).follow, true, "offset ≥ maxStart → follow");
+});
+
+test("scrollOffset: sobe ancorando a partir do fim; desce até re-engajar follow (null)", () => {
+	// em follow (null), subir 1 → ancora em maxStart-1
+	assert.equal(scrollOffset(50, null, 10, -1), 39);
+	assert.equal(scrollOffset(50, 39, 10, -10), 29);
+	assert.equal(scrollOffset(50, 5, 10, -10), 0, "clampa no topo");
+	assert.equal(scrollOffset(50, 30, 10, 10), null, "alcançou o fim → follow");
+	assert.equal(scrollOffset(5, null, 10, -1), null, "tudo cabe → sempre follow");
 });

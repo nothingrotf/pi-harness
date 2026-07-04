@@ -17,6 +17,8 @@ import {
 	apportion,
 	formatDuration,
 	formatProgressEntry,
+	progressSegments,
+	type ProgressRaw,
 	gateDoneCount,
 	progressBar,
 	progressCounts,
@@ -259,7 +261,7 @@ test("buildTaskRows: junta descrição (plan) com status (run) e marca o ativo",
 	assert.equal(rows[1].description, "endpoint");
 	assert.deepEqual(rows[1].fulfills, ["A1", "A2"]);
 	assert.equal(taskIcon("completed"), "✓");
-	assert.equal(taskIcon("cancelled"), "✘");
+	assert.equal(taskIcon("cancelled"), "✗");
 });
 
 test("buildTaskRows: sem run → todas pending; sem plan → []", () => {
@@ -302,6 +304,14 @@ test("buildTaskRows: caminho NATIVO (run=null) deriva status dos handoffs + prog
 });
 
 // ─── item ativo ──────────────────────────────────────────────────────────────
+
+test("buildTaskRows: handoff de SUCESSO do impl step marca TODAS as tasks completas (backstop 357, git-free)", () => {
+	const implH: PersistedHandoff = { taskId: "implement", workerSessionId: "w", successState: "success", returnToOrchestrator: false, validatorsPassed: true, handoff: { whatWasImplemented: "x", whatWasLeftUndone: "", verification: { commandsRun: [] } }, recordedAt: "z" };
+	assert.ok(buildTaskRows(plan(), null, { handoffs: [implH] }).every((r) => r.status === "completed"), "impl-success → todas completed");
+	// impl-success NÃO sobrepõe um cancelled explícito.
+	const rows = buildTaskRows(plan(), null, { handoffs: [implH], progressRaw: [{ event: "task_failed", taskId: "T2" }] });
+	assert.equal(rows.find((r) => r.id === "T2")?.status, "cancelled");
+});
 
 test("activeItem: prefere in_progress; senão o próximo pending se running; null sem run", () => {
 	assert.equal(activeItem(plan(), null), null);
@@ -437,6 +447,24 @@ test("formatProgressEntry: mapeia os eventos do runner/handoff/store", () => {
 	assert.equal(formatProgressEntry({ event: "mystery" }), "mystery");
 });
 
+test("progressSegments: join dos .text == formatProgressEntry; tons por estado (Enu analog)", () => {
+	const evs: ProgressRaw[] = [
+		{ event: "plan_stored", tasks: 8, assertions: 12 },
+		{ event: "task_completed", taskId: "T1" },
+		{ event: "task_returned", taskId: "T2" },
+		{ event: "task_failed", taskId: "T3" },
+		{ event: "task_started", taskId: "T4" },
+		{ event: "mystery" },
+	];
+	for (const e of evs) assert.equal(progressSegments(e).map((s) => s.text).join(""), formatProgressEntry(e), `join == plain p/ ${e.event}`);
+	// ícone ✓ de completed em success; id em accent; "returned" em warning; "failed" em error.
+	const done = progressSegments({ event: "task_completed", taskId: "T1" });
+	assert.ok(done.some((s) => s.text === "✓" && s.tone === "success"));
+	assert.ok(done.some((s) => s.text === "T1" && s.tone === "accent"));
+	assert.ok(progressSegments({ event: "task_returned", taskId: "T2" }).some((s) => s.tone === "warning"));
+	assert.ok(progressSegments({ event: "task_failed", taskId: "T3" }).some((s) => s.tone === "error"));
+});
+
 // ─── modelo completo (puro) ──────────────────────────────────────────────────
 
 test("buildControlModel: integra tudo a partir de inputs em memória", () => {
@@ -497,7 +525,7 @@ test("readControlModel: null sem plan; integra plan+run+handoff+progress do disc
 
 	storePlan(d, plan()); // grava plan.json + status.json (pending) + plan_stored
 	// 1 worker por feature: o impl step está in_progress; os sinais POR-TASK vêm do progress/handoffs
-	// (task_progress do worker), não de N steps. T1 concluída (handoff), T2 corrente (task_started).
+	// (o tool `next_task` grava as fronteiras), não de N steps. T1 concluída (handoff), T2 corrente (task_started).
 	const r = buildFeatureRun(d, "feat-x", () => "2026-06-29T00:00:00.000Z");
 	assert.ok(r);
 	if (!r) return;

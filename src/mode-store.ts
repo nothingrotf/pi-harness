@@ -49,6 +49,18 @@ export function loadMode(cwd: string): PersistedMode | null {
 	return null;
 }
 
+/** Rename do run (picker Ctrl+R): se o ponteiro aponta pro id antigo, segue o novo. Best-effort. */
+export function renameModePointer(cwd: string, oldId: string, newId: string): void {
+	try {
+		const cur = loadMode(cwd);
+		if (cur && cur.featureId === oldId) {
+			fs.writeFileSync(sessionPath(cwd), `${JSON.stringify({ ...cur, featureId: newId })}\n`);
+		}
+	} catch {
+		// best-effort
+	}
+}
+
 /** Remove o ponteiro (saída do modo / órfão). */
 export function clearMode(cwd: string): void {
 	try {

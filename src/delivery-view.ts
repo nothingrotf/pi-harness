@@ -10,7 +10,7 @@
  */
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Container, matchesKey, type SelectItem, SelectList, Spacer, Text } from "@earendil-works/pi-tui";
-import { frame, selectListTheme } from "./control-frame.ts";
+import { clipToWidth, frame, selectListTheme } from "./control-frame.ts";
 import { type DeliveryRecord, MERGE_OPTIONS, type MergeChoice, mergeGateSummaryLines } from "./delivery.ts";
 
 /** Menu do merge gate. Enter numa opção resolve; Esc = leave_open (nunca mergeia por omissão). */
@@ -47,7 +47,7 @@ export function showMergeGate(ctx: ExtensionContext, input: { featureId: string;
 				try {
 					return container.render(w);
 				} catch (e) {
-					return [` ⚠ render error: ${(e as Error).message}`, " Esc / Ctrl+C"];
+					return [clipToWidth(` ⚠ render error: ${(e as Error).message}`, w), " Esc / Ctrl+C"];
 				}
 			},
 			invalidate: () => container.invalidate(),

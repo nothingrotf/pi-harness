@@ -1,37 +1,46 @@
 /**
- * Live agents registry — os workers que estão RODANDO AGORA como `subagent` (pi-subagents),
- * que NÃO existem em disco ainda (sem handoff até o EndFeatureRun) e por isso não apareciam no
- * Feature Control. A extensão observa os eventos `tool_execution_*` do tool `subagent` e
- * popula este registro; o overlay (Active Worker + Workers) e o run card leem `listLiveAgents()`
- * e mostram os workers ao vivo (com #task, skill, tool/token counts).
+ * Live agents registry — os workers que estão RODANDO AGORA como `Agent`
+ * (@tintinweb/pi-subagents), que NÃO existem em disco ainda (sem handoff até o EndFeatureRun) e por
+ * isso não apareciam no Feature Control. A extensão observa os eventos `tool_execution_*` do tool
+ * `Agent` e popula este registro; o overlay (Active Worker + Workers) e o run card leem
+ * `listLiveAgents()` e mostram os workers ao vivo (com #task, skill, tool/token counts).
+ *
+ * PROVIDER ÚNICO: `@tintinweb/pi-subagents` (o tool `Agent`, args `{prompt, subagent_type,
+ * description}`, `details` = um `AgentDetails` com `agentId` + `activity`). O transcript real do
+ * worker é lido pelo painel a partir do `.output` JSONL que o @tintinweb streama (localizado via
+ * `agentId` + a sessão-pai; ver src/session-read.ts). O `AgentDetails` só expõe UMA string
+ * `activity` por frame, então acumulamos um buffer rolante (mergeActivity) pro FALLBACK do painel
+ * quando o `.output` ainda não existe.
  *
  * As funções de extração/parse são PURAS (testáveis: test/live-agents.test.ts); o store é um
- * Map em memória keyed por toolCallId (uma chamada `subagent` pode ter N tasks paralelas).
+ * Map em memória keyed por toolCallId (uma chamada `Agent` = um agent; buffer de activity keyed
+ * por `${toolCallId}#${index}`).
  */
 
 export interface LiveAgent {
 	index: number;
-	/** task id parseado do prompt ("T1", "ship-gate-qa-validator") ou "—". */
+	/** task id parseado do prompt/description ("T1", "ship-gate-qa-validator") ou "—". */
 	taskId: string;
-	/** o agent type do subagent (ex.: "harness-worker"). */
+	/** o agent type do subagent (o `subagent_type`, ex.: "harness-worker"). */
 	agent: string;
-	/** rótulo curto pra UI (snippet do task). */
+	/** rótulo curto pra UI (snippet do task/description). */
 	label: string;
 	status: "running" | "pending";
 	toolCount: number;
 	tokens: number;
 	currentTool?: string;
-	/** últimas ~4 atividades (o `recentActivity`/`Qb1` do doc 10) — tool calls + saída recente. */
+	/** buffer rolante das últimas ~N atividades (o `recentActivity`) — FALLBACK do painel. */
 	recentActivity: string[];
+	/** o id do agent record do @tintinweb (→ localiza o `.output` JSONL do transcript real). */
+	agentId?: string;
 }
 
 /**
- * Nomes do tool que spawna workers/reviewers como subagent. Dois fornecedores no ecossistema:
- * `subagent` (pi-subagents, args {agent,task}, details {progress[]}) e `Agent`
- * (@tintinweb/pi-subagents, args {prompt,subagent_type,description}, details AgentDetails único).
- * O caminho nativo do harness funciona com QUALQUER um — por isso casamos os dois.
+ * Nome do tool que spawna workers/reviewers. PROVIDER ÚNICO: `@tintinweb/pi-subagents` expõe o
+ * tool `Agent` (case-sensitive). O caminho nativo do harness (Active Worker + Workers) casa por
+ * este nome.
  */
-export const SUBAGENT_TOOL_NAMES: ReadonlySet<string> = new Set(["subagent", "Agent"]);
+export const SUBAGENT_TOOL_NAMES: ReadonlySet<string> = new Set(["Agent"]);
 export function isSubagentTool(name: string): boolean {
 	return SUBAGENT_TOOL_NAMES.has(name);
 }
@@ -67,147 +76,114 @@ function snippet(s: string, n = 40): string {
 	return t.length > n ? `${t.slice(0, n - 1)}…` : t;
 }
 
-/** Constrói o feed de atividade recente do AgentProgress (recentTools + currentTool + recentOutput). */
-function recentActivityFrom(p: Record<string, unknown>, max = 4): string[] {
-	const out: string[] = [];
-	const recentTools = Array.isArray(p?.recentTools) ? p.recentTools : [];
-	for (const rt of recentTools) {
-		const t = rt as Record<string, unknown>;
-		if (typeof t?.tool === "string") out.push(`${t.tool}${typeof t?.args === "string" && t.args.trim() ? `: ${snippet(t.args, 38)}` : ""}`);
-	}
-	if (typeof p?.currentTool === "string") out.push(`${p.currentTool}${typeof p?.currentToolArgs === "string" && p.currentToolArgs.trim() ? `: ${snippet(p.currentToolArgs, 38)}` : ""}`);
-	if (out.length === 0) {
-		const recentOutput = Array.isArray(p?.recentOutput) ? p.recentOutput : [];
-		for (const o of recentOutput) if (typeof o === "string" && o.trim()) out.push(snippet(o, 42));
-	}
-	return out.slice(-max);
-}
 function shortLabel(task: string, agent?: string): string {
 	const s = oneLine(task);
 	if (!s) return agent ?? "worker";
 	return s.length > 44 ? `${s.slice(0, 43)}…` : s;
 }
 
-/** Coleta {agent, task} dos args do tool subagent (single | tasks[] | chain[] | parallel[]). */
-function collectTasks(args: unknown): { agent: string; task: string }[] {
-	const out: { agent: string; task: string }[] = [];
-	const a = args as Record<string, unknown> | null | undefined;
-	if (!a || typeof a !== "object") return out;
-	const push = (x: unknown): void => {
-		const o = x as Record<string, unknown> | null;
-		if (o && typeof o.task === "string") out.push({ agent: typeof o.agent === "string" ? o.agent : "worker", task: o.task });
-	};
-	if (typeof a.task === "string") out.push({ agent: typeof a.agent === "string" ? a.agent : "worker", task: a.task });
-	if (Array.isArray(a.tasks)) for (const t of a.tasks) push(t);
-	if (Array.isArray(a.chain))
-		for (const s of a.chain as unknown[]) {
-			push(s);
-			const so = s as Record<string, unknown>;
-			if (Array.isArray(so?.parallel)) for (const p of so.parallel) push(p);
-		}
-	return out;
-}
-
-/** Seed inicial a partir dos args (no tool_execution_start, antes de haver progress). */
-export function agentsFromArgs(args: unknown): LiveAgent[] {
-	const a = args as Record<string, unknown> | null | undefined;
-	// @tintinweb/pi-subagents `Agent`: { prompt, subagent_type, description } (um agent por chamada).
-	// Sem os campos {task,tasks,chain} do pi-subagents — detecta pelo `prompt` e parseia o id da
-	// `description` ("Run T6 web-worker") com fallback pro prompt.
-	if (a && typeof a === "object" && typeof a.prompt === "string" && !("task" in a) && !("tasks" in a) && !("chain" in a)) {
-		const desc = typeof a.description === "string" && a.description.trim() ? a.description : a.prompt;
-		const agent = typeof a.subagent_type === "string" && a.subagent_type.trim() ? a.subagent_type : "worker";
-		return [
-			{
-				index: 0,
-				taskId: parseTaskId(`${desc} ${a.prompt}`),
-				agent,
-				label: shortLabel(desc, agent),
-				status: "running" as const,
-				toolCount: 0,
-				tokens: 0,
-				recentActivity: [],
-			},
-		];
+/**
+ * Merge rolante de atividade (PURO, testável): anexa os itens de `next` que não sejam repetição
+ * do tail atual de `prev`, dedup consecutivo, cap nos últimos `cap`. É o que transforma a única
+ * string `activity` do @tintinweb (uma por frame) num feed das últimas ~N atividades pro FALLBACK
+ * do painel quando o `.output` real ainda não existe.
+ */
+export function mergeActivity(prev: string[], next: string[], cap = 8): string[] {
+	const out = [...(prev ?? [])];
+	for (const raw of next ?? []) {
+		const item = oneLine(raw);
+		if (!item) continue;
+		if (out[out.length - 1] === item) continue; // dedup consecutivo
+		out.push(item);
 	}
-	return collectTasks(args).map((t, i) => ({
-		index: i,
-		taskId: parseTaskId(t.task),
-		agent: t.agent,
-		label: shortLabel(t.task, t.agent),
-		status: "running" as const,
-		toolCount: 0,
-		tokens: 0,
-		recentActivity: [],
-	}));
+	return out.length > cap ? out.slice(-cap) : out;
 }
 
 /**
- * Extrai os agents RODANDO do `details.progress` (AgentProgress[]) do partialResult/result do
- * subagent. Só status running/pending; ignora completed/failed (esses viram handoffs em disco).
+ * Seed inicial a partir dos args (no tool_execution_start, antes de haver details). @tintinweb
+ * `Agent`: `{ prompt, subagent_type, description }` (um agent por chamada). Parseia o id da
+ * `description` ("Run T6 web-worker") com fallback pro prompt.
+ */
+export function agentsFromArgs(args: unknown): LiveAgent[] {
+	const a = args as Record<string, unknown> | null | undefined;
+	if (!a || typeof a !== "object" || typeof a.prompt !== "string") return [];
+	const desc = typeof a.description === "string" && a.description.trim() ? a.description : a.prompt;
+	const agent = typeof a.subagent_type === "string" && a.subagent_type.trim() ? a.subagent_type : "worker";
+	return [
+		{
+			index: 0,
+			taskId: parseTaskId(`${desc} ${a.prompt}`),
+			agent,
+			label: shortLabel(desc, agent),
+			status: "running" as const,
+			toolCount: 0,
+			tokens: 0,
+			recentActivity: [],
+		},
+	];
+}
+
+/**
+ * Extrai o agent RODANDO do `details` (um `AgentDetails` do @tintinweb) do partialResult/result do
+ * tool `Agent`. Só running/background/queued são live; completed/steered/stopped/error/aborted viram
+ * handoff em disco (o tool_execution_end limpa). Captura `agentId` (→ localiza o `.output` do
+ * transcript real) e a string `activity` (→ buffer rolante do fallback).
  */
 export function agentsFromDetails(details: unknown): LiveAgent[] {
 	const d = details as Record<string, unknown> | null | undefined;
 	if (!d || typeof d !== "object") return [];
-	const progress = d.progress;
-	// @tintinweb/pi-subagents: details é UM AgentDetails (sem `progress[]`). Só running/background/queued
-	// são live; completed/steered/stopped/error/aborted viram handoff em disco (tool_execution_end limpa).
-	if (!Array.isArray(progress)) {
-		const status = String(d.status ?? "");
-		const live = status === "running" || status === "background" ? "running" : status === "queued" ? "pending" : null;
-		if (!live) return [];
-		const desc = String(d.description ?? d.displayName ?? "");
-		const agent = String(d.subagentType ?? d.displayName ?? "worker");
-		const activity = typeof d.activity === "string" && d.activity.trim() ? d.activity : "";
-		return [
-			{
-				index: 0,
-				taskId: parseTaskId(desc),
-				agent,
-				label: shortLabel(desc, agent),
-				status: live,
-				toolCount: typeof d.toolUses === "number" ? d.toolUses : 0,
-				tokens: parseTokens(d.tokens),
-				currentTool: activity ? snippet(activity, 38) : undefined,
-				recentActivity: activity ? [snippet(activity, 42)] : [],
-			},
-		];
-	}
-	const out: LiveAgent[] = [];
-	progress.forEach((raw, i) => {
-		const p = raw as Record<string, unknown>;
-		const status = String(p?.status ?? "");
-		if (status !== "running" && status !== "pending") return;
-		const task = String(p?.task ?? "");
-		out.push({
-			index: typeof p?.index === "number" ? p.index : i,
-			taskId: parseTaskId(task),
-			agent: String(p?.agent ?? "worker"),
-			label: shortLabel(task, String(p?.agent ?? "")),
-			status: status === "pending" ? "pending" : "running",
-			toolCount: typeof p?.toolCount === "number" ? p.toolCount : 0,
-			tokens: typeof p?.tokens === "number" ? p.tokens : 0,
-			currentTool: typeof p?.currentTool === "string" ? p.currentTool : undefined,
-			recentActivity: recentActivityFrom(p),
-		});
-	});
-	return out;
+	const status = String(d.status ?? "");
+	const live = status === "running" || status === "background" ? "running" : status === "queued" ? "pending" : null;
+	if (!live) return [];
+	const desc = String(d.description ?? d.displayName ?? "");
+	const agent = String(d.subagentType ?? d.displayName ?? "worker");
+	const activity = typeof d.activity === "string" && d.activity.trim() ? d.activity : "";
+	return [
+		{
+			index: 0,
+			taskId: parseTaskId(desc),
+			agent,
+			label: shortLabel(desc, agent),
+			status: live,
+			toolCount: typeof d.toolUses === "number" ? d.toolUses : 0,
+			tokens: parseTokens(d.tokens),
+			currentTool: activity ? snippet(activity, 38) : undefined,
+			recentActivity: activity ? [snippet(activity, 42)] : [],
+			agentId: typeof d.agentId === "string" ? d.agentId : undefined,
+		},
+	];
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Store em memória (keyed por toolCallId)
+// Store em memória (keyed por toolCallId) + buffer rolante de activity
 
 const reg = new Map<string, LiveAgent[]>();
+/** Buffer rolante de activity keyed por `${toolCallId}#${index}` (fallback do painel). */
+const activityBuf = new Map<string, string[]>();
 
 export function setLiveAgents(toolCallId: string, agents: LiveAgent[]): void {
-	if (agents.length === 0) reg.delete(toolCallId);
-	else reg.set(toolCallId, agents);
+	if (agents.length === 0) {
+		reg.delete(toolCallId);
+		for (const k of activityBuf.keys()) if (k.startsWith(`${toolCallId}#`)) activityBuf.delete(k);
+		return;
+	}
+	// Acumula a activity de cada frame num buffer rolante por agent (o @tintinweb só dá 1 string
+	// por update) — vira o feed do fallback do painel quando o `.output` real ainda não existe.
+	for (const a of agents) {
+		const key = `${toolCallId}#${a.index}`;
+		const merged = mergeActivity(activityBuf.get(key) ?? [], a.recentActivity);
+		activityBuf.set(key, merged);
+		a.recentActivity = merged;
+	}
+	reg.set(toolCallId, agents);
 }
 export function clearLiveAgents(toolCallId: string): void {
 	reg.delete(toolCallId);
+	for (const k of activityBuf.keys()) if (k.startsWith(`${toolCallId}#`)) activityBuf.delete(k);
 }
 export function clearAllLiveAgents(): void {
 	reg.clear();
+	activityBuf.clear();
 }
 
 /** Todos os agents rodando agora (achatado), ordenados por index. */

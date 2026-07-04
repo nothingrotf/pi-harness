@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { clearMode, loadMode, saveMode } from "../src/mode-store.ts";
+import { clearMode, loadMode, renameModePointer, saveMode } from "../src/mode-store.ts";
 import { idleMode } from "../src/mode.ts";
 
 function tmp(): string {
@@ -45,4 +45,13 @@ test("loadMode: default phase 'run' quando ausente no ficheiro", () => {
 	fs.mkdirSync(path.join(d, ".harness", "runs"), { recursive: true });
 	fs.writeFileSync(path.join(d, ".harness", "runs", ".session.json"), JSON.stringify({ active: true, featureId: "x" }));
 	assert.equal(loadMode(d)?.phase, "run");
+});
+
+test("renameModePointer: ponteiro segue o rename do run; outro id fica intacto", () => {
+	const d = tmp();
+	saveMode(d, { active: true, featureId: "feat-old", phase: "run" });
+	renameModePointer(d, "feat-old", "feat-new");
+	assert.equal(loadMode(d)?.featureId, "feat-new");
+	renameModePointer(d, "feat-zzz", "feat-x"); // id que não é o do ponteiro → no-op
+	assert.equal(loadMode(d)?.featureId, "feat-new");
 });

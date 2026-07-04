@@ -7,7 +7,7 @@
  */
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Container, matchesKey, type SelectItem, SelectList, Spacer, Text } from "@earendil-works/pi-tui";
-import { frame, selectListTheme } from "./control-frame.ts";
+import { clipToWidth, frame, selectListTheme } from "./control-frame.ts";
 import type { ControlModel } from "./control-model.ts";
 import { ONBOARDING_TITLE, type ProposalChoice, PROPOSAL_OPTIONS, featureOnboardingLines, proposalSummaryLines } from "./proposal.ts";
 
@@ -27,7 +27,7 @@ export function showFeatureOnboarding(ctx: ExtensionContext): Promise<"continue"
 				try {
 					return container.render(w);
 				} catch (e) {
-					return [` ⚠ render error: ${(e as Error).message}`, " Esc / Ctrl+C"];
+					return [clipToWidth(` ⚠ render error: ${(e as Error).message}`, w), " Esc / Ctrl+C"];
 				}
 			},
 			invalidate: () => container.invalidate(),
@@ -100,7 +100,7 @@ export function showPlanProposal(ctx: ExtensionContext, input: { featureId: stri
 				try {
 					return container.render(w);
 				} catch (e) {
-					return [` ⚠ render error: ${(e as Error).message}`, " Esc / Ctrl+C"];
+					return [clipToWidth(` ⚠ render error: ${(e as Error).message}`, w), " Esc / Ctrl+C"];
 				}
 			},
 			invalidate: () => container.invalidate(),

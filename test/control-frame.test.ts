@@ -17,9 +17,23 @@ test("splitLineRender: justifica left/right na largura dada (space-between)", ()
 	assert.match(line, /^ left {9}right $/);
 });
 
-test("splitLineRender: gap mínimo 1 quando não cabe", () => {
+test("splitLineRender: NUNCA excede a largura — trunca o right quando não cabe", () => {
 	const line = splitLineRender("aaaaaa", "bbbbbb", 10, 1, len);
-	assert.match(line, /aaaaaa bbbbbb/, "ainda separa por ≥1 espaço");
+	assert.ok(line.length <= 10, `linha larga aborta o pi-tui (${line.length} > 10)`);
+	assert.match(line, /^ aaaaaa/, "left preservado; right é o truncado");
+});
+
+test("splitLineRender: regressão crash merge-gate — help+featureId largos num terminal estreito", () => {
+	// caso real: help 43 col + 'feature: precisamos-desenvolver-um-module-engine' (49 col) em w=82 → 94 col → uncaughtException
+	const help = "↑↓ navigate · Enter select · Esc leave open";
+	const featureId = "feature: precisamos-desenvolver-um-module-engine";
+	const line = splitLineRender(help, featureId, 82, 1, len);
+	assert.ok(line.length <= 82, `excedeu a largura (${line.length} > 82)`);
+	assert.match(line, /Esc leave open/, "help íntegro");
+	assert.match(line, /feature: /, "right truncado mas presente");
+	// left sozinho maior que a largura: trunca o left e omite o right
+	const tiny = splitLineRender(help, featureId, 20, 1, len);
+	assert.ok(tiny.length <= 20, `excedeu a largura mínima (${tiny.length} > 20)`);
 });
 
 test("tabRowText: ` │ ` separador, ativo destacado (estrutura)", () => {

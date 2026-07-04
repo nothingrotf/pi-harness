@@ -12,16 +12,28 @@
  * renderizam texto. Watcher live re-renderiza ao mudar os ficheiros do run. Conteúdo/strings
  * vêm dos módulos puros (control-model/control-rows/control-screen/control-draw).
  */
+import { spawn as spawnProcess } from "node:child_process";
 import type { ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 import { type Component, matchesKey, type SelectItem, SelectList, sliceByColumn, visibleWidth } from "@earendil-works/pi-tui";
-import { selectListTheme } from "./control-frame.ts";
+import { clipToWidth, selectListTheme } from "./control-frame.ts";
 import { drawMain, drawSub, mainLayout, subBodyRows } from "./control-draw.ts";
-import { type ControlView, type FooterItem, controlMidPos, footerItems } from "./control-screen.ts";
-import { type ControlModel, type RunState, formatDuration, readControlModel, stateLabel, stripParts, taskIcon } from "./control-model.ts";
+import { type ControlView, type FooterItem, controlMidPos, footerItems, openDirCommand } from "./control-screen.ts";
+import { type ControlModel, type ProgressEntry, type RunState, formatDuration, readControlModel, stateLabel, stripParts, taskIcon } from "./control-model.ts";
 import { type Watcher, watchRun } from "./control-watch.ts";
 import { splitLineRender, tabRowText, truncate, wrapText } from "./control-render.ts";
-import { type ActiveWorker, pickActiveWorker, type WorkerEntry, workerEntries } from "./control-worker.ts";
-import { readNativeWorkerEntries } from "./session-read.ts";
+import {
+	type ActiveWorker,
+	SESSION_DENSITY_DEFAULT,
+	cycleDensity,
+	entriesFromActivity,
+	pickActiveWorker,
+	readWorkerSession,
+	scrollOffset,
+	sessionWindow,
+	type WorkerEntry,
+	workerEntries,
+} from "./control-worker.ts";
+import { readAgentOutputEntries, readNativeWorkerEntries } from "./session-read.ts";
 import {
 	type Row,
 	type TaskFilter,
@@ -31,20 +43,26 @@ import {
 	coverageDisplayRows,
 	coverageSummary,
 	cycleFilter,
-	filterLabel,
 	handoffLines,
 	liveActiveWorkerText,
 	liveAgentRows,
+	parseNumbered,
 	progressLogLines,
 	taskDetailLines,
 	taskDisplayRows,
+	taskTabLabels,
+	taskWindow,
 	workerDisplayRows,
+	workerTabLabels,
 } from "./control-rows.ts";
 import { listLiveAgents } from "./live-agents.ts";
+import { hasWorkerClient, isRunActive, pauseRun, steerWorker } from "./run-registry.ts";
+import { runDir } from "./handoff.ts";
 import { type Paint, deliveryPanelLines } from "./delivery.ts";
 
-/** O caller (extensão) lida com `models` reabrindo o overlay depois do config. */
-export type ControlResult = { kind: "models" } | { kind: "close" };
+/** O caller (extensão) lida com `models` (reabre depois do config) e `resume` (dispara o runner
+ * via orchestrator — os 3 modos do start_mission_run: continue · restart · sessão específica). */
+export type ControlResult = { kind: "models" } | { kind: "close" } | { kind: "resume"; restartFeature?: boolean; resumeWorkerSessionId?: string };
 
 const TAB_VIEWS: ControlView[] = ["main", "tasks", "workers", "coverage", "delivery"];
 
@@ -86,10 +104,26 @@ export function showFeatureControl(ctx: ExtensionContext, featureId: string, opt
 			let detailExpanded = false;
 			let handoffWsid: string | undefined;
 			let handoffBack: ControlView = "workers";
+			// Session viewer (droid §7b "Worker Session"): worker gravado (wsid) OU live agent (idx);
+			// densidade `[`/`]` 1..5 (default 4) + scroll com follow-tail (offset null = colado ao fim).
+			let sessionWsid: string | undefined;
+			let sessionTaskId: string | undefined;
+			let sessionLiveIdx: number | undefined;
+			let density = SESSION_DENSITY_DEFAULT;
+			let sessOffset: number | null = null; // null = follow tail
+			let lastSessTotal = 0; // linhas totais da última render (p/ o scroll)
+			let lastSessCap = 1;
 			const sel = new Map<ControlView, number>();
 			let list: SelectList | undefined;
+			let lastRowCount = 0; // nº de rows da última list-view renderizada (p/ `G` = Bottom)
 
 			const listTheme = selectListTheme(theme);
+
+			// Steer mode (interrupt-and-chat do Droid §7b.4): input inline no footer → addUserMessage
+			// analog (steerWorker → client.prompt no worker VIVO). Notice = feedback transiente de ações.
+			let steerMode = false;
+			let steerBuffer = "";
+			let notice: string | undefined;
 
 			// Paleta mapeada ao tema (cap. 08 §9: accent = laranja; moldura = cinza neutro VISÍVEL).
 			// NB: `borderMuted` (= darkGray na maioria dos temas) some no fundo escuro — a moldura
@@ -101,8 +135,25 @@ export function showFeatureControl(ctx: ExtensionContext, featureId: string, opt
 			const deps = { border: borderC, widthOf: visibleWidth, clip: (s: string, w: number): string => sliceByColumn(s, 0, w, true) };
 
 			const footerLine = (v: ControlView): string => {
-				const items: FooterItem[] = footerItems(v);
-				return ` ${items.map((i) => `${accent(i.key)} ${dim(i.label)}`).join("   ")}`;
+				if (steerMode) return ` ${accentB("steer>")} ${theme.fg("text", steerBuffer)}${accent("▏")}  ${dim("Enter send · Esc cancel")}`;
+				const items: FooterItem[] = footerItems(v, { state: model?.state, runActive: isRunActive(featureId), steerable: hasWorkerClient(featureId) });
+				const base = ` ${items.map((i) => `${accent(i.key)} ${dim(i.label)}`).join("   ")}`;
+				return notice ? `${base}   ${theme.fg("warning", notice)}` : base;
+			};
+			/** O run pode ser (re)disparado? (sem run ativo no processo E estado retomável.) */
+			const canResume = (): boolean => !isRunActive(featureId) && (model?.state === "paused" || model?.state === "orchestrator_turn" || model?.state === "ready");
+			/** `O` = abre o dir do run no gestor de ficheiros (o "Open Mission Dir" do Droid). */
+			const openRunDir = (): void => {
+				const dir = runDir(ctx.cwd, featureId);
+				try {
+					const { cmd, argsFor } = openDirCommand(process.platform);
+					const child = spawnProcess(cmd, argsFor(dir), { detached: true, stdio: "ignore" });
+					child.unref();
+					child.on("error", () => {});
+					notice = `opened ${dir}`;
+				} catch (e) {
+					notice = `open failed: ${(e as Error).message}`;
+				}
 			};
 
 			// ── MAIN view: header band + barra + 2 colunas + Active Worker ────────────────
@@ -114,7 +165,7 @@ export function showFeatureControl(ctx: ExtensionContext, featureId: string, opt
 				const elapsed = m.activeMs !== null ? formatDuration(m.activeMs) : "";
 				const timePart = elapsed ? `${dim("Time")} ${theme.fg("muted", elapsed)}   ${dim("·")}   ` : "";
 				const right = `${timePart}${live ? theme.fg("success", "● Live") : dim(stateLabel(m.state))}`;
-				return splitLineRender(left, right, cols - 2, 1, visibleWidth);
+				return splitLineRender(left, right, cols - 2, 1, visibleWidth, clipToWidth);
 			};
 			const barLine = (cols: number, m: ControlModel): string => {
 				const barWidth = Math.max(10, Math.min(48, cols - 34));
@@ -145,53 +196,108 @@ export function showFeatureControl(ctx: ExtensionContext, featureId: string, opt
 						return "Waiting for a task to start…";
 				}
 			};
-			const leftColumn = (m: ControlModel, w: number, cap: number, activeId?: string): string[] => {
+			// ── LEFT column: o cartão Active Task COMPLETO (Droid §1a) — skill, milestone?, Preconditions,
+			// Expected Behavior e Description (parser K2H). A lista de Tasks foi pra coluna DIREITA.
+			const leftCard = (m: ControlModel, w: number, cap: number, activeId?: string): string[] => {
 				const out: string[] = [];
-				out.push(` ${accentB("Active Task")}`);
-				const liveTask = !m.active && activeId ? m.tasks.find((t) => t.id === activeId) : undefined;
-				if (m.active) {
-					const head = m.active.kind === "ship-gate" ? `ship gate: ${m.active.skillName.replace("harness-", "")}` : `[${m.active.id}] ${m.active.label}`;
-					out.push(`   ${truncate(head, w - 3)}`);
-					const meta = `skill ${m.active.skillName.replace("harness-", "")}${m.active.fulfills.length ? ` · fulfills ${m.active.fulfills.join(", ")}` : ""}`;
-					out.push(dim(`   ${truncate(meta, w - 3)}`));
-				} else if (liveTask) {
-					out.push(`   ${truncate(`[${liveTask.id}] ${liveTask.description}`, w - 3)}`);
-					out.push(dim(`   ${truncate(`skill ${liveTask.skillName}${liveTask.fulfills.length ? ` · fulfills ${liveTask.fulfills.join(", ")}` : ""}`, w - 3)}`));
-				} else {
+				const a = m.active;
+				const t = activeId ? m.tasks.find((x) => x.id === activeId) : undefined;
+				const idText = a?.id ?? t?.id ?? "—";
+				out.push(` ${accentB("Active Task")}  ${dim(truncate(idText, Math.max(0, w - 15)))}`);
+				if (!a && !t) {
+					out.push("");
 					out.push(dim(`   ${truncate(activeEdge(m), w - 3)}`));
+					return out.slice(0, cap);
 				}
 				out.push("");
-				out.push(` ${accentB(`Tasks (${m.tasksDone}/${m.tasksTotal})`)}`);
-				const room = Math.max(0, cap - out.length);
-				const shown = m.tasks.slice(0, room);
-				for (const t of shown) {
-					const plain = `  ${taskIcon(t.status)} ${t.id}  ${t.description}`;
-					if (t.active || t.id === activeId) {
-						out.push(theme.inverse(truncate(plain, w).padEnd(w)));
-					} else {
-						const rest = truncate(` ${t.id}  ${t.description}`, w - 4);
-						out.push(`  ${theme.fg(iconColor(t.status), taskIcon(t.status))}${rest}`);
+				if (a?.kind === "ship-gate") out.push(`   ${truncate(`ship gate: ${a.skillName.replace("harness-", "")}`, w - 3)}`);
+				const skill = (a?.skillName ?? t?.skillName)?.replace("harness-", "");
+				if (skill) out.push(`${dim("   skill")} ${theme.fg("text", truncate(skill, Math.max(0, w - 11)))}`);
+				// milestone: condicional (tasks do pi normalmente não têm — mantém a estrutura 1:1 do Droid).
+				const milestone = (t as unknown as { milestone?: string } | undefined)?.milestone;
+				if (milestone) out.push(`${dim("   milestone")} ${theme.fg("text", truncate(milestone, Math.max(0, w - 15)))}`);
+				const fulfills = a?.fulfills ?? t?.fulfills ?? [];
+				if (fulfills.length) out.push(dim(`   fulfills ${truncate(fulfills.join(", "), Math.max(0, w - 13))}`));
+				const section = (title: string, items?: string[]): void => {
+					if (!items || items.length === 0) return;
+					out.push("");
+					out.push(` ${accentB(title)}`);
+					for (const it of items.slice(0, 3)) out.push(dim(`   · ${truncate(it, w - 5)}`));
+					if (items.length > 3) out.push(theme.fg("muted", `   +${items.length - 3} more`));
+				};
+				section("Preconditions", t?.preconditions);
+				section("Expected Behavior", t?.expectedBehavior);
+				if (t?.description) {
+					out.push("");
+					out.push(` ${accentB("Description")}`);
+					for (const d of parseNumbered(t.description).slice(0, 4)) {
+						if (d.number) out.push(`   ${theme.fg("muted", `(${d.number})`)} ${theme.fg("text", truncate(d.text, Math.max(0, w - 8)))}`);
+						else for (const wl of wrapText(d.text, Math.max(1, w - 4), 1)) out.push(`   ${theme.fg("text", wl)}`);
 					}
 				}
-				const more = m.tasks.length - shown.length;
-				if (more > 0) out.push(dim(`  +${more} more`));
+				return out.slice(0, cap);
+			};
+			// Uma row da lista de Tasks (col. direita) — vídeo-invertida na ativa (Droid §1b).
+			const taskRowLine = (t: ControlModel["tasks"][number], w: number, activeId?: string): string => {
+				const plain = `  ${taskIcon(t.status)} ${t.id}  ${t.description}`;
+				if (t.active || t.id === activeId) return theme.inverse(truncate(plain, w).padEnd(w));
+				const rest = truncate(` ${t.id}  ${t.description}`, w - 4);
+				return `  ${theme.fg(iconColor(t.status), taskIcon(t.status))}${rest}`;
+			};
+			// Uma entry do Progress Log com segmentos coloridos (o Enu): rel dim + segmentos, corta a `w`.
+			const logLineColored = (e: ProgressEntry, w: number): string => {
+				const relS = (e.rel || "·").padStart(8);
+				let used = relS.length + 2;
+				let out = `${dim(relS)}  `;
+				const segs = e.segments && e.segments.length ? e.segments : [{ text: e.text, tone: "dim" as const }];
+				for (const s of segs) {
+					if (used >= w) break;
+					const room = w - used;
+					const txt = s.text.length > room ? truncate(s.text, room) : s.text;
+					out += theme.fg(s.tone, txt);
+					used += txt.length;
+				}
 				return out;
 			};
-			const rightColumn = (m: ControlModel, w: number, cap: number): string[] => {
-				const log = progressLogLines(m, Math.max(1, cap - 1), w - 1);
-				const out: string[] = [` ${accentB(`Progress Log${log.range ? `   (${log.range})` : ""}`)}`];
-				for (const l of log.lines) out.push(dim(` ${truncate(l, w - 1)}`));
-				return out;
+			// ── RIGHT column: Tasks list + divisor `cnu` + Progress Log (Droid §1b). Devolve o array e o
+			// índice do divisor (`dividerAt`) pra drawMain virar a metade direita em régua `├──┤` ali.
+			const rightSplit = (m: ControlModel, w: number, bodyRows: number, activeId?: string): { right: string[]; dividerAt?: number } => {
+				const tasksHeader = splitLineRender(accentB("Tasks"), dim(`${m.tasksDone}/${m.tasksTotal}`), w, 1, visibleWidth, clipToWidth);
+				// Scroll AUTOMÁTICO: janela em torno da task ATIVA (segue o worker) em vez do head-slice fixo
+				// — era o que sumia a task 9 ("+4 more" sem mostrar a corrente). header+blank consomem 2 linhas.
+				const ftBudget = Math.max(3, Math.floor(bodyRows * 0.5));
+				const activeIdx = activeId ? m.tasks.findIndex((t) => t.id === activeId) : -1;
+				const win = taskWindow(m.tasks.length, activeIdx >= 0 ? activeIdx : 0, Math.max(1, ftBudget - 2));
+				const taskLines: string[] = [];
+				if (win.above > 0) taskLines.push(dim(`  ↑ ${win.above} more`));
+				for (let i = win.start; i < win.start + win.count; i++) taskLines.push(taskRowLine(m.tasks[i], w, activeId));
+				if (win.below > 0) taskLines.push(dim(`  +${win.below} more`));
+				const tasksBlock = [tasksHeader, "", ...taskLines];
+				if (bodyRows < 5) return { right: tasksBlock.slice(0, bodyRows) }; // tela curta: só tasks, sem divisor
+				let ftRows = tasksBlock.length;
+				if (ftRows > bodyRows - 2) ftRows = Math.max(1, bodyRows - 2);
+				const logRows = Math.max(1, bodyRows - ftRows - 1);
+				const logView = progressLogLines(m, Math.max(1, logRows - 1), w - 1);
+				const logHeader = splitLineRender(accentB("Progress Log"), logView.range ? dim(logView.range) : "", w, 1, visibleWidth, clipToWidth);
+				const logLines = logView.entries.length ? logView.entries.map((e) => logLineColored(e, w - 1)) : [dim(" (no progress entries yet)")];
+				const logBlock = [logHeader, ...logLines];
+				const right: string[] = [];
+				for (let k = 0; k < bodyRows; k++) {
+					if (k < ftRows) right.push(tasksBlock[k] ?? "");
+					else if (k === ftRows) right.push(""); // placeholder do divisor (ignorado pelo drawMain)
+					else right.push(logBlock[k - ftRows - 1] ?? "");
+				}
+				return { right, dividerAt: ftRows };
 			};
 			// Banda Active Worker (cap. 08a) — mini-transcript AO VIVO do único worker running/paused:
 			// título (#N · id · Duration) + linha em branco + entries (mensagem/tool, 2 linhas cada).
 			const renderEntry = (e: WorkerEntry, w: number): string[] => {
 				if (e.kind === "message") {
 					const glyph = e.role === "user" ? ">" : e.role === "assistant" ? "⛬" : "●";
-					const gtone = e.role === "system" ? "secondary" : "accent";
+					const gtone = e.role === "system" ? "muted" : "accent";
 					const body = wrapText(e.text ?? "", Math.max(1, w - 4), 2);
-					const l1 = ` ${theme.bold(theme.fg(gtone, glyph))} ${theme.fg("secondary", body[0] ?? "")}`;
-					return body[1] ? [l1, `   ${theme.fg("secondary", body[1])}`] : [l1, ""];
+					const l1 = ` ${theme.bold(theme.fg(gtone, glyph))} ${theme.fg("text", body[0] ?? "")}`;
+					return body[1] ? [l1, `   ${theme.fg("text", body[1])}`] : [l1, ""];
 				}
 				const label = e.toolName ?? "tool";
 				const params = truncate(e.params ?? "", Math.max(0, w - label.length - 4));
@@ -202,6 +308,42 @@ export function showFeatureControl(ctx: ExtensionContext, featureId: string, opt
 					return [l1, `   ${theme.fg(tone, marker)} ${theme.fg(tone, truncate(e.result.replace(/\s+/g, " ").trim(), Math.max(0, w - 5)))}`];
 				}
 				return [l1, ""];
+			};
+			// Entry com DENSIDADE (session viewer, droid §7b.3): d = linhas máx por entry (1..5).
+			// d=1 → só a headline; mensagens embrulham até d linhas; tools = headline + result até d−1.
+			const renderEntryDense = (e: WorkerEntry, w: number, d: number): string[] => {
+				if (e.kind === "message") {
+					const glyph = e.role === "user" ? ">" : e.role === "assistant" ? "⛬" : "●";
+					const gtone = e.role === "system" ? "muted" : "accent";
+					const body = wrapText(e.text ?? "", Math.max(1, w - 4), d);
+					const out = [` ${theme.bold(theme.fg(gtone, glyph))} ${theme.fg("text", body[0] ?? "")}`];
+					for (const b of body.slice(1, d)) out.push(`   ${theme.fg("text", b)}`);
+					return out;
+				}
+				const label = e.toolName ?? "tool";
+				const params = truncate(e.params ?? "", Math.max(0, w - label.length - 4));
+				const out = [` ${theme.bold(theme.fg("accent", label))}  ${dim(params)}`];
+				if (d > 1 && e.result && e.result.trim()) {
+					const marker = e.isError ? "✗" : "→";
+					const tone = e.isError ? "error" : "muted";
+					const wrapped = wrapText(e.result.replace(/\s+/g, " ").trim(), Math.max(1, w - 5), d - 1);
+					out.push(`   ${theme.fg(tone, marker)} ${theme.fg(tone, wrapped[0] ?? "")}`);
+					for (const b of wrapped.slice(1, d - 1)) out.push(`     ${theme.fg(tone, b)}`);
+				}
+				return out;
+			};
+			/** Entries do worker escolhido no session viewer (gravado → sessão em disco; live → .output). */
+			const sessionEntries = (): WorkerEntry[] => {
+				if (sessionLiveIdx !== undefined) {
+					const la = listLiveAgents()[sessionLiveIdx];
+					const native = readAgentOutputEntries(ctx.cwd, ctx.sessionManager?.getSessionId?.(), la?.agentId);
+					if (native && native.length > 0) return native;
+					return la?.recentActivity?.length ? entriesFromActivity(la.recentActivity) : [];
+				}
+				if (!sessionWsid || sessionWsid === "—") return [];
+				const native = readNativeWorkerEntries(ctx.cwd, featureId, sessionWsid);
+				if (native && native.length > 0) return native;
+				return readWorkerSession(ctx.cwd, featureId, sessionWsid);
 			};
 			const buildWorkerBand = (aw: ActiveWorker, workerRows: number, w: number): string[] => {
 				const sA = Math.max(0, workerRows - 2);
@@ -217,16 +359,30 @@ export function showFeatureControl(ctx: ExtensionContext, featureId: string, opt
 					if (aw.tokens) stats.push(`${aw.tokens >= 1000 ? `${Math.round(aw.tokens / 1000)}k` : aw.tokens} tokens`);
 					right = dim(stats.join(" · ") || "live");
 				}
-				const head: string[] = [splitLineRender(left, right, w, 1, visibleWidth), ""];
+				const head: string[] = [splitLineRender(left, right, w, 1, visibleWidth, clipToWidth), ""];
 				if (sA <= 0) return head.slice(0, workerRows);
-				// Caminho NATIVO primeiro (pi 0.80.3 get_entries via SessionManager/parseSessionEntries),
-				// com fallback ao nosso parser/activity quando indisponível ou vazio (mapa de casos).
-				const native = aw.source === "session" && aw.wsid ? readNativeWorkerEntries(ctx.cwd, featureId, aw.wsid) : null;
+				// Caminho NATIVO — a transcript REAL, o análogo do tcT/dG0 do 08a: headless → o jsonl da sessão
+				// do worker (runs/<id>/sessions via pi 0.80.3 parseSessionEntries); in-session subagent
+				// (@tintinweb) → o `.output` JSONL que ele streama (localizado por agentId + a sessão-pai).
+				// Fallback ao buffer de activity quando indisponível/vazio (1º frame, antes do .output existir).
+				let native: WorkerEntry[] | null = null;
+				if (aw.source === "session" && aw.wsid) native = readNativeWorkerEntries(ctx.cwd, featureId, aw.wsid);
+				else if (aw.source === "live" && aw.agentId) native = readAgentOutputEntries(ctx.cwd, ctx.sessionManager?.getSessionId?.(), aw.agentId);
 				const entries = native && native.length > 0 ? native : workerEntries(ctx.cwd, featureId, aw);
 				const maxItems = Math.max(1, Math.floor(sA / 2));
 				const content: string[] = [];
 				for (const e of entries.slice(-maxItems)) content.push(...renderEntry(e, w));
-				if (entries.length === 0) content.push(dim("   (no worker activity yet)"));
+				if (entries.length === 0) {
+					// Sem transcript ao vivo (o `.output` do @tintinweb ainda não existe — 1º frame — e sem
+					// buffer de activity): mostra um sinal HONESTO de que o worker está trabalhando
+					// (tool atual + counts) em vez do beco "(no worker activity yet)".
+					const parts: string[] = [];
+					if (aw.currentTool) parts.push(aw.currentTool);
+					if (aw.toolCount) parts.push(`${aw.toolCount} tool${aw.toolCount === 1 ? "" : "s"}`);
+					if (aw.tokens) parts.push(`${aw.tokens >= 1000 ? `${Math.round(aw.tokens / 1000)}k` : aw.tokens} tokens`);
+					const hint = parts.length ? `working — ${parts.join(" · ")}` : aw.status === "paused" ? "paused" : "working… (logs stream in the native subagent view)";
+					content.push(` ${theme.bold(theme.fg("accent", "⛬"))} ${theme.fg("muted", truncate(hint, Math.max(0, w - 4)))}`);
+				}
 				while (content.length < sA) content.push("");
 				if (content.length > sA) content.length = sA;
 				return [...head, ...content];
@@ -241,7 +397,7 @@ export function showFeatureControl(ctx: ExtensionContext, featureId: string, opt
 				accentB,
 				width: visibleWidth,
 				truncate,
-				split: (l, r, w, px) => splitLineRender(l, r, w, px, visibleWidth),
+				split: (l, r, w, px) => splitLineRender(l, r, w, px, visibleWidth, clipToWidth),
 				rule: (n) => ` ${borderC("─".repeat(Math.max(0, n - 2)))}`,
 			};
 
@@ -256,11 +412,14 @@ export function showFeatureControl(ctx: ExtensionContext, featureId: string, opt
 				};
 				return sl;
 			};
-			const filterRow = (filters: readonly string[], active: string): string => `${tabRowText(theme, filters.map(filterLabel), filters.indexOf(active))}   ${dim("(T cycles)")}`;
+			// Tab-row com contagem por filtro (o `All (8) │ Pending (3)` do Droid §3). labels já vêm contados.
+			const countedFilterRow = (labels: string[], activeIdx: number): string => `${tabRowText(theme, labels, activeIdx)}   ${dim("(T cycles)")}`;
 			const colorBlock = (lines: string[]): string[] =>
 				lines.map((l) => {
 					if (l === "") return "";
 					if (/^\S/.test(l)) return accentB(l);
+					// Handoff: severidade `[blocking]` em VERMELHO (o tnu do Droid §8); demais avisos em warning.
+					if (l.includes("[blocking]")) return theme.fg("error", l);
 					if (l.includes("⚠")) return theme.fg("warning", l);
 					return l;
 				});
@@ -284,47 +443,81 @@ export function showFeatureControl(ctx: ExtensionContext, featureId: string, opt
 					// subagent vivo — mantém o painel Active Task e a row realçada coerentes com o worker.
 					const liveId = liveAgents[0]?.taskId;
 					const activeId = m.active?.id ?? (liveId && liveId !== "—" ? liveId : undefined);
-					const left = leftColumn(m, leftW, bodyRows, activeId);
-					const right = rightColumn(m, rightW, bodyRows);
+					const left = leftCard(m, leftW, bodyRows, activeId);
+					const { right, dividerAt } = rightSplit(m, rightW, bodyRows, activeId);
 					const band = aw && workerRows > 0 ? buildWorkerBand(aw, workerRows, cols - 2) : [];
-					return drawMain(cols, rows, { header: headerLine(cols, m), bar: barLine(cols, m), left, right, worker: band, footer: footerLine("main"), midPos }, deps);
+					return drawMain(cols, rows, { header: headerLine(cols, m), bar: barLine(cols, m), left, right, worker: band, footer: footerLine("main"), midPos, rightDivider: dividerAt }, deps);
 				}
 
+				// Chrome PERSISTENTE (look inset 1:1, Droid §2): título + barra do Feature Control por cima
+				// de cada sub-view — ele renderiza DENTRO da moldura, não como caixa separada.
+				const chrome = { header: headerLine(cols, m), bar: barLine(cols, m) };
 				if (view === "task_detail" && detailTaskId) {
 					const body = colorBlock(taskDetailLines(m, detailTaskId, detailExpanded)).map((l) => ` ${l}`);
-					return drawSub(cols, rows, { headerRows: [` ${accentB(`Task ${detailTaskId}`)}`], body, footer: footerLine("task_detail") }, deps);
+					return drawSub(cols, rows, { chrome, headerRows: [` ${accentB(`Task ${detailTaskId}`)}`], body, footer: footerLine("task_detail") }, deps);
 				}
 				if (view === "handoff" && handoffWsid) {
 					const body = colorBlock(handoffLines(m, handoffWsid)).map((l) => ` ${l}`);
-					return drawSub(cols, rows, { headerRows: [` ${accentB("Worker Handoff")}`], body, footer: footerLine("handoff") }, deps);
+					return drawSub(cols, rows, { chrome, headerRows: [` ${accentB("Worker Handoff")}`], body, footer: footerLine("handoff") }, deps);
+				}
+				if (view === "session") {
+					// Worker Session viewer (droid §7b): header rico + transcript com densidade + follow-tail.
+					const w = cols - 4;
+					const live = sessionLiveIdx !== undefined ? listLiveAgents()[sessionLiveIdx] : undefined;
+					const wk = m.workers.find((x) => x.workerSessionId === (sessionWsid ?? "") && (!sessionTaskId || x.taskId === sessionTaskId)) ?? m.workers.find((x) => x.taskId === sessionTaskId);
+					const sid = live ? (live.agentId ?? "live") : (sessionWsid ?? "—");
+					const status = live ? "running" : (wk?.status ?? "—");
+					const durMs = live ? undefined : wk?.durationMs;
+					const info: string[] = [`${dim("Session")} ${theme.fg("text", shortId(sid))}`, `${dim("Task")} ${theme.fg("text", sessionTaskId ?? wk?.taskId ?? "—")}`, `${dim("Status")} ${theme.fg(status === "running" ? "success" : "muted", String(status))}`];
+					if (durMs !== undefined) info.push(`${dim("Duration")} ${theme.fg("muted", formatDuration(durMs) || "0s")}`);
+					const entries = sessionEntries();
+					const flat: string[] = [];
+					for (const e of entries) flat.push(...renderEntryDense(e, w, density));
+					const headerRows = [` ${accentB("Worker Session")}`, ` ${info.join("   ")}`];
+					const cap = subBodyRows(rows, headerRows.length, true);
+					lastSessTotal = flat.length;
+					lastSessCap = cap;
+					const win = sessionWindow(flat.length, sessOffset, cap);
+					const tail = win.follow ? theme.fg("success", "● tail") : theme.fg("warning", "↑ scrolled");
+					headerRows[1] += `   ${dim(`density ${density}`)}   ${tail}${win.range ? `   ${dim(win.range)}` : ""}`;
+					let body: string[];
+					if (flat.length === 0) {
+						// empty-state ladder (droid §7b.6): sem sessão → sem transcript → a caminho.
+						const why = live ? "transcript not written yet — the live stream lands on turn end" : !sessionWsid || sessionWsid === "—" ? "no session recorded for this worker" : "transcript not available (session file missing)";
+						body = ["", dim(`  (${why})`)];
+					} else {
+						body = flat.slice(win.start, win.start + win.count);
+					}
+					return drawSub(cols, rows, { chrome, headerRows, body, footer: footerLine("session") }, deps);
 				}
 				if (view === "delivery") {
 					// Render rico read-only: badge de estado, issue, branch, CI em chips coloridos, barra de fix-loop, merge.
-					return drawSub(cols, rows, { headerRows: [` ${accent("⛬")} ${accentB("Delivery")}`], body: deliveryPanelLines(m.delivery, deliveryPaint, cols - 2), footer: footerLine("delivery") }, deps);
+					return drawSub(cols, rows, { chrome, headerRows: [` ${accent("⛬")} ${accentB("Delivery")}`], body: deliveryPanelLines(m.delivery, deliveryPaint, cols - 2), footer: footerLine("delivery") }, deps);
 				}
 
-				// list views: tasks / workers / coverage
+				// list views: tasks / workers / coverage — tabs com contagem (Droid §3).
 				let headerRows: string[];
 				let rows0: Row[];
 				if (view === "tasks") {
-					headerRows = [` ${accentB(`Tasks (${m.tasks.length})`)}`, ` ${filterRow(TASK_FILTERS, taskFilter)}`];
+					headerRows = [` ${accentB(`Tasks (${m.tasks.length})`)}`, ` ${countedFilterRow(taskTabLabels(m), TASK_FILTERS.indexOf(taskFilter))}`];
 					rows0 = taskDisplayRows(m, taskFilter);
 				} else if (view === "workers") {
 					// Prepend os workers AO VIVO (subagents rodando, sem handoff ainda) — só nos filtros
 					// que mostram ativos (All/Active). Era a causa do "agent não aparece no control".
 					const live = listLiveAgents();
 					const liveRows = workerFilter === "all" || workerFilter === "active" ? liveAgentRows(live) : [];
-					headerRows = [` ${accentB(`Workers (${m.workers.length + liveRows.length})`)}`, ` ${filterRow(WORKER_FILTERS, workerFilter)}`];
+					headerRows = [` ${accentB(`Workers (${m.workers.length + liveRows.length})`)}`, ` ${countedFilterRow(workerTabLabels(m, live.length), WORKER_FILTERS.indexOf(workerFilter))}`];
 					rows0 = [...liveRows, ...workerDisplayRows(m, workerFilter)];
 				} else {
 					headerRows = [` ${accentB(`Coverage (${coverageSummary(m)})`)}`, ` ${dim("assertion → task → status")}`];
 					rows0 = coverageDisplayRows(m);
 				}
-				const bodyRows = subBodyRows(rows, headerRows.length);
+				lastRowCount = rows0.length;
+				const bodyRows = subBodyRows(rows, headerRows.length, true);
 				list = buildList(view, rows0, bodyRows);
 				wireSelect(view, rows0);
 				const lines = list.render(Math.max(4, cols - 4)).map((l) => ` ${l}`);
-				return drawSub(cols, rows, { headerRows, body: lines, footer: footerLine(view) }, deps);
+				return drawSub(cols, rows, { chrome, headerRows, body: lines, footer: footerLine(view) }, deps);
 			};
 
 			// onSelect (Enter numa lista): SÓ muta estado; o re-render acontece FORA do handleInput.
@@ -337,11 +530,21 @@ export function showFeatureControl(ctx: ExtensionContext, featureId: string, opt
 						view = "task_detail";
 					};
 				} else if (v === "workers") {
+					// Enter = SESSION VIEWER (droid §7b) — tanto pro worker gravado (sessão em disco) quanto
+					// pro live agent (.output do @tintinweb). `h` continua a abrir o handoff direto.
 					list.onSelect = (it) => {
-						if (it.value.startsWith("live__")) return; // worker ao vivo: ainda sem handoff em disco
-						handoffWsid = it.value.split("__")[0];
-						handoffBack = "workers";
-						view = "handoff";
+						if (it.value.startsWith("live__")) {
+							sessionLiveIdx = Number(it.value.slice("live__".length)) || 0;
+							sessionWsid = undefined;
+							sessionTaskId = listLiveAgents()[sessionLiveIdx]?.taskId;
+						} else {
+							const [wsid, taskId] = it.value.split("__");
+							sessionWsid = wsid;
+							sessionTaskId = taskId;
+							sessionLiveIdx = undefined;
+						}
+						sessOffset = null; // abre colado ao fim (follow-tail)
+						view = "session";
 					};
 				} else if (v === "coverage") {
 					list.onSelect = (it) => {
@@ -378,11 +581,13 @@ export function showFeatureControl(ctx: ExtensionContext, featureId: string, opt
 			const component: Component & { handleInput(data: string): void } = {
 				render: (width: number): string[] => {
 					try {
+						// cols tem piso 20 p/ layout estável, mas o retorno é SEMPRE clipado a `width`
+						// (o pi-tui aborta em linha > width; terminal < 20 col crashava deterministicamente).
 						const cols = Math.max(20, width);
 						const rows = Math.max(12, tui.terminal.rows);
-						return renderScreen(cols, rows);
+						return renderScreen(cols, rows).map((l) => clipToWidth(l, width));
 					} catch (e) {
-						return [` ⚠ Feature Control render error: ${(e as Error).message}`, " Esc / Ctrl+C to close"];
+						return [clipToWidth(` ⚠ Feature Control render error: ${(e as Error).message}`, width), " Esc / Ctrl+C to close"];
 					}
 				},
 				invalidate: (): void => {
@@ -390,6 +595,29 @@ export function showFeatureControl(ctx: ExtensionContext, featureId: string, opt
 				},
 				handleInput: (data: string): void => {
 					try {
+						// Steer mode captura TUDO (input de texto) até Enter/Esc.
+						if (steerMode) {
+							if (matchesKey(data, "escape")) {
+								steerMode = false;
+								steerBuffer = "";
+							} else if (matchesKey(data, "enter") || matchesKey(data, "return")) {
+								const text = steerBuffer.trim();
+								steerMode = false;
+								steerBuffer = "";
+								if (text) {
+									notice = "steering…";
+									void steerWorker(featureId, text).then((r) => {
+										notice = r === "sent" ? "✓ sent to the live worker" : r === "no_worker" ? "no live worker" : "worker wire refused (try between turns)";
+										tui.requestRender();
+									});
+								}
+							} else if (matchesKey(data, "backspace")) {
+								steerBuffer = steerBuffer.slice(0, -1);
+							} else if (data >= " " && !data.startsWith("\x1b")) {
+								steerBuffer += data;
+							}
+							return tui.requestRender();
+						}
 						if (matchesKey(data, "ctrl+t") || matchesKey(data, "ctrl+c")) return finish({ kind: "close" });
 						const esc = matchesKey(data, "escape") || matchesKey(data, "q");
 						const tab = matchesKey(data, "tab");
@@ -403,7 +631,23 @@ export function showFeatureControl(ctx: ExtensionContext, featureId: string, opt
 							else if (matchesKey(data, "w")) view = "workers";
 							else if (matchesKey(data, "c")) view = "coverage";
 							else if (matchesKey(data, "d")) view = "delivery";
-							else return;
+							else if (matchesKey(data, "o")) openRunDir();
+							else if (matchesKey(data, "p")) {
+								// Pause graceful (tecla P do Droid): aborta o run ativo — o runner persiste paused e o
+								// worker é interrompido RETENDO o transcript; o watcher re-renderiza do disco.
+								notice = pauseRun(featureId) ? "pausing… (worker interrupted, transcript retained)" : "no active run to pause";
+							} else if (matchesKey(data, "shift+r")) {
+								if (canResume()) return finish({ kind: "resume", restartFeature: true });
+								notice = isRunActive(featureId) ? "run already active" : "nothing to restart";
+							} else if (matchesKey(data, "r")) {
+								if (canResume()) return finish({ kind: "resume" });
+								notice = isRunActive(featureId) ? "run already active" : "nothing to resume";
+							} else if (matchesKey(data, "s")) {
+								if (hasWorkerClient(featureId)) {
+									steerMode = true;
+									steerBuffer = "";
+								} else notice = "no live worker to steer";
+							} else return;
 							return tui.requestRender();
 						}
 						if (view === "delivery") {
@@ -434,6 +678,32 @@ export function showFeatureControl(ctx: ExtensionContext, featureId: string, opt
 							else return;
 							return tui.requestRender();
 						}
+						if (view === "session") {
+							// Worker Session viewer (droid §7b): scroll+follow-tail, densidade, steer, handoff.
+							if (esc) view = "workers";
+							else if (matchesKey(data, "up") || matchesKey(data, "k")) sessOffset = scrollOffset(lastSessTotal, sessOffset, lastSessCap, -1);
+							else if (matchesKey(data, "down") || matchesKey(data, "j")) sessOffset = scrollOffset(lastSessTotal, sessOffset, lastSessCap, 1);
+							else if (matchesKey(data, "pageUp")) sessOffset = scrollOffset(lastSessTotal, sessOffset, lastSessCap, -lastSessCap);
+							else if (matchesKey(data, "pageDown")) sessOffset = scrollOffset(lastSessTotal, sessOffset, lastSessCap, lastSessCap);
+							else if (matchesKey(data, "g") && !matchesKey(data, "shift+g")) sessOffset = lastSessTotal > lastSessCap ? 0 : null;
+							else if (matchesKey(data, "shift+g") || matchesKey(data, "end")) sessOffset = null;
+							else if (data === "[") density = cycleDensity(density, -1);
+							else if (data === "]") density = cycleDensity(density, 1);
+							else if (matchesKey(data, "s")) {
+								if (hasWorkerClient(featureId)) {
+									steerMode = true;
+									steerBuffer = "";
+								} else notice = "no live worker to steer";
+							} else if (matchesKey(data, "h")) {
+								const wsid = sessionWsid && sessionWsid !== "—" ? sessionWsid : undefined;
+								if (wsid && model?.handoffsRaw.some((x) => x.workerSessionId === wsid)) {
+									handoffWsid = wsid;
+									handoffBack = "session";
+									view = "handoff";
+								} else notice = "no handoff recorded for this session yet";
+							} else return;
+							return tui.requestRender();
+						}
 
 						// list views: tasks / workers / coverage
 						if (esc) view = "main";
@@ -452,6 +722,21 @@ export function showFeatureControl(ctx: ExtensionContext, featureId: string, opt
 								handoffBack = "workers";
 								view = "handoff";
 							} else return;
+						} else if (matchesKey(data, "r") && view === "workers") {
+							// `r` = resume DAQUELA sessão (o resumeWorkerSessionId do start_mission_run) —
+							// "selecionar o worker e fazer ele voltar".
+							const it = list?.getSelectedItem();
+							const wsid = it && !it.value.startsWith("live__") ? it.value.split("__")[0] : undefined;
+							if (wsid && !isRunActive(featureId)) return finish({ kind: "resume", resumeWorkerSessionId: wsid });
+							notice = isRunActive(featureId) ? "run already active" : "select a recorded worker session";
+						} else if (matchesKey(data, "g")) {
+							// g = Top (Droid §9); G = Bottom. SelectList não tem home/end nativo — setSelectedIndex.
+							list?.setSelectedIndex(0);
+							sel.set(view, 0);
+						} else if (matchesKey(data, "shift+g")) {
+							const last = Math.max(0, lastRowCount - 1);
+							list?.setSelectedIndex(last);
+							sel.set(view, last);
 						} else if (isNavKey(data)) {
 							list?.handleInput(data);
 							return tui.requestRender();

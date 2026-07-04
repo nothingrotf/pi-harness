@@ -9,10 +9,13 @@
  * lógica de dados/strings é pura (control-model.ts / runs.ts).
  */
 import { DynamicBorder, type Theme } from "@earendil-works/pi-coding-agent";
-import { type Component, Container, type SelectListTheme, Spacer, Text, visibleWidth } from "@earendil-works/pi-tui";
+import { type Component, Container, type SelectListTheme, sliceByColumn, Spacer, Text, visibleWidth } from "@earendil-works/pi-tui";
 import { rangeLabel, splitLineRender, tabRowText } from "./control-render.ts";
 
 export { rangeLabel, tabRowText } from "./control-render.ts";
+
+/** Clip ANSI-safe p/ truncar linhas à largura do terminal (o pi-tui aborta em linha larga). */
+export const clipToWidth = (s: string, w: number): string => sliceByColumn(s, 0, Math.max(0, w), true);
 
 /** Tema padrão das SelectList do harness (mesmo visual do readiness/model-config). */
 export function selectListTheme(theme: Theme): SelectListTheme {
@@ -44,7 +47,7 @@ export class SplitLine implements Component {
 	}
 	invalidate(): void {}
 	render(width: number): string[] {
-		return [splitLineRender(this.left, this.right, width, this.padX, visibleWidth)];
+		return [splitLineRender(this.left, this.right, width, this.padX, visibleWidth, clipToWidth)];
 	}
 }
 
