@@ -6,7 +6,7 @@
  */
 import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { type EndFeatureRunPayload, recordHandoff } from "./handoff.ts";
+import { type EndFeatureRunPayload, readHandoffExact, recordHandoff } from "./handoff.ts";
 
 const Issue = Type.Object({
 	severity: Type.Union([Type.Literal("blocking"), Type.Literal("non_blocking"), Type.Literal("suggestion")]),
@@ -60,6 +60,15 @@ export function registerEndFeatureRunTool(pi: ExtensionAPI): void {
 			parameters: PARAMS,
 			async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
 				const { featureId, ...rest } = params as { featureId: string } & EndFeatureRunPayload;
+				// "Call exactly once" É enforçado: um segundo call da MESMA sessão flipava o outcome que o
+				// runner lê (last-write-wins) e duplicava task_completed/task_failed no progress_log.
+				const dup = readHandoffExact(ctx.cwd, featureId, rest.taskId, rest.workerSessionId);
+				if (dup) {
+					return {
+						content: [{ type: "text", text: `Handoff already recorded for this session (${dup.successState}) — EndFeatureRun is once-only. End your turn now.` }],
+						details: { error: "duplicate_handoff", successState: dup.successState },
+					};
+				}
 				const file = recordHandoff(ctx.cwd, featureId, rest as EndFeatureRunPayload);
 				return {
 					content: [{ type: "text", text: `✓ handoff recorded (${rest.successState}${rest.returnToOrchestrator ? ", returnToOrchestrator" : ""}) → ${file}` }],

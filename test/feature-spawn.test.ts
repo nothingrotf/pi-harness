@@ -24,7 +24,11 @@ test("rpcWorkerArgs: launch flags p/ `pi --mode rpc` (sem --mode/--print/prompt 
 
 	const g = rpcWorkerArgs(gate, "/tmp/sys.md", { model: "anthropic/claude", thinking: "high" });
 	const gi = g.indexOf("--tools");
-	assert.match(g[gi + 1], /subagent/, "ship-gate spawna reviewers → precisa de subagent");
+	// `--tools` é allow-list dura e case-sensitive do pi core: o nome REAL é `Agent` ("subagent" não existe)
+	assert.match(g[gi + 1], /(^|,)Agent(,|$)/, "ship-gate spawna reviewers → precisa do tool Agent (nome exato)");
+	assert.match(g[gi + 1], /get_subagent_result/, "reviewers em background → get_subagent_result");
+	assert.match(g[gi + 1], /store_delivery/, "deliver grava o delivery record → store_delivery no gate (regressão: tool ausente na sessão do deliver-worker)");
+	assert.doesNotMatch(g[gi + 1], /(^|,)subagent(,|$)/, "nome morto 'subagent' fora da lista");
 	assert.ok(g.includes("--model") && g.includes("anthropic/claude"));
 	const thi = g.indexOf("--thinking");
 	assert.ok(thi !== -1 && g[thi + 1] === "high", "effort do role → --thinking high");
@@ -43,7 +47,7 @@ test("rpcWorkerArgs: session-backed (--session-id + --session-dir); sem wsid →
 
 test("rpcWorkerPrompt: task normal (entrega a feature inteira) vs resume (continue where you left off)", () => {
 	assert.match(rpcWorkerPrompt(task), /Deliver this feature/);
-	assert.match(rpcWorkerPrompt(task), /work through ALL the tasks in order in this one session/);
+	assert.match(rpcWorkerPrompt(task), /LOOP with the next_task tool/);
 	assert.match(rpcWorkerPrompt(task), /EndFeatureRun ONCE/);
 	assert.match(rpcWorkerPrompt(gate), /Run the ship-gate validator/);
 	assert.match(rpcWorkerPrompt(task, true), /Continue EXACTLY where you left off/);
@@ -56,6 +60,28 @@ test("isUsageLimitEvent: detecta 402/usage em evento de erro; ignora output norm
 	assert.equal(isUsageLimitEvent({ type: "assistant", text: "we hit the rate limit yesterday" }), false, "menção em texto normal não dispara");
 	assert.equal(isUsageLimitEvent({ type: "tool_result", output: "quota: 50%" }), false, "quota em tool output (não-erro) não dispara");
 	assert.equal(isUsageLimitEvent(null), false);
+});
+
+test("isUsageLimitEvent: conteúdo de repo sobre rate limiting NÃO dispara (regressão: pausas usage_limit falsas)", () => {
+	// tool result (type message) citando evidência de QA de uma feature de rate limiting + campo \"error\" quoted no texto
+	assert.equal(
+		isUsageLimitEvent({ type: "message", message: { role: "toolResult", content: 'queued result while sync fake records no over-limit call; webhook payload {"error": null}' } }),
+		false,
+		'"over-limit" + "error" quoted em tool output não é billing',
+	);
+	assert.equal(
+		isUsageLimitEvent({ type: "message", message: { role: "toolResult", content: 'no blanket coverage quotas beyond the ratchet floors; "error" paths tested' } }),
+		false,
+		'"quotas" em regras de teste não é billing',
+	);
+	// erro real de provider continua a disparar
+	assert.equal(isUsageLimitEvent({ type: "error", error: "You exceeded your current quota, please check your plan and billing details." }), true);
+	assert.equal(isUsageLimitEvent({ type: "request_failed", error: { code: "insufficient_quota" } }), true);
+	// evento de erro genérico cujo texto cita "quota" de conteúdo (não billing) não dispara
+	assert.equal(isUsageLimitEvent({ type: "error", error: "test failed: expected quota table to render" }), false, "quota solto num erro não-billing não dispara");
+	// "billing" solto num erro de DOMÍNIO (repo de pagamentos/cashback) não é sinal de quota do provider
+	assert.equal(isUsageLimitEvent({ type: "error", error: "billing webhook returned 500" }), false, "billing de domínio não dispara");
+	assert.equal(isUsageLimitEvent({ type: "error", error: "HTTP 402 Payment Required" }), true, "402 estrutural continua a disparar");
 });
 
 test("buildWorkerSystemPrompt: task inclui harness-worker-base + skill do profile + bootstrap", () => {

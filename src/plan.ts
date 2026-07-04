@@ -39,6 +39,17 @@ export interface PlanStatus {
 	assertions: Record<string, AssertionStatus>;
 }
 
+/**
+ * Escrita atómica (tmp + rename): um hard kill a meio de um writeFileSync truncava o JSON —
+ * feature-run.json corrupto fazia o loader reconstruir a run DO ZERO por cima de trabalho
+ * já commitado. rename é atómico no mesmo filesystem.
+ */
+export function writeJsonAtomic(file: string, data: unknown, pretty = true): void {
+	const tmp = `${file}.tmp-${process.pid}`;
+	fs.writeFileSync(tmp, `${JSON.stringify(data, null, pretty ? 2 : undefined)}\n`);
+	fs.renameSync(tmp, file);
+}
+
 function planPath(cwd: string, featureId: string): string {
 	return path.join(runDir(cwd, featureId), "plan.json");
 }
@@ -94,10 +105,13 @@ export function storePlan(cwd: string, plan: Plan): StorePlanResult {
 	if (!check.ok) return { ok: false, issues: check.issues };
 	const dir = runDir(cwd, plan.featureId);
 	fs.mkdirSync(dir, { recursive: true });
-	fs.writeFileSync(planPath(cwd, plan.featureId), `${JSON.stringify(plan, null, 2)}\n`);
+	writeJsonAtomic(planPath(cwd, plan.featureId), plan);
+	// MERGE, não clobber: re-armazenar o plano mid-run (revisão de converge) preservava tudo
+	// `pending` e apagava verdicts `passed` já conquistados → completion gate deadlock.
+	const prior = readStatus(cwd, plan.featureId);
 	const status: PlanStatus = { featureId: plan.featureId, assertions: {} };
-	for (const a of plan.assertions) status.assertions[a] = "pending";
-	fs.writeFileSync(statusPath(cwd, plan.featureId), `${JSON.stringify(status, null, 2)}\n`);
+	for (const a of plan.assertions) status.assertions[a] = prior?.assertions[a] ?? "pending";
+	writeJsonAtomic(statusPath(cwd, plan.featureId), status);
 	appendProgress(cwd, plan.featureId, "plan_stored", { tasks: plan.tasks.length, assertions: plan.assertions.length });
 	return { ok: true, plan };
 }
@@ -110,6 +124,47 @@ export function readPlan(cwd: string, featureId: string): Plan | null {
 	}
 }
 
+export interface CompletionGateResult {
+	ok: boolean;
+	/** assertions ainda não `passed` (pending/failed) — vazio quando ok. */
+	failing: string[];
+}
+
+/**
+ * Completion gate (o "end-of-mission gate" do droid, docs 02: mission completa ⇔ toda assertion
+ * do contrato `passed`): o run só pode virar `completed` quando o status.json diz que TODAS as
+ * assertions passaram. Sem status.json / sem assertions → falha (contrato não verificado — o
+ * ship gate ainda não escreveu). O análogo do README-gate do droid é o próprio ship gate
+ * (deliver documenta a feature no PR) + a regra de docs do orchestrator SKILL.
+ */
+export function completionGate(cwd: string, featureId: string): CompletionGateResult {
+	const status = readStatus(cwd, featureId);
+	if (!status) return { ok: false, failing: ["(no status.json — contract not verified)"] };
+	const entries = Object.entries(status.assertions);
+	if (entries.length === 0) return { ok: false, failing: ["(no assertions in status.json)"] };
+	const failing = entries.filter(([, v]) => v !== "passed").map(([k]) => k);
+	return { ok: failing.length === 0, failing };
+}
+
+/**
+ * Garante que os ids existem no status.json (novos = `pending`). Fix tasks com `fulfills` de
+ * assertions NOVAS (bug reports) ficavam invisíveis ao completion gate sem este merge — e o
+ * qa-validator só testa o que está no status.
+ */
+export function ensureAssertions(cwd: string, featureId: string, ids: string[]): void {
+	if (ids.length === 0) return;
+	const status = readStatus(cwd, featureId);
+	if (!status) return;
+	let changed = false;
+	for (const id of ids) {
+		if (!(id in status.assertions)) {
+			status.assertions[id] = "pending";
+			changed = true;
+		}
+	}
+	if (changed) writeJsonAtomic(statusPath(cwd, featureId), status);
+}
+
 export function readStatus(cwd: string, featureId: string): PlanStatus | null {
 	try {
 		return JSON.parse(fs.readFileSync(statusPath(cwd, featureId), "utf8")) as PlanStatus;
@@ -119,7 +174,7 @@ export function readStatus(cwd: string, featureId: string): PlanStatus | null {
 }
 
 /** Ids de task com evento `task_completed` no progress_log (1 worker por feature: o sinal por-task
- * vem do runner ao completar o impl step + do tool task_progress do worker, não de N steps). */
+ * vem do tool `next_task` (fronteiras) + do runner ao completar o impl step, não de N steps). */
 function completedTaskIds(cwd: string, featureId: string): Set<string> {
 	const ids = new Set<string>();
 	try {
@@ -184,7 +239,7 @@ function featureRunPath(cwd: string, featureId: string): string {
 }
 export function writeFeatureRun(cwd: string, run: FeatureRun): void {
 	fs.mkdirSync(runDir(cwd, run.featureId), { recursive: true });
-	fs.writeFileSync(featureRunPath(cwd, run.featureId), `${JSON.stringify(run, null, 2)}\n`);
+	writeJsonAtomic(featureRunPath(cwd, run.featureId), run);
 }
 export function readFeatureRun(cwd: string, featureId: string): FeatureRun | null {
 	try {
@@ -211,11 +266,30 @@ export interface ResumePlan {
  */
 export function loadOrBuildFeatureRun(cwd: string, featureId: string, now?: () => string): ResumePlan | null {
 	const existing = readFeatureRun(cwd, featureId);
+	// Arquivo EXISTE mas não parseia → quarentena (preserva a evidência) em vez de rebuild
+	// silencioso: reconstruir do zero re-executaria steps já commitados sem nenhum rasto do porquê.
+	if (!existing) {
+		const file = path.join(runDir(cwd, featureId), "feature-run.json");
+		if (fs.existsSync(file)) {
+			try {
+				fs.renameSync(file, `${file}.corrupt-${Date.now()}`);
+			} catch {
+				/* melhor-esforço */
+			}
+			appendProgress(cwd, featureId, "feature_run_corrupt_quarantined", { file });
+		}
+	}
 	const run = existing ?? buildFeatureRun(cwd, featureId, now);
 	if (!run) return null;
 	const resume = existing?.status === "paused";
 	if (existing?.pauseReason === "step_retry_limit_exceeded") {
-		for (const s of run.steps) if (s.attempts >= STEP_ATTEMPT_BUDGET) grantRetryBudget(run, s.id);
+		// Re-grant DISCIPLINADO: só a steps esgotados contra o budget EFETIVO (base + bônus já dado
+		// — comparar com a constante re-concedia +5 a cada resume) e com teto de bônus total (2× o
+		// budget): um step que estourou 3 ciclos não se resolve com mais budget, só com fix tasks.
+		for (const s of run.steps) {
+			const bonus = run.retryBudgetBonus?.[s.id] ?? 0;
+			if (s.attempts >= STEP_ATTEMPT_BUDGET + bonus && bonus < STEP_ATTEMPT_BUDGET * 2) grantRetryBudget(run, s.id);
+		}
 	}
 	return { run, resume };
 }

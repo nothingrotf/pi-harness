@@ -68,6 +68,18 @@ test("handoffOutcome: partial não conta como success", () => {
 	assert.equal(handoffOutcome(d, "feat-x", "T1").success, false);
 });
 
+test("handoffOutcome com wsid: lê SÓ a tentativa exata (regressão: success stale de tentativa anterior completava um crash)", () => {
+	const d = tmp();
+	// tentativa 1 (ws-a) terminou com success
+	recordHandoff(d, "feat-x", payload({ workerSessionId: "ws-a", successState: "success" }));
+	// tentativa 2 (ws-b) crashou SEM EndFeatureRun — não pode herdar o success da ws-a
+	assert.deepEqual(handoffOutcome(d, "feat-x", "T1", "ws-b"), { success: false, returnToOrchestrator: false }, "sem handoff da ws-b → failure");
+	// a própria ws-a continua legível
+	assert.equal(handoffOutcome(d, "feat-x", "T1", "ws-a").success, true);
+	// sem wsid mantém o comportamento histórico (mais recente)
+	assert.equal(handoffOutcome(d, "feat-x", "T1").success, true);
+});
+
 test("recordHandoff: emite evento determinístico no progress_log.jsonl (durabilidade nativa)", () => {
 	const d = tmp();
 	recordHandoff(d, "feat-x", payload({ successState: "success" }));

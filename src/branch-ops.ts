@@ -43,6 +43,24 @@ function gitRun(cwd: string, args: string[]): { ok: boolean; err?: string } {
 }
 
 /**
+ * Base EFETIVA de onde cortar. Usa a base configurada se ela existir (local ou origin); senão
+ * DETECTA a default do repo — origin/HEAD → "main"/"master" locais → a branch atual. Sem isto,
+ * um repo cujo default é "master" (e sem delivery.json) fica SEMPRE "off-base" contra o default
+ * "main" e o run-start nunca corta a branch da feature (o sintoma reportado).
+ */
+export function resolveBase(cwd: string, configured: string): string {
+	const exists = (ref: string) => gitRead(cwd, ["rev-parse", "--verify", "--quiet", ref]) !== undefined;
+	if (exists(`refs/heads/${configured}`) || exists(`refs/remotes/origin/${configured}`)) return configured;
+	const head = gitRead(cwd, ["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"]);
+	const m = head?.match(/refs\/remotes\/origin\/(.+)$/);
+	if (m?.[1]) return m[1];
+	for (const cand of ["main", "master"]) {
+		if (exists(`refs/heads/${cand}`)) return cand;
+	}
+	return gitRead(cwd, ["rev-parse", "--abbrev-ref", "HEAD"]) ?? configured;
+}
+
+/**
  * Garante a branch da feature no início do run. Retorna o que foi feito (create/switch/noop/skip/
  * error) + a base. Não lança — em qualquer falha de git devolve `kind:"error"` e o run prossegue.
  */
@@ -52,20 +70,22 @@ export function ensureFeatureBranch(cwd: string, featureId: string, cfg: BranchC
 
 	const current = gitRead(cwd, ["rev-parse", "--abbrev-ref", "HEAD"]);
 	if (current === undefined) return { kind: "error", branch: name, reason: "not a git repo / git unavailable", base: cfg.base, mutated: false };
+	// Base efetiva (detecta a default do repo quando a configurada não existe — main×master).
+	const base = resolveBase(cwd, cfg.base);
 	const dirty = (gitRead(cwd, ["status", "--porcelain"]) ?? "").length > 0;
 	const branchExists = gitRead(cwd, ["rev-parse", "--verify", "--quiet", `refs/heads/${name}`]) !== undefined;
 
-	const action = planBranchAction({ name, current, base: cfg.base, dirty, branchExists, enabled: true });
-	if (action.kind === "noop" || action.kind === "skip") return { ...action, base: cfg.base, mutated: false };
+	const action = planBranchAction({ name, current, base, dirty, branchExists, enabled: true });
+	if (action.kind === "noop" || action.kind === "skip") return { ...action, base, mutated: false };
 
 	if (action.kind === "switch") {
 		const r = gitRun(cwd, ["switch", name]);
-		return r.ok ? { ...action, base: cfg.base, mutated: true } : { kind: "error", branch: name, reason: `git switch failed: ${r.err ?? "?"}`, base: cfg.base, mutated: false };
+		return r.ok ? { ...action, base, mutated: true } : { kind: "error", branch: name, reason: `git switch failed: ${r.err ?? "?"}`, base, mutated: false };
 	}
 
 	// create: corta da base. Prefere origin/<base> (atualizado) se resolver; senão a base local.
-	gitRead(cwd, ["fetch", "origin", cfg.base]); // best-effort; ignora falha (offline / sem remote)
-	const originBase = gitRead(cwd, ["rev-parse", "--verify", "--quiet", `refs/remotes/origin/${cfg.base}`]) !== undefined ? `origin/${cfg.base}` : cfg.base;
+	gitRead(cwd, ["fetch", "origin", base]); // best-effort; ignora falha (offline / sem remote)
+	const originBase = gitRead(cwd, ["rev-parse", "--verify", "--quiet", `refs/remotes/origin/${base}`]) !== undefined ? `origin/${base}` : base;
 	const r = gitRun(cwd, ["switch", "-c", name, originBase]);
-	return r.ok ? { ...action, reason: `cut from ${originBase}`, base: cfg.base, mutated: true } : { kind: "error", branch: name, reason: `git switch -c failed: ${r.err ?? "?"}`, base: cfg.base, mutated: false };
+	return r.ok ? { ...action, reason: `cut from ${originBase}`, base, mutated: true } : { kind: "error", branch: name, reason: `git switch -c failed: ${r.err ?? "?"}`, base, mutated: false };
 }

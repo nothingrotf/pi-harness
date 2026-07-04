@@ -110,6 +110,20 @@ test("makeRpcSpawn: abort signal → aborted (graceful pause)", async () => {
 	assert.equal(out.aborted, true);
 });
 
+test("makeRpcSpawn: onClient recebe o client vivo após start e null ao terminar (steer hook)", async () => {
+	const cwd = tmp();
+	handoff(cwd, { successState: "success" });
+	const seen: ("client" | "null")[] = [];
+	const spawn = makeRpcSpawn({
+		featureId: "feat-x",
+		genSessionId: () => "ws",
+		clientFactory: fakeFactory((emit) => emit({ type: "agent_end" })),
+		onClient: (c) => void seen.push(c ? "client" : "null"),
+	});
+	await spawn(task, { cwd, workerSessionId: "ws" });
+	assert.deepEqual(seen, ["client", "null"], "registra o client vivo e limpa no fim");
+});
+
 test("makeRpcSpawn: RpcClient indisponível (factory lança) → failure code 1", async () => {
 	const cwd = tmp();
 	const spawn = makeRpcSpawn({

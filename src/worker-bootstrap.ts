@@ -47,37 +47,51 @@ export function buildWorkerBootstrap(step: FeatureStep, opts: BootstrapOpts): st
 	}
 
 	// Worker de implementação: dono da feature inteira (ou de uma fix task). Trabalha TODAS as
-	// tasks abaixo numa única sessão.
+	// tasks numa única sessão. Multi-task → loop `next_task` (o harness sequencia; fronteiras gravadas
+	// por máquina). Single (fix) → a task única direto (sem loop).
 	const tasks = stepTasks(step);
 	const multi = tasks.length > 1;
-	const lines: string[] = [
+
+	if (multi) {
+		return [
+			"<system-reminder>",
+			`You are a worker assigned to deliver feature "${opts.featureId}" end-to-end.`,
+			"## Worker Session",
+			`Your worker session id is: ${opts.workerSessionId}`,
+			`This is ONE continuous session for the WHOLE feature (${tasks.length} tasks). The harness hands you tasks ONE AT A TIME via the \`next_task\` tool and records progress DETERMINISTICALLY — it marks a task done only AFTER you commit (it re-hands you the same task until a commit lands). Do NOT split across sessions; your context carries across every task.`,
+			"REMEMBER TO CALL EndFeatureRun **ONCE** WHEN `next_task` REPORTS ALL TASKS ARE DONE (even on errors). End your turn immediately after.",
+			"</system-reminder>",
+			"## Your Task",
+			"1. Invoke the 'harness-worker-base' skill for startup procedures — run it **once** for the whole feature.",
+			"2. LOOP until done:",
+			`   a. Call \`next_task({ featureId: "${opts.featureId}" })\` to receive your next task (id, skillName, description, preconditions, expectedBehavior, fulfills).`,
+			"   b. Invoke that task's `skillName` skill, implement it, and run its verification.",
+			"   c. COMMIT the repo change with the task id in the message (e.g. `[<taskId>] <summary>`). You MUST commit — `next_task` will not advance you otherwise.",
+			"   d. Call `next_task` again for the following task.",
+			`3. When \`next_task\` reports all tasks are done, call EndFeatureRun **once** (taskId="${step.id}"), or with returnToOrchestrator:true if you are blocked.`,
+			"4. On resume / re-run, just call `next_task` — it resumes at the next uncommitted task automatically. Never redo committed work.",
+			"## Tasks",
+			`This feature has ${tasks.length} tasks (${tasks.map((t) => t.id).join(", ")}). The full spec of each is delivered by \`next_task\` — the tool is the source of truth; the list is NOT inlined here on purpose.`,
+		].join("\n");
+	}
+
+	const only = tasks[0];
+	return [
 		"<system-reminder>",
 		`You are a worker assigned to deliver feature "${opts.featureId}" end-to-end.`,
 		"## Worker Session",
 		`Your worker session id is: ${opts.workerSessionId}`,
-		multi
-			? `This is ONE continuous session for the WHOLE feature — you own ALL ${tasks.length} tasks below. Do NOT split them across sessions; the startup runs once and your context carries across every task.`
-			: "This is your worker session for the task below.",
-		"REMEMBER TO CALL EndFeatureRun **ONCE** WHEN ALL TASKS ARE DONE (even on errors). End your turn immediately after.",
+		"This is your worker session for the task below.",
+		"REMEMBER TO CALL EndFeatureRun WHEN YOU ARE DONE (even on errors). End your turn immediately after.",
 		"</system-reminder>",
 		"## Your Task",
-		"1. First, invoke the 'harness-worker-base' skill for startup procedures — run it **once** for the whole feature.",
-		multi
-			? "2. Then work through EVERY task below **in order, in THIS session**: for each task, invoke its `skillName` skill, implement it, run its verification, and commit the repo change with the task id in the message (e.g. `[<taskId>] <summary>`). Keep your own todo to track them."
-			: "2. Then invoke the task's `skillName` skill, implement it, run its verification, and commit the repo change (put the task id in the message).",
-		"3. Mark per-task progress with the `task_progress` tool (`status: \"started\"` then `\"completed\"`, with `taskId`) as you go, so progress is visible live.",
-		multi
-			? "4. On resume / re-run, check `git log --oneline` first to see which tasks are already committed and **skip them** — only do the remaining ones. Never redo committed work."
-			: "4. On resume, check the repo state first and continue where you left off — don't restart from scratch.",
-		`5. Call EndFeatureRun **once** when all tasks are done (taskId="${step.id}"), or with returnToOrchestrator:true if blocked.`,
-		multi ? "## Your Tasks (ordered — work top to bottom, one EndFeatureRun at the end)" : "## Your Assigned Task",
+		"1. First, invoke the 'harness-worker-base' skill for startup procedures.",
+		"2. Then invoke the task's `skillName` skill, implement it, run its verification, and commit the repo change (put the task id in the message).",
+		`3. Call EndFeatureRun (taskId="${step.id}") when done, or with returnToOrchestrator:true if blocked.`,
+		"4. On resume, check the repo state first and continue where you left off — don't restart from scratch.",
+		"## Your Assigned Task",
 		"```json",
-		JSON.stringify(
-			tasks.map((t) => ({ id: t.id, description: t.description, skillName: t.skillName, fulfills: t.fulfills ?? [], preconditions: t.preconditions ?? [], expectedBehavior: t.expectedBehavior ?? [] })),
-			null,
-			2,
-		),
+		JSON.stringify({ id: only.id, description: only.description, skillName: only.skillName, fulfills: only.fulfills ?? [], preconditions: only.preconditions ?? [], expectedBehavior: only.expectedBehavior ?? [] }, null, 2),
 		"```",
-	];
-	return lines.join("\n");
+	].join("\n");
 }

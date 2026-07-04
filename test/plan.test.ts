@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { buildFeatureRun, featureProgress, loadOrBuildFeatureRun, type Plan, readFeatureRun, readPlan, readStatus, storePlan, validatePlan, writeFeatureRun } from "../src/plan.ts";
+import { buildFeatureRun, completionGate, ensureAssertions, featureProgress, loadOrBuildFeatureRun, type Plan, readFeatureRun, readPlan, readStatus, storePlan, validatePlan, writeFeatureRun } from "../src/plan.ts";
 import { IMPL_STEP_ID } from "../src/feature-runner.ts";
 import { appendProgress } from "../src/handoff.ts";
 
@@ -53,6 +53,20 @@ test("validatePlan: pega task sem id/skillName/description e id duplicado", () =
 	assert.ok(r.issues.some((i) => /missing id/.test(i)));
 	assert.ok(r.issues.some((i) => /missing skillName/.test(i)));
 	assert.ok(r.issues.some((i) => /missing description/.test(i)));
+});
+
+test("ensureAssertions: adiciona ids novos como pending SEM tocar nos existentes (fix tasks com bug assertions)", () => {
+	const d = tmp();
+	storePlan(d, plan());
+	const before = readStatus(d, "feat-x");
+	assert.ok(before && "A1" in before.assertions);
+	// simula um verdict já dado
+	before.assertions.A1 = "passed";
+	fs.writeFileSync(path.join(d, ".harness", "runs", "feat-x", "status.json"), JSON.stringify(before));
+	ensureAssertions(d, "feat-x", ["A-BUG-1", "A1"]);
+	const after = readStatus(d, "feat-x");
+	assert.equal(after?.assertions["A-BUG-1"], "pending", "assertion nova entra como pending");
+	assert.equal(after?.assertions.A1, "passed", "verdict existente preservado");
 });
 
 test("storePlan: grava plan.json + status.json (assertions pending); recusa inválido sem gravar", () => {
@@ -160,6 +174,56 @@ test("loadOrBuildFeatureRun: pausa por esgotamento → concede budget bônus", (
 	assert.equal(rp?.run.retryBudgetBonus?.[IMPL_STEP_ID], 5, "impl step esgotado ganha budget fresco no resume");
 });
 
+test("loadOrBuildFeatureRun: re-grant compara com o budget EFETIVO e tem teto (regressão: +5 a cada resume = loop infinito)", () => {
+	const d = tmp();
+	storePlan(d, plan());
+	const run = buildFeatureRun(d, "feat-x", () => "t");
+	if (!run) return;
+	run.status = "paused";
+	run.pauseReason = "step_retry_limit_exceeded";
+	run.steps[0].attempts = 5;
+	run.retryBudgetBonus = { [IMPL_STEP_ID]: 5 };
+	writeFeatureRun(d, run);
+	// attempts(5) < efetivo(10) → NÃO re-concede (antes: comparava com a constante e dava +5 sempre)
+	const rp = loadOrBuildFeatureRun(d, "feat-x");
+	assert.equal(rp?.run.retryBudgetBonus?.[IMPL_STEP_ID], 5, "sem re-grant enquanto o budget efetivo não esgotou");
+	// esgotado de novo (10) mas bônus já no teto (2×base) → também não re-concede
+	const run2 = readFeatureRun(d, "feat-x");
+	if (!run2) return;
+	run2.status = "paused";
+	run2.pauseReason = "step_retry_limit_exceeded";
+	run2.steps[0].attempts = 15;
+	run2.retryBudgetBonus = { [IMPL_STEP_ID]: 10 };
+	writeFeatureRun(d, run2);
+	const rp2 = loadOrBuildFeatureRun(d, "feat-x");
+	assert.equal(rp2?.run.retryBudgetBonus?.[IMPL_STEP_ID], 10, "teto de bônus: esgotamento crônico pede fix tasks, não mais budget");
+});
+
+test("storePlan: re-store preserva verdicts existentes (regressão: revisão mid-run apagava passed)", () => {
+	const d = tmp();
+	storePlan(d, plan());
+	const st = readStatus(d, "feat-x");
+	if (!st) return;
+	st.assertions.A1 = "passed";
+	fs.writeFileSync(path.join(d, ".harness", "runs", "feat-x", "status.json"), JSON.stringify(st));
+	storePlan(d, plan());
+	const after = readStatus(d, "feat-x");
+	assert.equal(after?.assertions.A1, "passed", "verdict sobrevive ao re-store");
+	assert.equal(after?.assertions.A2, "pending", "assertions sem verdict continuam pending");
+});
+
+test("loadOrBuildFeatureRun: feature-run.json corrupto → quarentena .corrupt-* (regressão: rebuild silencioso re-corria a feature)", () => {
+	const d = tmp();
+	storePlan(d, plan());
+	const file = path.join(d, ".harness", "runs", "feat-x", "feature-run.json");
+	fs.writeFileSync(file, "{ truncated-by-hard-kill");
+	const rp = loadOrBuildFeatureRun(d, "feat-x");
+	assert.ok(rp, "reconstrói do plan.json");
+	assert.equal(fs.existsSync(file), false, "o corrupto foi MOVIDO (não fica a assombrar o próximo load)");
+	const quarantined = fs.readdirSync(path.dirname(file)).filter((f) => f.startsWith("feature-run.json.corrupt-"));
+	assert.equal(quarantined.length, 1, "evidência preservada em .corrupt-<ts>");
+});
+
 test("featureProgress: tasks done/total (de eventos task_completed) + assertions passed/failed (do status)", () => {
 	const d = tmp();
 	assert.equal(featureProgress(d, "feat-x"), null, "sem plan → null");
@@ -178,4 +242,37 @@ test("featureProgress: tasks done/total (de eventos task_completed) + assertions
 	}
 	p = featureProgress(d, "feat-x");
 	assert.deepEqual(p, { tasksTotal: 3, tasksDone: 2, assertionsTotal: 3, assertionsPassed: 1, assertionsFailed: 1 });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// completionGate (droid: mission completa ⇔ toda assertion do contrato passed)
+
+test("completionGate: sem status.json / sem assertions → falha (contrato não verificado)", () => {
+	const d = tmp();
+	assert.equal(completionGate(d, "feat-x").ok, false);
+	fs.mkdirSync(path.join(d, ".harness/runs/feat-x"), { recursive: true });
+	fs.writeFileSync(path.join(d, ".harness/runs/feat-x/status.json"), JSON.stringify({ featureId: "feat-x", assertions: {} }));
+	const r = completionGate(d, "feat-x");
+	assert.equal(r.ok, false);
+	assert.match(r.failing[0], /no assertions/);
+});
+
+test("completionGate: pending/failed listadas em failing; todas passed → ok", () => {
+	const d = tmp();
+	storePlan(d, plan());
+	const r1 = completionGate(d, "feat-x");
+	assert.equal(r1.ok, false);
+	assert.deepEqual(r1.failing, ["A1", "A2", "A3"], "todas pending após o store");
+	const sp = path.join(d, ".harness/runs/feat-x/status.json");
+	const st = JSON.parse(fs.readFileSync(sp, "utf8"));
+	st.assertions.A1 = "passed";
+	st.assertions.A2 = "failed";
+	st.assertions.A3 = "passed";
+	fs.writeFileSync(sp, JSON.stringify(st));
+	const r2 = completionGate(d, "feat-x");
+	assert.equal(r2.ok, false);
+	assert.deepEqual(r2.failing, ["A2"]);
+	st.assertions.A2 = "passed";
+	fs.writeFileSync(sp, JSON.stringify(st));
+	assert.deepEqual(completionGate(d, "feat-x"), { ok: true, failing: [] });
 });

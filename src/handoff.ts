@@ -120,8 +120,19 @@ export function latestHandoff(cwd: string, featureId: string, taskId: string): P
  * sozinho não basta — o success vem do successState reportado (e o ship gate, sendo
  * ele mesmo um worker, reporta o veredito real).
  */
-export function handoffOutcome(cwd: string, featureId: string, taskId: string): { success: boolean; returnToOrchestrator: boolean } {
-	const h = latestHandoff(cwd, featureId, taskId);
+export function handoffOutcome(cwd: string, featureId: string, taskId: string, workerSessionId?: string): { success: boolean; returnToOrchestrator: boolean } {
+	// Com wsid, lê EXATAMENTE o handoff desta tentativa — o lookup por mtime deixava um success
+	// STALE de uma tentativa anterior completar uma tentativa que crashou sem EndFeatureRun.
+	const h = workerSessionId ? readHandoffExact(cwd, featureId, taskId, workerSessionId) : latestHandoff(cwd, featureId, taskId);
 	if (!h) return { success: false, returnToOrchestrator: false };
 	return { success: h.successState === "success", returnToOrchestrator: !!h.returnToOrchestrator };
+}
+
+/** O handoff de UMA tentativa específica (taskId + wsid). null se não existe/corrupto. */
+export function readHandoffExact(cwd: string, featureId: string, taskId: string, workerSessionId: string): PersistedHandoff | null {
+	try {
+		return JSON.parse(fs.readFileSync(path.join(handoffsDir(cwd, featureId), `${safe(taskId)}__${safe(workerSessionId)}.json`), "utf8")) as PersistedHandoff;
+	} catch {
+		return null;
+	}
 }

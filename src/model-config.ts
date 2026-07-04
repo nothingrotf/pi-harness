@@ -2,14 +2,15 @@
  * Config GLOBAL de modelo por ROLE do harness (análogo ao Droid: orchestrator /
  * worker / validator). Lógica pura, sem dependência do Pi — testável isolada.
  *
- * O que governa: os CHILDREN que o harness spawna via `pi --print` (feature-spawn.ts) —
- * worker (task), validator (ship-gate) e orchestrator (converge headless). Cada role
- * pode fixar um `model` ("provider/id") e um `thinking`/effort; `undefined` = HERDA o
- * modelo do parent/sessão (comportamento atual). O `pi --print` aceita `--model` e
- * `--thinking` (off|minimal|low|medium|high|xhigh) — ver cli/args.
+ * O que governa: os CHILDREN que o harness spawna — worker (task) e validator (ship-gate) via
+ * `pi --mode rpc` (rpc-worker.ts, o caminho ÚNICO de implementação: run_feature no TUI e o
+ * runner headless) e orchestrator (converge headless via `pi --print`). Cada role pode fixar um
+ * `model` ("provider/id") e um `thinking`/effort; `undefined` = HERDA o modelo do parent/sessão.
+ * Ambos os spawns aceitam `--model` e `--thinking` (off|minimal|low|medium|high|xhigh).
  *
- * NÃO governa o orchestrator VIVO em sessão nem os subagents in-session (esses seguem
- * o modelo da sessão do usuário / pi-subagents). Escopo: os spawns que o harness controla.
+ * NÃO governa o orchestrator VIVO em sessão (o chat usa o modelo da sessão Pi) nem os subagents
+ * de ANÁLISE in-session (@tintinweb/pi-subagents). Escopo: os spawns que o harness controla —
+ * que agora incluem TODA a implementação/validação (droid model).
  *
  * Persistência: `${agentDir}/pi-harness/models.json` (global, junto do config do Pi).
  * O settings.json do usuário (`${agentDir}/settings.json`) é LIDO (não escrito) pra

@@ -12,7 +12,19 @@ import { buildFeatureRun, storePlan, writeFeatureRun } from "../src/plan.ts";
 function tmp(): string {
 	return fs.mkdtempSync(path.join(os.tmpdir(), "harness-headless-"));
 }
-const okSpawn: SpawnFn = async () => ({ code: 0, success: true });
+/** Flipa todas as assertions do status.json pra `passed` — o que o qa-validator REAL faz. */
+function passAssertions(cwd: string, featureId: string): void {
+	const p = path.join(cwd, ".harness/runs", featureId, "status.json");
+	const st = JSON.parse(fs.readFileSync(p, "utf8")) as { assertions: Record<string, string> };
+	for (const k of Object.keys(st.assertions)) st.assertions[k] = "passed";
+	fs.writeFileSync(p, JSON.stringify(st));
+}
+// Spawn de sucesso que ESPELHA o ship gate real: o passo qa-validator flipa o status.json
+// (senão o completion gate — droid parity — recusa `completed`, corretamente).
+const okSpawn: SpawnFn = async (s, ctx) => {
+	if (s.id === "ship-gate-qa-validator") passAssertions(ctx.cwd, "feat-x");
+	return { code: 0, success: true };
+};
 type T = { id: string; description: string; skillName: string; fulfills: string[] };
 function fakeConverge(tasks: T[], assertions: string[]): ConvergeFn {
 	return async (cwd, _request, featureId) => {
@@ -94,10 +106,12 @@ test("runHeadlessFeature: graceful pause então resume re-attacha e completa", a
 	storePlan(d, { featureId: "feat-x", tasks: oneTask, assertions: ["A1"], createdAt: "t" });
 	let calls = 0;
 	const seen: boolean[] = [];
-	const spawn: SpawnFn = async (_s, ctx) => {
+	const spawn: SpawnFn = async (s, ctx) => {
 		calls++;
 		seen.push(!!ctx.resume);
-		return calls === 1 ? { code: 0, aborted: true } : { code: 0, success: true };
+		if (calls === 1) return { code: 0, aborted: true };
+		if (s.id === "ship-gate-qa-validator") passAssertions(ctx.cwd, "feat-x");
+		return { code: 0, success: true };
 	};
 	const r1 = await runHeadlessFeature(d, { request: "x", featureId: "feat-x", converge: async () => {}, spawn, log: () => {} });
 	assert.equal(r1.ok, false);
@@ -120,13 +134,63 @@ test("runHeadlessFeature: hard-kill (status running congelado) → requeue do ze
 	run.steps[0].workerSessionIds = ["ws_dead"];
 	writeFeatureRun(d, run);
 	const seen: boolean[] = [];
-	const spawn: SpawnFn = async (_s, ctx) => {
+	const spawn: SpawnFn = async (s, ctx) => {
 		seen.push(!!ctx.resume);
+		if (s.id === "ship-gate-qa-validator") passAssertions(ctx.cwd, "feat-x");
 		return { code: 0, success: true };
 	};
 	const res = await runHeadlessFeature(d, { request: "x", featureId: "feat-x", converge: async () => {}, spawn, log: () => {} });
 	assert.equal(res.ok, true);
 	assert.equal(seen[0], false, "hard-kill → re-roda do zero (resume:false), não re-attacha o worker morto");
+});
+
+test("runHeadlessFeature: gateSkip é honrado (skips do model-config valem no headless completo)", async () => {
+	const d = tmp();
+	const order: string[] = [];
+	const spawn: SpawnFn = async (s, ctx) => {
+		order.push(s.id);
+		if (s.id === "ship-gate-qa-validator") passAssertions(ctx.cwd, "feat-x");
+		return { code: 0, success: true };
+	};
+	const res = await runHeadlessFeature(d, {
+		request: "x",
+		featureId: "feat-x",
+		converge: fakeConverge(oneTask, ["A1"]),
+		spawn,
+		log: () => {},
+		gateSkip: new Set(["harness-code-review", "harness-deliver"]),
+	});
+	assert.equal(res.ok, true);
+	assert.deepEqual(order, ["implement", "ship-gate-qa-validator"], "code-review e deliver pulados pelo config");
+});
+
+test("runHeadlessFeature: completion gate — assertions não-passed bloqueiam o completed (→ orchestrator_turn)", async () => {
+	const d = tmp();
+	const events: string[] = [];
+	// spawns todos ok mas NINGUÉM flipa o status.json → o gate recusa `completed` (droid parity).
+	const res = await runHeadlessFeature(d, {
+		request: "x",
+		featureId: "feat-x",
+		converge: fakeConverge(oneTask, ["A1"]),
+		spawn: async () => ({ code: 0, success: true }),
+		log: (ev) => events.push(ev),
+	});
+	assert.equal(res.ok, false);
+	assert.equal(res.status, "orchestrator_turn");
+	assert.ok(events.includes("completion_gate_failed"), "loga completion_gate_failed");
+});
+
+test("runHeadlessFeature: completion gate é bypassado quando o qa-validator (quem flipa) é pulado", async () => {
+	const d = tmp();
+	const res = await runHeadlessFeature(d, {
+		request: "x",
+		featureId: "feat-x",
+		converge: fakeConverge(oneTask, ["A1"]),
+		spawn: async () => ({ code: 0, success: true }),
+		log: () => {},
+		gateSkip: new Set(["harness-qa-validator"]),
+	});
+	assert.equal(res.ok, true, "sem qa-validator ninguém flipa assertions — o gate não pode deadlockar");
 });
 
 test("runHeadlessFeature: worker falha → para com reason (ok:false)", async () => {

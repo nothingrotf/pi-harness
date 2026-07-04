@@ -22,11 +22,18 @@ export function resolvePiBin(): string {
 	return process.env.PI_BIN || "pi";
 }
 
-/** Tasks editam código + marcam progresso (task_progress) + chamam EndFeatureRun; ship-gates também spawnam reviewers (subagent). */
-const TOOLS_TASK = "read,grep,find,ls,bash,edit,write,task_progress,EndFeatureRun";
-const TOOLS_GATE = "read,grep,find,ls,bash,edit,write,subagent,EndFeatureRun";
+/**
+ * Tasks editam código + puxam cada task (next_task) + chamam EndFeatureRun; ship-gates também
+ * spawnam reviewers e precisam do store_delivery (deliver grava o record que abre a Delivery tab
+ * e o merge gate humano). ATENÇÃO: `--tools` é allow-list DURA e case-sensitive do pi core — o
+ * nome do tool de subagents é `Agent` (+ get_subagent_result/steer_subagent p/ background);
+ * "subagent" não existe e era silenciosamente filtrado (reviewers não spawnavam).
+ */
+const SUBAGENT_TOOLS = "Agent,get_subagent_result,steer_subagent";
+const TOOLS_TASK = "read,grep,find,ls,bash,edit,write,next_task,EndFeatureRun";
+const TOOLS_GATE = `read,grep,find,ls,bash,edit,write,${SUBAGENT_TOOLS},store_delivery,EndFeatureRun`;
 /** Converge autora os artefatos + delega a contract a subagents + chama store_plan. */
-const TOOLS_CONVERGE = "read,grep,find,ls,bash,edit,write,subagent,store_plan";
+const TOOLS_CONVERGE = `read,grep,find,ls,bash,edit,write,${SUBAGENT_TOOLS},store_plan`;
 
 function harnessSkillsDir(): string {
 	return fileURLToPath(new URL("../skills", import.meta.url));
@@ -100,7 +107,7 @@ export function rpcWorkerPrompt(step: FeatureStep, resume = false): string {
 	if (resume)
 		return "You were interrupted mid-work. Continue EXACTLY where you left off: check the repo state (git status, modified files), review what you already implemented, and finish the task. Do NOT restart from scratch. Call EndFeatureRun when done, then end your turn.";
 	return step.kind === "task"
-		? "Deliver this feature per the appended instructions: invoke harness-worker-base once, then work through ALL the tasks in order in this one session (your skill per task; mark task_progress; commit per task); call EndFeatureRun ONCE when every task is done, then end your turn."
+		? "Deliver this feature per the appended instructions: invoke harness-worker-base once, then LOOP with the next_task tool (it hands you each task; commit per task; it won't advance until you commit); call EndFeatureRun ONCE when next_task reports all tasks are done, then end your turn."
 		: "Run the ship-gate validator per the appended instructions; call EndFeatureRun (returnToOrchestrator: true) when done, then end your turn.";
 }
 
@@ -113,11 +120,17 @@ export function isUsageLimitEvent(obj: unknown): boolean {
 	if (!obj || typeof obj !== "object") return false;
 	const o = obj as Record<string, unknown>;
 	const type = typeof o.type === "string" ? o.type.toLowerCase() : "";
-	const blob = JSON.stringify(o).toLowerCase();
-	const billing = /\b402\b|payment required|usage limit|quota|insufficient_quota|no active subscription|over.?(the.?)?limit|billing/.test(blob);
-	if (!billing) return false;
-	// exige aspecto de erro p/ não disparar em output normal de tool que cite "rate limit".
-	return /error|failed|fatal/.test(type) || o.error != null || /"(error|fatal)"/.test(blob);
+	// 1º gate: só eventos estruturalmente de ERRO (type error/failed/fatal ou campo error preenchido).
+	// NUNCA por substring no blob — tool results que citem "error"/"quota" (ex.: features de rate
+	// limiting, payloads de webhook com error detail) não podem disparar pausa de billing.
+	const errorish = /error|failed|fatal/.test(type) || o.error != null;
+	if (!errorish) return false;
+	// 2º gate: keywords de billing no payload do erro (ou no evento, se o erro é estrutural via type).
+	// Padrões estreitos: "quota"/"over the limit" soltos casam com conteúdo do repo, não com billing.
+	const blob = JSON.stringify(o.error != null ? o.error : o).toLowerCase();
+	// SEM `billing` solto: num repo de pagamentos/cashback um erro de teste que cite "billing"
+	// não é sinal de quota do provider. Os padrões restantes são frases estruturais de 402/quota.
+	return /\b402\b|payment required|usage limit|insufficient_quota|exceeded.{0,40}quota|quota.{0,40}exceed|no active subscription/.test(blob);
 }
 
 /** Escreve o system prompt num ficheiro temporário (lido pelo `--append-system-prompt`). Exportado p/ o rpc-worker. */

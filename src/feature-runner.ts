@@ -35,6 +35,7 @@
 export const STEP_ATTEMPT_BUDGET = 5;
 
 export type FeatureRunStatus = "running" | "paused" | "orchestrator_turn" | "completed";
+/** `cancelled` é RESERVADO (glifo ✓/●/○/✗ da TUI); o runner ainda não cancela steps — só pausa por budget. */
 export type StepStatus = "pending" | "in_progress" | "completed" | "cancelled";
 export type StepKind = "task" | "ship-gate";
 
@@ -79,6 +80,8 @@ export interface FeatureRun {
 	createdAt: string;
 	updatedAt: string;
 	pauseReason?: string;
+	/** por que o run devolveu controlo (status orchestrator_turn): completion_gate_failed | step_returned. */
+	turnReason?: string;
 	/** budget extra por step concedido no resume após esgotamento (doc 07: featureRetryBudgetBonus). */
 	retryBudgetBonus?: Record<string, number>;
 }
@@ -125,6 +128,12 @@ export interface FeatureRunLoopDeps {
 	genSessionId?: () => string;
 	/** intervalo do heartbeat (toca updatedAt enquanto um spawn longo roda; doc 07: 180000). off por default. */
 	heartbeatMs?: number;
+	/**
+	 * Completion gate (droid: mission completa ⇔ toda assertion do contrato `passed`): chamado
+	 * quando os steps acabam, ANTES de marcar `completed`. `ok:false` → orchestrator_turn (o
+	 * orchestrator decide fix tasks / re-validar). undefined → completa direto (testes/compat).
+	 */
+	completionGate?: () => { ok: boolean; failing: string[] };
 }
 
 /** Opções do runLoop. `resume` = continuar um run persistido (não reclama órfãos; re-attacha in_progress). */
@@ -222,6 +231,15 @@ export function insertFixTask(run: FeatureRun, task: PlanTaskRef): void {
 	const step: FeatureStep = { id: task.id, kind: "task", skillName: task.skillName, tasks: [{ ...task }], fulfills: task.fulfills, status: "pending", attempts: 0, workerSessionIds: [] };
 	if (gateIdx < 0) run.steps.push(step);
 	else run.steps.splice(gateIdx, 0, step);
+	// RE-ARMA os ship gates já concluídos: uma fix task muda o código DEPOIS da validação — gates
+	// completed têm de re-validar (senão as assertions da fix nunca viram `passed` → completion
+	// gate deadlock). Attempts resetam: novo ciclo de validação, budget fresco.
+	for (const s of run.steps) {
+		if (s.kind === "ship-gate" && s.status === "completed") {
+			s.status = "pending";
+			s.attempts = 0;
+		}
+	}
 }
 
 function nextWorkerSessionId(step: FeatureStep, gen: () => string): string {
@@ -244,6 +262,8 @@ export async function runLoop(cwd: string, run: FeatureRun, deps: FeatureRunLoop
 	// Resume → preserva o in_progress (re-attacha a sessão do worker = "continue where you left off").
 	if (!opts.resume) cleanupOrphan(run);
 	run.status = "running";
+	run.pauseReason = undefined; // limpa razão stale (um usage_limit antigo não pode contaminar o registo do próximo pause/complete)
+	run.turnReason = undefined;
 	touch(run, deps);
 
 	// Preempção por ordenação (doc 07): no resume, se um pending está ACIMA do in_progress
@@ -281,6 +301,16 @@ export async function runLoop(cwd: string, run: FeatureRun, deps: FeatureRunLoop
 					deps.log?.("ship_gate_injected", { steps: run.steps.filter((s) => s.kind === "ship-gate").map((s) => s.id) });
 					touch(run, deps);
 					continue;
+				}
+				// Completion gate (end-of-mission gate analog): só completa se o contrato está satisfeito
+				// (todas as assertions `passed` no status.json). Senão devolve ao orchestrator — espelha o
+				// "completed is self-healing" do droid (nunca declara done com assertion pendente/failed).
+				const gate = deps.completionGate?.();
+				if (gate && !gate.ok) {
+					run.status = "orchestrator_turn";
+					run.turnReason = "completion_gate_failed";
+					deps.log?.("completion_gate_failed", { failing: gate.failing });
+					break;
 				}
 				run.status = "completed";
 				break;
@@ -347,20 +377,33 @@ export async function runLoop(cwd: string, run: FeatureRun, deps: FeatureRunLoop
 			continue;
 		}
 
-		const ok = res.code === 0 && res.success === true && !res.returnToOrchestrator;
-		if (ok) {
+		// Conclusão vs controlo são sinais ORTOGONAIS: successState decide se o step COMPLETOU;
+		// returnToOrchestrator decide só QUEM recebe o controlo a seguir. Ship gates reportam SEMPRE
+		// returnToOrchestrator:true (skills/qa-validator:110, code-review:84) — sem este split, um
+		// gate VERDE voltava a pending e re-corria até estourar o attempt budget (loop observado).
+		if (res.code === 0 && res.success === true) {
 			step.status = "completed";
 			deps.log?.("step_completed", { id: step.id, kind: step.kind });
 			// Worker único por feature: ao completar o impl/fix step, marca CADA task que ele cobre como
 			// concluída (task_completed por taskId). Garante que a TUI por-task fica correta no fim mesmo
-			// que o worker não tenha emitido task_progress ao vivo; tasks individuais do plan.json viram ✓.
+			// que o worker não tenha exaurido o loop `next_task` ao vivo; tasks individuais do plan.json viram ✓.
 			if (step.tasks?.length) for (const t of step.tasks) deps.log?.("task_completed", { taskId: t.id });
 			touch(run, deps);
+			if (res.returnToOrchestrator) {
+				// Step concluído MAS o worker/validator pediu o orchestrator (findings, merge gate humano,
+				// guidance updates): devolve o controlo SEM regredir o step.
+				run.status = "orchestrator_turn";
+				run.turnReason = "step_returned";
+				deps.log?.("step_returned", { id: step.id, kind: step.kind, code: res.code, returnToOrchestrator: true, completed: true });
+				touch(run, deps);
+				break;
+			}
 		} else {
-			// Falha/returnToOrchestrator: step volta a pending (próxima tentativa = worker NOVO,
-			// do zero) e o run devolve controle ao orchestrator (que cria fix tasks e resume).
+			// Falha real (successState failure/partial ou exit != 0): step volta a pending (próxima
+			// tentativa = worker NOVO, do zero) e o run devolve controle ao orchestrator (fix tasks + resume).
 			step.status = "pending";
 			run.status = "orchestrator_turn";
+			run.turnReason = "step_returned";
 			deps.log?.("step_returned", { id: step.id, kind: step.kind, code: res.code, returnToOrchestrator: !!res.returnToOrchestrator });
 			touch(run, deps);
 			break;

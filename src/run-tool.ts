@@ -1,0 +1,61 @@
+/**
+ * Tool `run_feature` — o porte 1:1 do `start_mission_run` do modelo de referência (droid, doc 07
+ * §6). O ORCHESTRATOR (o chat vivo) chama este tool pra entregar a execução ao RUNNER
+ * determinístico: o FeatureRunner spawna UM worker session-backed pra feature inteira (`pi --mode
+ * rpc`, loop `next_task`, commit por task), injeta o ship gate (code-review → qa-validator →
+ * deliver) como validator sessions, e BLOQUEIA até devolver controle. Workers NUNCA rodam
+ * in-chat nem como `Agent` — implementação é sempre sessão dirigida por código (paridade droid).
+ *
+ * Modos de resume (1:1 com a referência):
+ *   default                    → continua o worker pausado (re-attacha a última sessão);
+ *   restartFeature: true       → requeue e worker novo do zero;
+ *   resumeWorkerSessionId      → re-attacha uma sessão específica (selecionar o worker).
+ *
+ * `fixTasks` = o análogo do orchestrator editar features.json antes do resume: insere steps de
+ * UMA task acima do ship gate (preempção por ordenação — a fix corre primeiro no resume).
+ *
+ * O corpo vive em run-exec.ts (compartilhado com o Feature Control); pause vem de fora
+ * (run-registry: /harness pause, tecla P do cockpit, shutdown hook) via AbortController.
+ */
+import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
+import { executeFeatureRun } from "./run-exec.ts";
+
+const FixTask = Type.Object({
+	id: Type.String({ description: "Unique fix-task/step id (e.g. FIX1)." }),
+	skillName: Type.String({ description: "A profile worker skill in .harness/profile/skills/." }),
+	description: Type.Optional(Type.String()),
+	fulfills: Type.Optional(Type.Array(Type.String(), { description: "Contract assertion IDs this fix completes (new bug assertions included)." })),
+	preconditions: Type.Optional(Type.Array(Type.String())),
+	expectedBehavior: Type.Optional(Type.Array(Type.String())),
+});
+
+const PARAMS = Type.Object({
+	featureId: Type.String({ description: "The feature id (selects .harness/runs/<featureId>/)." }),
+	restartFeature: Type.Optional(Type.Boolean({ description: "Requeue the in-progress step and re-run it FROM SCRATCH with a fresh worker (instead of re-attaching the paused session)." })),
+	resumeWorkerSessionId: Type.Optional(Type.String({ description: "Re-attach a SPECIFIC recorded worker session id (see the run report / feature-run.json workerSessionIds)." })),
+	fixTasks: Type.Optional(Type.Array(FixTask, { description: "Fix tasks to insert ABOVE the ship gate before running (they preempt — run first)." })),
+});
+
+export function registerRunFeatureTool(pi: ExtensionAPI): void {
+	pi.registerTool(
+		defineTool({
+			name: "run_feature",
+			label: "Run Feature",
+			description:
+				"Hand control to the deterministic feature runner (BLOCKING — the droid start_mission_run analog). It spawns ONE session-backed worker for the whole feature (next_task loop, commit per task), then runs the ship-gate validators, enforcing per-role model config, attempt budgets and pause/resume. Returns a report when the feature completes, pauses, or returns to you (orchestrator_turn). Resume modes: default re-attaches the paused worker; restartFeature re-runs fresh; resumeWorkerSessionId picks a specific session. Pass fixTasks to insert fixes above the gate before resuming.",
+			parameters: PARAMS,
+			async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+				const { featureId, restartFeature, resumeWorkerSessionId, fixTasks } = params as {
+					featureId: string;
+					restartFeature?: boolean;
+					resumeWorkerSessionId?: string;
+					fixTasks?: { id: string; skillName: string; description?: string; fulfills?: string[]; preconditions?: string[]; expectedBehavior?: string[] }[];
+				};
+				const res = await executeFeatureRun(ctx.cwd, featureId, { restartFeature, resumeWorkerSessionId, fixTasks });
+				if (!res.ok) return { content: [{ type: "text", text: res.message }], details: { error: res.error } };
+				return { content: [{ type: "text", text: res.report }], details: { status: res.run.status, pauseReason: res.run.pauseReason } };
+			},
+		}),
+	);
+}

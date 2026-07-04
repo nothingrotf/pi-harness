@@ -12,7 +12,7 @@
  */
 import { appendProgress } from "./handoff.ts";
 import { type FeatureRun, type FeatureRunLoopDeps, type FeatureRunStatus, runLoop, type SpawnFn } from "./feature-runner.ts";
-import { loadOrBuildFeatureRun, readPlan, writeFeatureRun } from "./plan.ts";
+import { completionGate, loadOrBuildFeatureRun, readPlan, writeFeatureRun } from "./plan.ts";
 
 /** Heartbeat default do headless (doc 07: FTi=180000, 3 min) — beacon de vida em runs longos. */
 const HEADLESS_HEARTBEAT_MS = 180000;
@@ -31,6 +31,8 @@ export interface HeadlessOpts {
 	signal?: AbortSignal;
 	/** intervalo do heartbeat (default 3 min); 0 desliga. */
 	heartbeatMs?: number;
+	/** ship-gate skills a pular (skippedGateSkills(config)) — paridade com o run headless. */
+	gateSkip?: ReadonlySet<string>;
 }
 
 export type HeadlessStage = "converge" | "run";
@@ -70,13 +72,18 @@ export async function runHeadlessFeature(cwd: string, opts: HeadlessOpts): Promi
 		spawn: opts.spawn,
 		persist: opts.persist ?? ((r) => writeFeatureRun(cwd, r)),
 		log,
+		gateSkip: opts.gateSkip,
+		// End-of-run gate (droid parity): só completa com TODAS as assertions do contrato `passed`.
+		// Bypass quando o qa-validator (quem flipa status.json) foi PULADO — senão o gate deadlocka.
+		completionGate: opts.gateSkip?.has("harness-qa-validator") ? undefined : () => completionGate(cwd, opts.featureId),
 	};
 	const final = await runLoop(cwd, run, deps, opts.signal, { resume, heartbeatMs: opts.heartbeatMs ?? HEADLESS_HEARTBEAT_MS });
 	return {
 		ok: final.status === "completed",
 		stage: "run",
 		status: final.status,
-		reason: final.pauseReason,
+		// pauseReason cobre `paused`; turnReason distingue os orchestrator_turn (completion_gate_failed vs step_returned)
+		reason: final.pauseReason ?? final.turnReason,
 		run: final,
 	};
 }

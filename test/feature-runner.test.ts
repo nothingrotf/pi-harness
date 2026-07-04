@@ -76,6 +76,46 @@ test("runLoop: returnToOrchestrator também devolve controle", async () => {
 	assert.equal(run.status, "orchestrator_turn");
 });
 
+test("runLoop: success + returnToOrchestrator COMPLETA o step (regressão: gate verde re-corria até estourar o budget)", async () => {
+	// Ship gates reportam SEMPRE returnToOrchestrator:true — conclusão e controlo são ortogonais.
+	const run = planFeatureRun("feat-x", tasks("T1"), NOW);
+	const gateOutcome: SpawnOutcome = { code: 0, success: true, returnToOrchestrator: true };
+	// passada 1: impl completa, code-review corre e devolve (verde)
+	await runLoop("/repo", run, deps(spawnFrom({ "ship-gate-code-review": gateOutcome, "ship-gate-qa-validator": gateOutcome, "ship-gate-deliver": gateOutcome })));
+	assert.equal(run.status, "orchestrator_turn");
+	const review = run.steps.find((s) => s.id === "ship-gate-code-review");
+	assert.equal(review?.status, "completed", "gate verde NÃO regride a pending");
+	assert.equal(review?.attempts, 1, "uma tentativa basta");
+	// resumes seguintes avançam pelos gates restantes sem re-correr os concluídos
+	const order: string[] = [];
+	const spawn: SpawnFn = async (step) => {
+		order.push(step.id);
+		return gateOutcome;
+	};
+	await runLoop("/repo", run, deps(spawn));
+	await runLoop("/repo", run, deps(spawn));
+	assert.deepEqual(order, ["ship-gate-qa-validator", "ship-gate-deliver"], "cada resume corre SÓ o próximo gate pendente");
+	assert.ok(run.steps.every((s) => s.status === "completed"));
+});
+
+test("insertFixTask: re-arma ship gates completed (regressão: assertions da fix nunca viravam passed → deadlock)", () => {
+	const run = planFeatureRun("feat-x", tasks("T1"), NOW);
+	injectShipGate(run);
+	for (const s of run.steps) {
+		s.status = "completed";
+		s.attempts = 3;
+	}
+	insertFixTask(run, { id: "FIX1", skillName: "backend-worker", fulfills: ["A-NEW"] });
+	const gates = run.steps.filter((s) => s.kind === "ship-gate");
+	assert.ok(gates.length > 0);
+	for (const g of gates) {
+		assert.equal(g.status, "pending", `${g.id} re-armado para re-validar a fix`);
+		assert.equal(g.attempts, 0, `${g.id} ganha ciclo de validação fresco`);
+	}
+	const impl = run.steps.find((s) => s.id === IMPL_STEP_ID);
+	assert.equal(impl?.status, "completed", "steps de task concluídos NÃO regridem");
+});
+
 test("runLoop: ship gate falha (harness-code-review) → orchestrator_turn; fix task corre antes do gate no resume", async () => {
 	const run = planFeatureRun("feat-x", tasks("T1"), NOW);
 	// 1ª passada: T1 ok, harness-code-review falha
@@ -232,4 +272,28 @@ test("injectShipGate: honra o skip set (skipScrutiny/skipUserTesting)", () => {
 	const r2 = planFeatureRun("f", [{ id: "T1", skillName: "w" }]);
 	injectShipGate(r2, new Set(["harness-code-review", "harness-qa-validator", "harness-deliver"]));
 	assert.equal(r2.steps.filter((s) => s.kind === "ship-gate").length, 0);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// completionGate dep (droid: end-of-mission gate — nunca completed com assertion pendente)
+
+test("runLoop: completionGate ok:false → orchestrator_turn + completion_gate_failed (nunca completed)", async () => {
+	const run = planFeatureRun("f", [{ id: "T1", skillName: "w" }], () => "t");
+	const events: string[] = [];
+	const final = await runLoop("/x", run, {
+		spawn: async () => ({ code: 0, success: true }),
+		log: (ev) => events.push(ev),
+		completionGate: () => ({ ok: false, failing: ["A1"] }),
+	});
+	assert.equal(final.status, "orchestrator_turn");
+	assert.ok(events.includes("completion_gate_failed"));
+});
+
+test("runLoop: completionGate ok:true (ou ausente) → completed", async () => {
+	const r1 = planFeatureRun("f", [{ id: "T1", skillName: "w" }], () => "t");
+	const f1 = await runLoop("/x", r1, { spawn: async () => ({ code: 0, success: true }), completionGate: () => ({ ok: true, failing: [] }) });
+	assert.equal(f1.status, "completed");
+	const r2 = planFeatureRun("f", [{ id: "T1", skillName: "w" }], () => "t");
+	const f2 = await runLoop("/x", r2, { spawn: async () => ({ code: 0, success: true }) });
+	assert.equal(f2.status, "completed", "sem gate injetado → compat (completa)");
 });

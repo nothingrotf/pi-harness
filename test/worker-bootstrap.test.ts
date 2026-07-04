@@ -28,16 +28,16 @@ test("buildWorkerBootstrap: task → harness-worker-base, depois a skill, depois
 	assert.match(m, /feature "feat-x"/);
 });
 
-test("buildWorkerBootstrap: impl step multi-task → lista COMPLETA, uma sessão, UM EndFeatureRun", () => {
+test("buildWorkerBootstrap: impl multi-task → loop next_task (uma sessão, sem lista inline, UM EndFeatureRun)", () => {
 	const m = buildWorkerBootstrap(impl, { featureId: "feat-x", workerSessionId: "ws-1" });
-	assert.match(m, /ONE continuous session for the WHOLE feature/);
-	assert.match(m, /you own ALL 2 tasks/);
-	assert.match(m, /work through EVERY task below \*\*in order, in THIS session/);
-	assert.match(m, /EndFeatureRun \*\*ONCE\*\*/);
-	assert.match(m, /task_progress/);
-	assert.match(m, /"id": "T1"/);
-	assert.match(m, /"id": "T2"/);
-	assert.match(m, /"skillName": "frontend-worker"/, "skill de cada task aparece (heterogêneo)");
+	assert.match(m, /ONE continuous session for the WHOLE feature \(2 tasks\)/);
+	assert.match(m, /next_task\(\{ featureId: "feat-x" \}\)/, "puxa cada task via next_task");
+	assert.match(m, /You MUST commit/);
+	assert.match(m, /EndFeatureRun \*\*once\*\*/);
+	assert.match(m, /2 tasks \(T1, T2\)/, "lista os ids pra orientação");
+	// a fonte de verdade é o tool: NADA de despejar a spec completa no bootstrap.
+	assert.doesNotMatch(m, /```json/);
+	assert.doesNotMatch(m, /"skillName": "frontend-worker"/);
 });
 
 test("buildWorkerBootstrap: ship gate pula harness-worker-base e invoca o validator direto", () => {

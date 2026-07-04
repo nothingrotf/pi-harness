@@ -1,41 +1,49 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildRunDispatch } from "../src/run-dispatch.ts";
+import { buildResumeDispatch, buildRunDispatch } from "../src/run-dispatch.ts";
 
-test("buildRunDispatch: todos os utilitários ativos → TODO + subagent + advisor + ask_user_question", () => {
+test("buildRunDispatch: droid model — orchestrator chama run_feature; NUNCA spawna worker via Agent", () => {
 	const m = buildRunDispatch("add-login", { todo: true, subagent: true, advisor: true, askUser: true });
 	assert.match(m, /harness-orchestrator/);
 	assert.match(m, /\.harness\/runs\/add-login\/plan\.json/);
 	assert.match(m, /status\.json/);
-	// TODO Plan: um por task + 3 ship-gate todos (code-review, qa-validator, deliver)
+	// o runner é o executor: run_feature BLOCKING
+	assert.match(m, /`run_feature` tool/);
+	assert.match(m, /BLOCKING/);
+	assert.match(m, /ONE session-backed worker/);
+	assert.match(m, /next_task/);
+	// legacy REMOVIDO: nada de spawnar harness-worker via Agent
+	assert.doesNotMatch(m, /subagent_type: `harness-worker`/);
+	assert.doesNotMatch(m, /spawn ONE fresh worker via the `Agent` tool/);
+	// Agent só para análise
+	assert.match(m, /analysis\/investigation delegation only|analysis ONLY/);
+	// TODO Plan: um por ROUND de run_feature (NÃO por task — blocking, ficaria stale mid-run)
 	assert.match(m, /`todo` tool/);
-	assert.match(m, /ship gate: harness-code-review/);
-	assert.match(m, /ship gate: harness-qa-validator/);
-	assert.match(m, /ship gate: harness-deliver/);
-	// UM worker pra feature inteira (paridade droid), não um por task
-	assert.match(m, /`subagent` tool/);
-	assert.match(m, /agent: `harness-worker`/);
-	assert.match(m, /harness-worker-base/);
-	assert.match(m, /EndFeatureRun/);
-	assert.match(m, /ONE worker that owns the whole feature/);
-	assert.match(m, /FULL ordered task list/);
-	assert.doesNotMatch(m, /one worker per task\b(?! \()/, "não instrui spawn por-task");
-	// ship gate em ordem
-	assert.match(m, /harness-code-review/);
-	assert.match(m, /harness-qa-validator/);
+	assert.match(m, /one todo per `run_feature` ROUND/);
+	assert.match(m, /NOT one per task/);
+	assert.match(m, /ship gate: harness-code-review → harness-qa-validator → harness-deliver/);
+	assert.match(m, /one todo per fix round/);
+	// handling de retorno: os 3 status + modos de resume
+	assert.match(m, /`completed`/);
+	assert.match(m, /`orchestrator_turn`/);
+	assert.match(m, /`paused`/);
+	assert.match(m, /fixTasks/);
+	assert.match(m, /restartFeature/);
+	assert.match(m, /resumeWorkerSessionId/);
+	assert.match(m, /Cap at 5 rounds/);
 	// utilitários reforçados
 	assert.match(m, /`advisor`/);
 	assert.match(m, /ask_user_question/);
-	assert.match(m, /Cap at 5 attempts/);
 	assert.match(m, /Use the available utilities/);
 });
 
-test("buildRunDispatch: sem utilitários → degrada (in-session), ainda roda o ship gate", () => {
+test("buildRunDispatch: sem utilitários → ainda usa run_feature (o runner é o único executor)", () => {
 	const m = buildRunDispatch("x", {});
+	assert.match(m, /`run_feature` tool/);
 	assert.doesNotMatch(m, /`todo` tool/);
-	assert.doesNotMatch(m, /`subagent` tool/);
+	assert.doesNotMatch(m, /`Agent` \(/, "sem o util Agent na lista de utilitários");
+	assert.doesNotMatch(m, /delegate root-cause analysis to `Agent`/);
 	assert.doesNotMatch(m, /`advisor`/);
-	assert.match(m, /deliver the feature in-session/);
 	assert.match(m, /harness-code-review/);
 	assert.match(m, /harness-qa-validator/);
 	assert.match(m, /harness-deliver/);
@@ -43,26 +51,36 @@ test("buildRunDispatch: sem utilitários → degrada (in-session), ainda roda o 
 	assert.match(m, /return to the user with the specific blocker/);
 });
 
-test("buildRunDispatch: gates pulam os passos do ship gate (skipScrutiny/skipUserTesting/skipDelivery)", () => {
+test("buildResumeDispatch: 3 modos (continue · restart · sessão específica) → run_feature", () => {
+	const def = buildResumeDispatch("feat-x");
+	assert.match(def, /run_feature/);
+	assert.match(def, /featureId="feat-x"/);
+	assert.match(def, /re-attach the paused worker session/i);
+	assert.doesNotMatch(def, /restartFeature: true/);
+
+	const restart = buildResumeDispatch("feat-x", { restartFeature: true });
+	assert.match(restart, /restartFeature: true/);
+	assert.match(restart, /FROM SCRATCH/);
+
+	const pick = buildResumeDispatch("feat-x", { resumeWorkerSessionId: "ws_abc" });
+	assert.match(pick, /resumeWorkerSessionId: "ws_abc"/);
+	assert.match(pick, /SPECIFIC worker session/);
+});
+
+test("buildRunDispatch: gates pulados são anotados (o runner os pula de fato)", () => {
 	const full = buildRunDispatch("f", { todo: true, subagent: true });
 	assert.match(full, /harness-code-review/);
 	assert.match(full, /harness-qa-validator/);
 	assert.match(full, /harness-deliver/);
-	assert.match(full, /ship gate: harness-deliver/);
+	assert.match(full, /ship gate: harness-code-review → harness-qa-validator → harness-deliver/);
 	const all = buildRunDispatch("f", { todo: true, subagent: true }, { skipScrutiny: true, skipUserTesting: true, skipDelivery: true });
-	assert.doesNotMatch(all, /harness-code-review/);
-	assert.doesNotMatch(all, /harness-qa-validator/);
-	assert.doesNotMatch(all, /harness-deliver/);
+	assert.doesNotMatch(all, /ship gate:/);
 	assert.match(all, /fully SKIPPED/);
 	const partial = buildRunDispatch("f", { todo: true }, { skipScrutiny: true });
-	assert.doesNotMatch(partial, /harness-code-review/);
-	assert.match(partial, /harness-qa-validator/);
-	assert.match(partial, /harness-deliver/);
+	assert.doesNotMatch(partial, /ship gate: harness-code-review/);
+	assert.match(partial, /ship gate: harness-qa-validator → harness-deliver/);
 	assert.match(partial, /SKIPPED by mission config/);
-	// só delivery pulado → os outros dois rodam
-	const noDelivery = buildRunDispatch("f", { todo: true, subagent: true }, { skipDelivery: true });
-	assert.match(noDelivery, /harness-code-review/);
-	assert.match(noDelivery, /harness-qa-validator/);
-	assert.doesNotMatch(noDelivery, /harness-deliver/);
-	assert.match(noDelivery, /delivery\/deliver SKIPPED/);
+	// qa pulado → o orchestrator atualiza status.json ele mesmo
+	const noQa = buildRunDispatch("f", { todo: true }, { skipUserTesting: true });
+	assert.match(noQa, /you update status\.json yourself/);
 });

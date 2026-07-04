@@ -53,6 +53,8 @@ export interface RpcSpawnOpts {
 	clientFactory?: RpcClientFactory;
 	/** hook de observação dos AgentEvents (opcional). */
 	onEvent?: (step: FeatureStep, event: unknown) => void;
+	/** hook do client VIVO (→ run-registry pro steer, análogo do addUserMessage); null = terminou. */
+	onClient?: (client: RpcWorkerClient | null, step: FeatureStep) => void;
 }
 
 // ── Carga lazy/guarded do RpcClient oficial ──────────────────────────────────
@@ -71,12 +73,31 @@ async function ensureRpcClient(): Promise<ClientCtor | null> {
 			const url = resolve?.("@earendil-works/pi-coding-agent");
 			if (url) cliPath = fileURLToPath(new URL("cli.js", url));
 		} catch {
-			// sem cliPath → RpcClient usa o default (best-effort)
+			// sem cliPath → tenta o fallback abaixo
 		}
+		if (!cliPath || !fs.existsSync(cliPath)) cliPath = cliPathFromArgv(process.argv);
 	} catch {
 		ctor = null; // pacote pi indisponível neste contexto
 	}
 	return ctor;
+}
+
+/**
+ * Fallback de cliPath: o entry script do PRÓPRIO pi em execução (process.argv[1], realpath p/
+ * resolver o symlink do bin). Cobre o caso extension-source-load, onde import.meta.resolve não
+ * enxerga o pacote (a extensão vive fora da node_modules do pi) e o default RELATIVO do RpcClient
+ * ("dist/cli.js", cwd do repo) spawnaria um child morto — o worker silenciosamente devolvia code 0
+ * sem handoff. Exportado p/ teste.
+ */
+export function cliPathFromArgv(argv: readonly string[]): string | undefined {
+	const entry = argv?.[1];
+	if (!entry) return undefined;
+	try {
+		const real = fs.realpathSync(entry);
+		return /\bcli\.js$/.test(real) && fs.existsSync(real) ? real : undefined;
+	} catch {
+		return undefined;
+	}
 }
 
 const defaultClientFactory: RpcClientFactory = async (cfg) => {
@@ -129,6 +150,7 @@ export function makeRpcSpawn(opts: RpcSpawnOpts): SpawnFn {
 		try {
 			await client.start();
 			started = true;
+			opts.onClient?.(client, step);
 			await new Promise<void>((resolve) => {
 				let idle: ReturnType<typeof setTimeout> | null = null;
 				let off: (() => void) | null = null;
@@ -185,6 +207,7 @@ export function makeRpcSpawn(opts: RpcSpawnOpts): SpawnFn {
 			} catch {
 				// ignore
 			}
+			opts.onClient?.(null, step);
 			rm(dir);
 		}
 
@@ -192,7 +215,7 @@ export function makeRpcSpawn(opts: RpcSpawnOpts): SpawnFn {
 		if (usageLimit) return { code: null, usageLimit: true };
 		if (inactivity) return { code: null, inactivity: true };
 		// Sucesso/returnToOrchestrator vêm do handoff que o worker escreveu via EndFeatureRun.
-		const out = handoffOutcome(ctx.cwd, opts.featureId, step.id);
+		const out = handoffOutcome(ctx.cwd, opts.featureId, step.id, workerSessionId);
 		return { code: 0, success: out.success, returnToOrchestrator: out.returnToOrchestrator };
 	};
 }
