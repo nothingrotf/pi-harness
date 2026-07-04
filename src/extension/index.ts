@@ -37,7 +37,7 @@ import { registerDeliveryStoreTool } from "../delivery-store-tool.ts";
 import { buildConvergeDispatch } from "../converge-dispatch.ts";
 import { buildResumeDispatch, buildRunDispatch } from "../run-dispatch.ts";
 import { defaultModelRef, loadModelConfig, modelOptions, readPiSettings, saveModelConfig, skippedGateSkills, summarizeConfig } from "../model-config.ts";
-import { buildFeatureRun, featureProgress, readFeatureRun, readPlan } from "../plan.ts";
+import { featureProgress, readPlan } from "../plan.ts";
 import { appendProgress } from "../handoff.ts";
 import { computeFingerprint } from "../fingerprint.ts";
 import { ensureProfile } from "../profile.ts";

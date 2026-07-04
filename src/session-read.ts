@@ -25,14 +25,16 @@ interface PiSessionApi {
 
 // undefined = ainda não tentou; null = indisponível; objeto = pronto.
 let api: PiSessionApi | null | undefined;
-/** Promise da carga do pacote pi (fire-and-forget) — exportada p/ os testes aguardarem. */
-export const sessionApiReady: Promise<void> = (async () => {
+/** Promise da carga do pacote pi (fire-and-forget) — exportada p/ os testes aguardarem.
+ * Resolve com a DISPONIBILIDADE (true = API nativa pronta, false = fallback). */
+export const sessionApiReady: Promise<boolean> = (async () => {
 	try {
 		const m = (await import("@earendil-works/pi-coding-agent")) as unknown as PiSessionApi;
 		api = m && typeof m.parseSessionEntries === "function" ? m : null;
 	} catch {
 		api = null; // pi não disponível neste contexto → o caller usa o fallback
 	}
+	return api !== null;
 })();
 
 // Cache por ficheiro com TETO (insertion-order eviction): sem ele, um entry por transcript de

@@ -13,7 +13,7 @@
  * vêm dos módulos puros (control-model/control-rows/control-screen/control-draw).
  */
 import { spawn as spawnProcess } from "node:child_process";
-import type { ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { type Component, matchesKey, type SelectItem, SelectList, sliceByColumn, visibleWidth } from "@earendil-works/pi-tui";
 import { clipToWidth, selectListTheme } from "./control-frame.ts";
 import { drawMain, drawSub, mainLayout, subBodyRows } from "./control-draw.ts";
@@ -44,7 +44,6 @@ import {
 	coverageSummary,
 	cycleFilter,
 	handoffLines,
-	liveActiveWorkerText,
 	liveAgentRows,
 	parseNumbered,
 	progressLogLines,

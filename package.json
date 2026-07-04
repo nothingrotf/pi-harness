@@ -3,20 +3,42 @@
   "version": "0.0.1",
   "description": "Harness spec-driven feature-scoped para o Pi: profile cacheado + runs incrementais",
   "type": "module",
-  "keywords": ["pi-package", "pi", "pi-coding-agent", "harness", "spec-driven"],
+  "keywords": [
+    "pi-package",
+    "pi",
+    "pi-coding-agent",
+    "harness",
+    "spec-driven"
+  ],
   "pi": {
-    "extensions": ["./src/extension/index.ts"],
-    "skills": ["./skills"]
+    "extensions": [
+      "./src/extension/index.ts"
+    ],
+    "skills": [
+      "./skills"
+    ]
   },
   "scripts": {
-    "test": "node --experimental-strip-types --test test/*.test.ts"
+    "test": "node --experimental-strip-types --test test/*.test.ts",
+    "typecheck": "tsc --noEmit"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",
     "@earendil-works/pi-tui": "*"
   },
   "peerDependenciesMeta": {
-    "@earendil-works/pi-coding-agent": { "optional": true },
-    "@earendil-works/pi-tui": { "optional": true }
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    },
+    "@earendil-works/pi-tui": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "0.80.3",
+    "@earendil-works/pi-tui": "0.80.3",
+    "typescript": "^5.7.0",
+    "typebox": "1.1.38",
+    "@types/node": "^22.0.0"
   }
 }

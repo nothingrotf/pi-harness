@@ -9,6 +9,7 @@ function model(over: Partial<ControlModel> = {}): ControlModel {
 		exists: true,
 		state: "running",
 		activeMs: null,
+		delivery: null,
 		counts: { completed: 1, pending: 2, estimate: 2, cancelled: 0, total: 5 },
 		gateInjected: false,
 		assertions: { passed: 6, failed: 0, pending: 6, total: 12 },
@@ -65,7 +66,7 @@ test("buildRunCard: sem assertions → sem linha Assertions; Progress segue os w
 
 test("buildRunCard: liveAgents (subagent rodando) viram o Worker row + Current Task", () => {
 	const c = buildRunCard(model({ active: null, workers: [] }), {
-		liveAgents: [{ index: 0, taskId: "T2", agent: "harness-worker", label: "Run T2 contracts-worker", status: "running", toolCount: 10, tokens: 72400 }],
+		liveAgents: [{ index: 0, taskId: "T2", agent: "harness-worker", label: "Run T2 contracts-worker", status: "running", toolCount: 10, tokens: 72400, recentActivity: [] }],
 	});
 	assert.equal(c.rows.find((r) => r.label === "Current Task")?.value, "T2", "task vem do subagent ao vivo (sem feature-run)");
 	const w = c.rows.find((r) => r.label === "Worker")?.value ?? "";

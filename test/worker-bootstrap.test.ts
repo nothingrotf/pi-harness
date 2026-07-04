@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 import type { FeatureStep } from "../src/feature-runner.ts";
 import { buildWorkerBootstrap } from "../src/worker-bootstrap.ts";
 
-const task: FeatureStep = { id: "T1", kind: "task", skillName: "backend-worker", fulfills: ["A-1"], status: "pending", attempts: 0 };
-const gate: FeatureStep = { id: "ship-gate-code-review", kind: "ship-gate", skillName: "harness-code-review", status: "pending", attempts: 0 };
+const task: FeatureStep = { id: "T1", kind: "task", skillName: "backend-worker", fulfills: ["A-1"], status: "pending", attempts: 0, workerSessionIds: [] };
+const gate: FeatureStep = { id: "ship-gate-code-review", kind: "ship-gate", skillName: "harness-code-review", status: "pending", attempts: 0, workerSessionIds: [] };
 const impl: FeatureStep = {
 	id: "implement",
 	kind: "task",
@@ -16,6 +16,7 @@ const impl: FeatureStep = {
 	fulfills: ["A-1", "A-2"],
 	status: "pending",
 	attempts: 0,
+		workerSessionIds: [],
 };
 
 test("buildWorkerBootstrap: task → harness-worker-base, depois a skill, depois EndFeatureRun", () => {

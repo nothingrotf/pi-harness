@@ -9,8 +9,8 @@ import { buildWorkerSystemPrompt, isUsageLimitEvent, rpcWorkerArgs, rpcWorkerPro
 function tmp(): string {
 	return fs.mkdtempSync(path.join(os.tmpdir(), "harness-fspawn-"));
 }
-const task: FeatureStep = { id: "T1", kind: "task", skillName: "backend-worker", fulfills: ["A-1"], status: "pending", attempts: 0 };
-const gate: FeatureStep = { id: "ship-gate-code-review", kind: "ship-gate", skillName: "harness-code-review", status: "pending", attempts: 0 };
+const task: FeatureStep = { id: "T1", kind: "task", skillName: "backend-worker", fulfills: ["A-1"], status: "pending", attempts: 0, workerSessionIds: [] };
+const gate: FeatureStep = { id: "ship-gate-code-review", kind: "ship-gate", skillName: "harness-code-review", status: "pending", attempts: 0, workerSessionIds: [] };
 
 test("rpcWorkerArgs: launch flags p/ `pi --mode rpc` (sem --mode/--print/prompt posicional)", () => {
 	const a = rpcWorkerArgs(task, "/tmp/sys.md");
@@ -118,6 +118,7 @@ test("buildWorkerSystemPrompt: impl step multi-task inlina TODAS as skills disti
 		fulfills: ["A-1", "A-2", "A-3"],
 		status: "pending",
 		attempts: 0,
+		workerSessionIds: [],
 	};
 	const sys = buildWorkerSystemPrompt(impl, cwd, { featureId: "feat-x", workerSessionId: "ws" });
 	assert.match(sys, /# harness-worker-base/);

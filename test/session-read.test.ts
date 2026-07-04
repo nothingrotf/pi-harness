@@ -5,21 +5,26 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { agentOutputFilePath, readAgentOutputEntries, readNativeSessionFile, readNativeWorkerEntries, readNativeWorkerTree, resolveAgentOutputFile, sessionApiReady } from "../src/session-read.ts";
 
-// Garante que o reader nativo (pi 0.80.3 get_entries/get_tree) é SEGURO de importar/usar em
-// qualquer contexto: sem o pacote pi (testes/CI ou pi antigo), o dynamic import guarded resolve
-// para "indisponível" e os readers devolvem null SEM lançar — o caller (control-view) cai pro
-// fallback tolerante (control-worker). Isto é o "garante que nada se quebre".
-test("session-read: sem o pacote pi → null gracioso, nunca lança", async () => {
-	await sessionApiReady; // espera a tentativa de import resolver (→ indisponível no teste)
+// O reader nativo (pi 0.80.3 get_entries/get_tree) é SEGURO de usar em qualquer contexto:
+// ficheiro ausente/path inválido → null SEM lançar (o caller cai pro fallback tolerante).
+// Com o pi como devDependency, o caminho NATIVO agora é exercitado nos testes: um transcript
+// válido devolve entries parseadas. (Sem o pacote — ambiente degradado — tudo devolve null.)
+test("session-read: null gracioso em ficheiro ausente; transcript válido parseia via API nativa", async () => {
+	const apiAvailable = await sessionApiReady;
 	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "harness-sr-"));
 	const dir = path.join(cwd, ".harness", "runs", "feat-x", "sessions");
 	fs.mkdirSync(dir, { recursive: true });
 	fs.writeFileSync(path.join(dir, "ts_ws_1.jsonl"), JSON.stringify({ type: "message", message: { role: "user", content: [{ type: "text", text: "hi" }] } }));
 
-	assert.equal(readNativeWorkerEntries(cwd, "feat-x", "ws_1"), null, "pi ausente → null (fallback)");
-	assert.equal(readNativeWorkerTree(cwd, "feat-x", "ws_1"), null);
-	assert.equal(readNativeSessionFile("/nope/does-not-exist.jsonl"), null);
+	assert.equal(readNativeSessionFile("/nope/does-not-exist.jsonl"), null, "path inexistente → null, nunca lança");
 	assert.equal(readNativeWorkerEntries(cwd, "feat-x", "absent-wsid"), null, "sem ficheiro → null");
+	const entries = readNativeWorkerEntries(cwd, "feat-x", "ws_1");
+	if (apiAvailable) {
+		assert.ok(entries && entries.length > 0, "pi disponível (devDependency) → transcript parseado");
+	} else {
+		assert.equal(entries, null, "pi ausente → null (fallback)");
+		assert.equal(readNativeWorkerTree(cwd, "feat-x", "ws_1"), null);
+	}
 });
 
 test("agentOutputFilePath: layout Claude-Code do @tintinweb (pi-subagents-uid/encodeCwd/sessionId/tasks/agentId.output)", () => {

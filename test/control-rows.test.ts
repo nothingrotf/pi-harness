@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import type { ControlModel, TaskRow, WorkerRow } from "../src/control-model.ts";
+import type { ControlModel, TaskRow } from "../src/control-model.ts";
 import {
 	coverageDisplayRows,
 	coverageSummary,
@@ -32,6 +32,8 @@ function model(over: Partial<ControlModel> = {}): ControlModel {
 		exists: true,
 		state: "running",
 		gateInjected: false,
+		activeMs: null,
+		counts: { completed: 0, pending: 0, estimate: 0, cancelled: 0, total: 0 },
 		assertions: { passed: 1, failed: 0, pending: 1, total: 2 },
 		tasks: [
 			task({ id: "T1", status: "completed", description: "bootstrap" }),
@@ -47,9 +49,9 @@ function model(over: Partial<ControlModel> = {}): ControlModel {
 		],
 		handoffsRaw: [],
 		progress: [
-			{ ts: "t1", rel: "3m", text: "plan stored: 3 tasks / 2 assertions" },
-			{ ts: "t2", rel: "2m", text: "T1 completed ✓" },
-			{ ts: "t3", rel: "1m", text: "T2 started" },
+			{ ts: "t1", rel: "3m", text: "plan stored: 3 tasks / 2 assertions", segments: [] },
+			{ ts: "t2", rel: "2m", text: "T1 completed ✓", segments: [] },
+			{ ts: "t3", rel: "1m", text: "T2 started", segments: [] },
 		],
 		coverage: [
 			{ assertion: "A1", taskId: "T2", status: "passed" },

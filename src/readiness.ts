@@ -20,7 +20,6 @@ import {
 	CRITERION_BY_ID,
 	isLocallySkippable,
 	READINESS_CRITERIA,
-	type Scope,
 } from "./readiness-criteria.ts";
 
 export type { Category, Criterion, Scope } from "./readiness-criteria.ts";

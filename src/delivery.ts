@@ -65,7 +65,6 @@ export function deliveryPath(cwd: string, featureId: string): string {
 	return path.join(deliveryDir(cwd, featureId), "record.json");
 }
 
-const EMPTY_LINKS: LinkedIssues = { linearIssueIds: [], jiraIssueKeys: [], candidateKeys: [] };
 
 function strArr(v: unknown): string[] {
 	return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];

@@ -21,6 +21,9 @@ function model(over: Partial<ControlModel> = {}): ControlModel {
 		handoffsRaw: [],
 		progress: [],
 		coverage: [],
+		activeMs: null,
+		counts: { completed: 0, pending: 0, estimate: 0, cancelled: 0, total: 0 },
+		delivery: null,
 		...over,
 	};
 }

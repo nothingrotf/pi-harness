@@ -123,6 +123,7 @@ test("resolveChoice: override do role > fallback; thinking 'off' passa; undefine
 	const cfg: HarnessModelConfig = {
 		version: 1,
 		roles: { orchestrator: { model: "anthropic/claude-opus-4-8", thinking: "xhigh" }, worker: { thinking: "off" }, validator: {} },
+		gates: { skipScrutiny: false, skipUserTesting: false, skipDelivery: false },
 	};
 	// orchestrator: usa o override
 	assert.deepEqual(resolveChoice(cfg, "orchestrator", "fallback/model"), { model: "anthropic/claude-opus-4-8", thinking: "xhigh" });
@@ -147,14 +148,14 @@ test("effortLabel/modelLabel: capitaliza effort; usa label do registry senão o 
 
 test("roleSummary: display combinado 'Model (Effort)'", () => {
 	const labels = { "anthropic/claude-opus-4-8": "Claude Opus 4.8" };
-	const cfg: HarnessModelConfig = { version: 1, roles: { orchestrator: { model: "anthropic/claude-opus-4-8", thinking: "xhigh" }, worker: {}, validator: { thinking: "high" } } };
+	const cfg: HarnessModelConfig = { version: 1, roles: { orchestrator: { model: "anthropic/claude-opus-4-8", thinking: "xhigh" }, worker: {}, validator: { thinking: "high" } }, gates: { skipScrutiny: false, skipUserTesting: false, skipDelivery: false } };
 	assert.equal(roleSummary(cfg, "orchestrator", { labels }), "Claude Opus 4.8 (XHigh)");
 	assert.equal(roleSummary(cfg, "worker", { labels, fallback: "anthropic/claude-opus-4-8" }), "inherit→Claude Opus 4.8 (inherit)");
 	assert.equal(roleSummary(cfg, "validator", { labels }), "inherit→session (High)");
 });
 
 test("summarizeConfig: uma linha por role, display combinado", () => {
-	const cfg: HarnessModelConfig = { version: 1, roles: { orchestrator: { model: "anthropic/claude-opus-4-8", thinking: "xhigh" }, worker: {}, validator: { thinking: "high" } } };
+	const cfg: HarnessModelConfig = { version: 1, roles: { orchestrator: { model: "anthropic/claude-opus-4-8", thinking: "xhigh" }, worker: {}, validator: { thinking: "high" } }, gates: { skipScrutiny: false, skipUserTesting: false, skipDelivery: false } };
 	const s = summarizeConfig(cfg, { fallback: "anthropic/claude-opus-4-8", labels: { "anthropic/claude-opus-4-8": "Claude Opus 4.8" } });
 	assert.match(s, /orchestrator: Claude Opus 4.8 \(XHigh\)/);
 	assert.match(s, /worker: inherit→Claude Opus 4.8 \(inherit\)/);

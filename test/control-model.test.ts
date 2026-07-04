@@ -67,7 +67,7 @@ function run(steps: FeatureRun["steps"], over: Partial<FeatureRun> = {}): Featur
 }
 
 function cmodel(over: Partial<ControlModel> = {}): ControlModel {
-	return { featureId: "f", exists: true, state: "running", activeMs: null, counts: { completed: 0, pending: 0, estimate: 0, cancelled: 0, total: 0 }, gateInjected: false, assertions: { passed: 0, failed: 0, pending: 0, total: 0 }, tasks: [], tasksDone: 0, tasksTotal: 0, active: null, workers: [], handoffsRaw: [], progress: [], coverage: [], ...over };
+	return { featureId: "f", exists: true, state: "running", activeMs: null, counts: { completed: 0, pending: 0, estimate: 0, cancelled: 0, total: 0 }, gateInjected: false, assertions: { passed: 0, failed: 0, pending: 0, total: 0 }, tasks: [], tasksDone: 0, tasksTotal: 0, active: null, workers: [], handoffsRaw: [], progress: [], coverage: [], delivery: null, ...over };
 }
 
 function okHandoff(taskId: string, recordedAt: string, over: Partial<PersistedHandoff> = {}): PersistedHandoff {
@@ -244,9 +244,9 @@ test("buildControlModel: plan stored mas run não começou → state ready (não
 
 test("buildTaskRows: junta descrição (plan) com status (run) e marca o ativo", () => {
 	const r = run([
-		{ id: "T1", kind: "task", skillName: "backend-worker", status: "completed", attempts: 1 },
-		{ id: "T2", kind: "task", skillName: "backend-worker", status: "in_progress", attempts: 1, fulfills: ["A1", "A2"] },
-		{ id: "T3", kind: "task", skillName: "frontend-worker", status: "pending", attempts: 0 },
+		{ id: "T1", kind: "task", skillName: "backend-worker", status: "completed", attempts: 1, workerSessionIds: [] },
+		{ id: "T2", kind: "task", skillName: "backend-worker", status: "in_progress", attempts: 1, fulfills: ["A1", "A2"], workerSessionIds: [] },
+		{ id: "T3", kind: "task", skillName: "frontend-worker", status: "pending", attempts: 0, workerSessionIds: [] },
 	]);
 	const rows = buildTaskRows(plan(), r);
 	assert.equal(rows.length, 3);
@@ -318,8 +318,8 @@ test("activeItem: prefere in_progress; senão o próximo pending se running; nul
 	const inProg = activeItem(
 		plan(),
 		run([
-			{ id: "T1", kind: "task", skillName: "w", status: "completed", attempts: 1 },
-			{ id: "T2", kind: "task", skillName: "w", status: "in_progress", attempts: 1 },
+			{ id: "T1", kind: "task", skillName: "w", status: "completed", attempts: 1, workerSessionIds: [] },
+			{ id: "T2", kind: "task", skillName: "w", status: "in_progress", attempts: 1, workerSessionIds: [] },
 		]),
 	);
 	assert.equal(inProg?.id, "T2");
@@ -329,8 +329,8 @@ test("activeItem: prefere in_progress; senão o próximo pending se running; nul
 	const nextPending = activeItem(
 		plan(),
 		run([
-			{ id: "T1", kind: "task", skillName: "w", status: "completed", attempts: 1 },
-			{ id: "T2", kind: "task", skillName: "w", status: "pending", attempts: 0 },
+			{ id: "T1", kind: "task", skillName: "w", status: "completed", attempts: 1, workerSessionIds: [] },
+			{ id: "T2", kind: "task", skillName: "w", status: "pending", attempts: 0, workerSessionIds: [] },
 		]),
 	);
 	assert.equal(nextPending?.id, "T2");
@@ -340,8 +340,8 @@ test("activeItem: ship-gate em progresso vira item kind ship-gate (label = skill
 	const a = activeItem(
 		plan(),
 		run([
-			{ id: "T1", kind: "task", skillName: "w", status: "completed", attempts: 1 },
-			{ id: "ship-gate-code-review", kind: "ship-gate", skillName: "harness-code-review", status: "in_progress", attempts: 1 },
+			{ id: "T1", kind: "task", skillName: "w", status: "completed", attempts: 1, workerSessionIds: [] },
+			{ id: "ship-gate-code-review", kind: "ship-gate", skillName: "harness-code-review", status: "in_progress", attempts: 1, workerSessionIds: [] },
 		]),
 	);
 	assert.equal(a?.kind, "ship-gate");
@@ -413,7 +413,7 @@ test("buildWorkerRows: 1 por handoff (status mapeado) + step ativo running, mais
 		{ taskId: "T1", workerSessionId: "ws1", successState: "success", returnToOrchestrator: false, validatorsPassed: true, handoff: { whatWasImplemented: "x", whatWasLeftUndone: "", verification: { commandsRun: [] } }, recordedAt: "2026-06-29T00:01:00.000Z" },
 		{ taskId: "T2", workerSessionId: "ws2", successState: "failure", returnToOrchestrator: true, validatorsPassed: false, handoff: { whatWasImplemented: "y", whatWasLeftUndone: "z", verification: { commandsRun: [] } }, recordedAt: "2026-06-29T00:02:00.000Z" },
 	];
-	const r = run([{ id: "T3", kind: "task", skillName: "w", status: "in_progress", attempts: 1 }]);
+	const r = run([{ id: "T3", kind: "task", skillName: "w", status: "in_progress", attempts: 1, workerSessionIds: [] }]);
 	const rows = buildWorkerRows(r, handoffs);
 	assert.equal(rows[0].status, "running", "step ativo (running) vem primeiro");
 	assert.equal(rows[0].taskId, "T3");
@@ -474,9 +474,9 @@ test("buildControlModel: integra tudo a partir de inputs em memória", () => {
 		status: { featureId: "feat-x", assertions: { A1: "passed", A2: "pending", A3: "pending" } },
 		run: run(
 			[
-				{ id: "T1", kind: "task", skillName: "w", status: "completed", attempts: 1 },
-				{ id: "T2", kind: "task", skillName: "w", status: "in_progress", attempts: 1 },
-				{ id: "T3", kind: "task", skillName: "w", status: "pending", attempts: 0 },
+				{ id: "T1", kind: "task", skillName: "w", status: "completed", attempts: 1, workerSessionIds: [] },
+				{ id: "T2", kind: "task", skillName: "w", status: "in_progress", attempts: 1, workerSessionIds: [] },
+				{ id: "T3", kind: "task", skillName: "w", status: "pending", attempts: 0, workerSessionIds: [] },
 			],
 			{ status: "running" },
 		),
@@ -498,7 +498,7 @@ test("buildControlModel: integra tudo a partir de inputs em memória", () => {
 // ─── faixa (stripParts) ──────────────────────────────────────────────────────
 
 test("stripParts: barra dos counts; ativo = task/ship-gate/all done; live exceto completed", () => {
-	const common = { featureId: "f", exists: true, activeMs: null, gateInjected: false, tasks: [], tasksDone: 1, tasksTotal: 4, assertions: { passed: 0, failed: 0, pending: 0, total: 0 }, workers: [], handoffsRaw: [], progress: [], coverage: [] } as const;
+	const common = { featureId: "f", exists: true, activeMs: null, gateInjected: false, tasks: [], tasksDone: 1, tasksTotal: 4, assertions: { passed: 0, failed: 0, pending: 0, total: 0 }, workers: [], handoffsRaw: [], progress: [], coverage: [], delivery: null } satisfies Partial<ControlModel>;
 
 	const running = stripParts({ ...common, state: "running", counts: { completed: 3, pending: 3, estimate: 2, cancelled: 0, total: 8 }, active: { id: "T2", kind: "task", label: "x", skillName: "worker", fulfills: [] } }, 16);
 	assert.equal(running.ratio, "3/8");
