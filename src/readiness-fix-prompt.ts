@@ -134,7 +134,7 @@ export type FixPlan =
  * I99({ report, userArgs }) — constrói a variante certa. Port 1:1:
  *  - sem report → "run the evaluation first" (audit)
  *  - report + args → casar semanticamente os sinais pedidos e corrigir em sequência
- *  - report + no args → agrupar por categoria, AskUser categoria → AskUser sinal → corrigir
+ *  - report + no args → agrupar por categoria, ask_user_question categoria → ask_user_question sinal → corrigir
  */
 export function buildFixPlan(snapshot: ReadinessSnapshot | null, userArgs: string): FixPlan {
 	const args = userArgs.trim();
@@ -164,8 +164,8 @@ ${ORCHESTRATION_FOOTER}`;
 	const text = `${HEADER}
 ${renderFailing(failing)}
 ## Your Task
-**Step 1:** Group the failing signals above by their category. Ask the user which category they want to fix using the AskUser tool. Only show categories that have at least one failing signal.
-**Step 2:** Based on the chosen category, present each failing signal in that category as an option in a single AskUser call. Each option is exactly one signal (with its name and current score). The user picks one signal to fix. Do NOT say "select all that apply" or "select one or more".
+**Step 1:** Group the failing signals above by their category. Ask the user which category they want to fix using the ask_user_question tool. Only show categories that have at least one failing signal.
+**Step 2:** Based on the chosen category, present each failing signal in that category as an option in a single ask_user_question call. Each option is exactly one signal (with its name and current score). The user picks one signal to fix. Do NOT say "select all that apply" or "select one or more".
 After the user selects a signal, fix it.
 ${fixInstructions()}
 ${ORCHESTRATION_FOOTER}`;

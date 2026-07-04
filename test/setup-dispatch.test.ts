@@ -2,9 +2,12 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { buildConventionsMapDispatch, buildSetupDispatch, SETUP_PHASES } from "../src/setup-dispatch.ts";
 
-test("SETUP_PHASES: 8 fases do profile (brownfield → store)", () => {
-	assert.equal(SETUP_PHASES.length, 8);
+test("SETUP_PHASES: fases 0-9 do skill + store (numeração 1:1 com harness-setup SKILL.md)", () => {
+	assert.equal(SETUP_PHASES.length, 11);
 	assert.match(SETUP_PHASES[0], /brownfield/i);
+	// numeração alinhada ao skill: architecture é a Phase 2, conventions-map a Phase 9
+	assert.match(SETUP_PHASES[2], /^Phase 2: architecture/);
+	assert.match(SETUP_PHASES[9], /^Phase 9: conventions-map/);
 	assert.match(SETUP_PHASES[SETUP_PHASES.length - 1], /store_profile/);
 	assert.ok(
 		SETUP_PHASES.some((p) => /verify-by-execution/.test(p)),

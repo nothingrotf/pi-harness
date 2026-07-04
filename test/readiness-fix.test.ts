@@ -53,7 +53,7 @@ test("buildFixPlan: report + sem args → variante AskUser por categoria (verbat
 	assert.equal(plan.kind, "prompt");
 	if (plan.kind === "prompt") {
 		assert.match(plan.text, /Group the failing signals above by their category/);
-		assert.match(plan.text, /Ask the user which category they want to fix using the AskUser tool/);
+		assert.match(plan.text, /Ask the user which category they want to fix using the ask_user_question tool/);
 		assert.doesNotMatch(plan.text, /The user asked to fix/);
 	}
 });

@@ -6,16 +6,21 @@
  */
 import type { DispatchTools } from "./readiness-dispatch.ts";
 
-/** The setup phases (one todo each — the "Plan · X/8"). */
+/** The setup phases (one todo each) — numeração 1:1 com o harness-setup SKILL.md (a numeração
+ * divergia: o dispatch dizia "Phase 1: architecture" mas o skill autora architecture na Phase 2,
+ * baralhando o Plan do worker). */
 export const SETUP_PHASES: readonly string[] = [
 	"Phase 0: Brownfield extraction (what the repo declares)",
-	"Phase 1: architecture.md",
-	"Phase 2: services.yaml + init.sh",
-	"Phase 3: harness.md (operational overlay)",
-	"Phase 4: skills/<worker-type>/ (worker system)",
-	"Phase 5: Profile readiness check (verify-by-execution)",
-	"Phase 6: library/",
-	"Phase 7: store_profile (validate + stamp profile.json)",
+	"Phase 1: Understand & plan (iterative exploration)",
+	"Phase 2: architecture.md",
+	"Phase 3: services.yaml + init.sh",
+	"Phase 4: Credentials & accounts",
+	"Phase 5: harness.md (operational overlay)",
+	"Phase 6: skills/<worker-type>/ (worker system)",
+	"Phase 7: Profile readiness check (verify-by-execution)",
+	"Phase 8: library/ (incl. coding-principles.md + repo-facts.md)",
+	"Phase 9: conventions-map.md",
+	"Final: store_profile (validate + stamp profile.json)",
 ];
 
 /** Builds the message that runs the profile setup live (Plan via rpiv-todo when active). */

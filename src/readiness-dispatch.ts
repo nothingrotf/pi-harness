@@ -59,7 +59,7 @@ export function buildFixDispatch(args: string, tools: DispatchTools = {}): strin
 	const a = args.trim();
 	const scope = a
 		? `the failing readiness signals matching "${a}" (match by id, name, or meaning)`
-		: "the failing readiness signals — group them by category and ask the user (AskUser) which to fix";
+		: "the failing readiness signals — group them by category and ask the user (ask_user_question) which to fix";
 	const todoCreate = tools.todo ? " Create one `todo` per signal you will fix, so the Plan tracks them." : "";
 	const todoStart = tools.todo ? " mark its todo in_progress;" : "";
 	const todoDone = tools.todo ? " then mark the todo completed." : "";

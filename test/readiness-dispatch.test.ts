@@ -51,5 +51,5 @@ test("buildFixDispatch: sem subagent → não menciona delegação; sem todo →
 test("buildFixDispatch: sem args → agrupa por categoria + AskUser", () => {
 	const m = buildFixDispatch("", { todo: true });
 	assert.match(m, /group them by category and ask the user/);
-	assert.match(m, /AskUser/);
+	assert.match(m, /ask_user_question/);
 });

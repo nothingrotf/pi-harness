@@ -42,12 +42,18 @@ export interface ReadinessRun {
 	createdAt: string;
 	updatedAt: string;
 	pauseReason?: string;
+	/** budget extra por step concedido no resume após esgotamento (paridade com o FeatureRunner). */
+	retryBudgetBonus?: Record<string, number>;
 }
 
 /** Resultado de spawnar um child. `aborted` = interrompido (SIGINT/abort). */
 export interface SpawnOutcome {
 	code: number | null;
 	aborted?: boolean;
+	/** 402/usage-limit detectado no stream do child → pausa resumível (não é falha do step). */
+	usageLimit?: boolean;
+	/** watchdog de inatividade matou o child → requeue (a tentativa já foi contada). */
+	inactivity?: boolean;
 }
 
 export interface SpawnCtx {
@@ -60,8 +66,10 @@ export type SpawnFn = (step: RunStep, ctx: SpawnCtx) => Promise<SpawnOutcome>;
 export interface RunLoopDeps {
 	/** Spawna a sessão isolada do passo e resolve quando ela termina. */
 	spawn: SpawnFn;
-	/** Checagem determinística de sucesso do audit (snapshot existe + válido). */
-	auditSucceeded: (cwd: string) => boolean;
+	/** Checagem determinística de sucesso do audit (snapshot existe + válido). `sinceIso` = início do
+	 * step: implementações DEVEM exigir snapshot mais novo que isso — um readiness.json PRÉ-EXISTENTE
+	 * fazia um child que não gravou nada "passar". */
+	auditSucceeded: (cwd: string, sinceIso?: string) => boolean;
 	/** Persiste o record (state.json analog). */
 	persist?: (run: ReadinessRun) => void;
 	/** Trilha de eventos (progress_log.jsonl analog). */
@@ -135,7 +143,17 @@ export function planFixRun(items: { criterionId: string; prompt: string }[], now
 export async function runLoop(cwd: string, run: ReadinessRun, deps: RunLoopDeps, signal?: AbortSignal): Promise<ReadinessRun> {
 	const budget = deps.budget ?? STEP_ATTEMPT_BUDGET;
 	cleanupOrphan(run);
+	// Resume após esgotamento: bônus DISCIPLINADO (compara com o budget efetivo, teto 2×base) —
+	// sem isto o resume re-pausava imediatamente (attempts nunca resetam) e o run ficava encalhado.
+	if (run.pauseReason === "step_retry_limit_exceeded") {
+		run.retryBudgetBonus = run.retryBudgetBonus ?? {};
+		for (const s of run.steps) {
+			const bonus = run.retryBudgetBonus[s.id] ?? 0;
+			if (s.attempts >= budget + bonus && bonus < budget * 2) run.retryBudgetBonus[s.id] = bonus + budget;
+		}
+	}
 	run.status = "running";
+	run.pauseReason = undefined; // limpa razão stale (paridade com o FeatureRunner)
 	touch(run, deps);
 
 	while (run.status === "running") {
@@ -149,7 +167,7 @@ export async function runLoop(cwd: string, run: ReadinessRun, deps: RunLoopDeps,
 			run.status = "completed";
 			break;
 		}
-		if (step.attempts >= budget) {
+		if (step.attempts >= budget + (run.retryBudgetBonus?.[step.id] ?? 0)) {
 			run.status = "paused";
 			run.pauseReason = "step_retry_limit_exceeded";
 			deps.log?.("step_paused", { id: step.id, reason: "step_retry_limit_exceeded", attempts: step.attempts });
@@ -158,6 +176,7 @@ export async function runLoop(cwd: string, run: ReadinessRun, deps: RunLoopDeps,
 
 		step.status = "in_progress";
 		step.attempts++;
+		const stepStartedAt = (deps.now ?? defaultNow)();
 		touch(run, deps);
 		deps.log?.("step_started", { id: step.id, kind: step.kind, attempt: step.attempts });
 
@@ -171,14 +190,31 @@ export async function runLoop(cwd: string, run: ReadinessRun, deps: RunLoopDeps,
 
 		if (res.aborted) {
 			step.status = "pending";
+			// abort NÃO consome budget: 5 Ctrl+C não podem esgotar as tentativas silenciosamente.
+			step.attempts = Math.max(0, step.attempts - 1);
 			run.status = "paused";
 			run.pauseReason = "aborted";
 			deps.log?.("step_paused", { id: step.id, reason: "aborted" });
 			touch(run, deps);
 			break;
 		}
+		if (res.usageLimit) {
+			step.status = "pending";
+			step.attempts = Math.max(0, step.attempts - 1); // não é falha do step
+			run.status = "paused";
+			run.pauseReason = "usage_limit";
+			deps.log?.("step_paused", { id: step.id, reason: "usage_limit" });
+			touch(run, deps);
+			break;
+		}
+		if (res.inactivity) {
+			step.status = "pending"; // requeue — a tentativa foi contada; o budget guard pega runaway
+			deps.log?.("step_failed", { id: step.id, kind: step.kind, reason: "inactivity_timeout" });
+			touch(run, deps);
+			continue;
+		}
 
-		const ok = res.code === 0 && (step.kind !== "audit" || deps.auditSucceeded(cwd));
+		const ok = res.code === 0 && (step.kind !== "audit" || deps.auditSucceeded(cwd, stepStartedAt));
 		if (ok) {
 			step.status = "completed";
 			deps.log?.("step_completed", { id: step.id, kind: step.kind });

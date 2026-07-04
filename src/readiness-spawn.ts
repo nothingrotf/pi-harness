@@ -12,6 +12,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import { isUsageLimitEvent, workerInactivityMs } from "./feature-spawn.ts";
 import type { RunStep, SpawnCtx, SpawnFn, SpawnOutcome } from "./readiness-runner.ts";
 
 /** Binário do pi (PI_BIN override, senão `pi` no PATH). */
@@ -109,9 +110,11 @@ export function makeRealSpawn(opts: RealSpawnOpts = {}): SpawnFn {
 		return new Promise<SpawnOutcome>((resolve) => {
 			const child = spawnImpl(bin, args, { cwd: ctx.cwd, stdio: ["ignore", "pipe", "pipe"], env: process.env });
 			let settled = false;
+			let idle: ReturnType<typeof setTimeout> | null = null;
 			const done = (out: SpawnOutcome) => {
 				if (settled) return;
 				settled = true;
+				if (idle) clearTimeout(idle);
 				try {
 					fs.rmSync(dir, { recursive: true, force: true });
 				} catch {
@@ -120,13 +123,29 @@ export function makeRealSpawn(opts: RealSpawnOpts = {}): SpawnFn {
 				if (onAbort) ctx.signal?.removeEventListener?.("abort", onAbort);
 				resolve(out);
 			};
+			const kill = () => {
+				try {
+					child.kill("SIGTERM");
+				} catch {
+					// ignore
+				}
+			};
+			// Watchdog de inatividade (paridade com o rpc-worker): sem eventos por N ms → mata o child
+			// e reporta inactivity — antes, um child pendurado bloqueava o runLoop PARA SEMPRE.
+			const inMs = workerInactivityMs();
+			const arm = () => {
+				if (idle) clearTimeout(idle);
+				if (inMs > 0) {
+					idle = setTimeout(() => {
+						kill();
+						done({ code: null, inactivity: true });
+					}, inMs);
+					(idle as { unref?: () => void }).unref?.();
+				}
+			};
 			const onAbort = ctx.signal
 				? () => {
-						try {
-							child.kill("SIGTERM");
-						} catch {
-							// ignore
-						}
+						kill();
 						done({ code: null, aborted: true });
 					}
 				: undefined;
@@ -134,11 +153,20 @@ export function makeRealSpawn(opts: RealSpawnOpts = {}): SpawnFn {
 				if (ctx.signal.aborted) onAbort();
 				else ctx.signal.addEventListener("abort", onAbort, { once: true });
 			}
-			if (opts.onEvent && child.stdout) {
-				const feed = makeLineParser((obj) => opts.onEvent?.(step, obj as { type?: string }));
+			if (child.stdout) {
+				const feed = makeLineParser((obj) => {
+					arm(); // cada evento reseta a inatividade
+					if (isUsageLimitEvent(obj)) {
+						kill();
+						done({ code: null, usageLimit: true });
+						return;
+					}
+					opts.onEvent?.(step, obj as { type?: string });
+				});
 				child.stdout.setEncoding("utf8");
 				child.stdout.on("data", (chunk: string) => feed(chunk));
 			}
+			arm();
 			child.on("error", () => done({ code: 1 }));
 			child.on("close", (code) => done({ code }));
 		});

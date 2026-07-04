@@ -14,6 +14,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { computeFingerprint } from "./fingerprint.ts";
 import { buildSnapshot, type ReadinessReport, type ReadinessSnapshot, summarizeSnapshot, validateReport } from "./readiness.ts";
+import { writeJsonAtomic } from "./plan.ts";
 
 export function profileDir(cwd: string): string {
 	return path.join(cwd, ".harness", "profile");
@@ -41,7 +42,7 @@ export function readRun<T = unknown>(cwd: string): T | null {
 export function writeRun(cwd: string, run: unknown): void {
 	try {
 		fs.mkdirSync(profileDir(cwd), { recursive: true });
-		fs.writeFileSync(runStatePath(cwd), `${JSON.stringify(run, null, 2)}\n`);
+		writeJsonAtomic(runStatePath(cwd), run);
 	} catch {
 		// best-effort
 	}
@@ -63,6 +64,17 @@ export function readSnapshot(cwd: string): ReadinessSnapshot | null {
 	} catch {
 		return null;
 	}
+}
+
+/**
+ * auditSucceeded canonico pro ReadinessRunner: snapshot válido E mais novo que o início do step.
+ * Sem a frescura, um readiness.json PRÉ-EXISTENTE fazia um child que não gravou nada "passar".
+ */
+export function auditSnapshotFresh(cwd: string, sinceIso?: string): boolean {
+	const snap = readSnapshot(cwd);
+	if (!snap) return false;
+	if (!sinceIso) return true;
+	return typeof snap.generatedAt === "string" && snap.generatedAt >= sinceIso;
 }
 
 export interface EnsureResult {
@@ -128,7 +140,7 @@ export function storeReport(cwd: string, report: ReadinessReport, fingerprint: s
 	// ensure pode reclamar de "sem .git" mas ainda assim gravamos o snapshot;
 	// só falha de verdade se o dir não pôde ser criado.
 	try {
-		fs.writeFileSync(snapshotPath(cwd), `${JSON.stringify(snapshot, null, 2)}\n`);
+		writeJsonAtomic(snapshotPath(cwd), snapshot);
 	} catch (e) {
 		const issue = `failed to write readiness.json: ${(e as Error).message}`;
 		appendAudit(cwd, "store_failed", { issue });

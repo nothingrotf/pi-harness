@@ -16,6 +16,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { type PathOpts, resolveAgentDir } from "./model-config.ts";
+import { writeJsonAtomic } from "./plan.ts";
 
 export type ReadinessGap = "lint_config" | "type_check" | "formatter" | "unit_tests_exist" | "readme" | "env_template";
 
@@ -57,8 +58,17 @@ function fileContains(cwd: string, file: string, needle: string): boolean {
 	}
 }
 
+function isDir(cwd: string, name: string): boolean {
+	try {
+		return fs.statSync(path.join(cwd, name)).isDirectory();
+	} catch {
+		return false;
+	}
+}
+
 function hasTestFiles(cwd: string): boolean {
-	if (existsAny(cwd, ["test", "tests", "__tests__", "spec"])) return true;
+	// exige DIRETÓRIO (um ficheiro solto chamado `test` não é suite); `spec/` de OpenAPI é o residual aceite
+	if (["test", "tests", "__tests__", "spec"].some((n) => isDir(cwd, n))) return true;
 	// scan raso: root + src, um nível (barato — sem glob recursivo)
 	for (const dir of [cwd, path.join(cwd, "src")]) {
 		let names: string[];
@@ -75,7 +85,22 @@ function hasTestFiles(cwd: string): boolean {
 /** Detecta os gaps L1 locais (o `zyH`). Só-existência; multi-ecossistema; best-effort. */
 export function detectLocalGaps(cwd: string): ReadinessGap[] {
 	const gaps: ReadinessGap[] = [];
-	const pkgHas = (key: string): boolean => fileContains(cwd, "package.json", `"${key}"`);
+	// procura a key nos SPOTS conhecidos do package.json (scripts/deps/top-level) — a substring crua
+	// casava a palavra em qualquer string (ex.: uma description que cite "prettier").
+	const pkgHas = (key: string): boolean => {
+		try {
+			const pkg = JSON.parse(fs.readFileSync(path.join(cwd, "package.json"), "utf8")) as Record<string, unknown>;
+			if (key in pkg) return true;
+			for (const spot of ["scripts", "dependencies", "devDependencies", "peerDependencies"]) {
+				const o = pkg[spot];
+				if (o && typeof o === "object" && Object.keys(o).some((k) => k === key || k.includes(key))) return true;
+				if (spot === "scripts" && o && typeof o === "object" && Object.values(o).some((v) => typeof v === "string" && v.includes(key))) return true;
+			}
+			return false;
+		} catch {
+			return false;
+		}
+	};
 	const isNode = existsAny(cwd, ["package.json"]);
 	const isPy = existsAny(cwd, ["pyproject.toml", "setup.py", "requirements.txt"]);
 	const isGo = existsAny(cwd, ["go.mod"]);
@@ -137,7 +162,7 @@ function saveHints(f: HintsFile, opts: PathOpts): void {
 	try {
 		const p = hintsPath(opts);
 		fs.mkdirSync(path.dirname(p), { recursive: true });
-		fs.writeFileSync(p, `${JSON.stringify(f)}\n`);
+		writeJsonAtomic(p, f, false);
 	} catch {
 		// best-effort
 	}
