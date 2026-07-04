@@ -61,7 +61,7 @@ export function registerDeliveryStoreTool(pi: ExtensionAPI): void {
 				const gate = rec.state === "awaiting_merge" ? " — merge gate will open (awaiting human decision)" : "";
 				return {
 					content: [{ type: "text", text: `✓ delivery record written — ${deliveryStateLabel(rec.state)}${rec.prNumber ? ` (PR #${rec.prNumber})` : ""}${gate}.` }],
-					details: { state: rec.state, prNumber: rec.prNumber ?? null, ciState: rec.ci.state },
+					details: { featureId: params.featureId, state: rec.state, prNumber: rec.prNumber ?? null, ciState: rec.ci.state },
 				};
 			},
 		}),

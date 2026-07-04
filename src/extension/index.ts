@@ -184,7 +184,10 @@ export default function registerHarnessExtension(pi: ExtensionAPI): void {
 	// Proposal confirmation pendente: setado quando store_plan persiste; consumido no agent_end.
 	let pendingProposal: string | null = null;
 	// Merge gate pendente: setado quando store_delivery grava state:"awaiting_merge"; consumido no agent_end.
+	// O disco é a fonte de verdade (record.json awaiting_merge) — pendingMerge é só o gatilho rápido;
+	// mergeGateHandled evita reabrir o overlay a cada idle depois de o humano decidir "leave open".
 	let pendingMerge: string | null = null;
+	const mergeGateHandled = new Set<string>();
 
 	// Estágio STORE da criação do readiness (analógo do store_agent_readiness_report).
 	registerReadinessStoreTool(pi);
@@ -402,14 +405,15 @@ export default function registerHarnessExtension(pi: ExtensionAPI): void {
 
 	// Merge gate (ship-gate step 3): overlay humano quando store_delivery grava awaiting_merge.
 	// Espelha showProposal — a escolha volta pro agente (ele executa o gh). Nunca mergeia sozinho.
-	const showMerge = async (ctx: ExtensionContext, featureId: string): Promise<void> => {
+	const showMerge = async (ctx: ExtensionContext, featureId: string): Promise<boolean> => {
 		const record = readDeliveryRecord(ctx.cwd, featureId);
-		if (!record) return;
+		if (!record) return false; // torn read/record ausente — o caller re-arma em vez de perder o gate
 		const { showMergeGate } = await import("../delivery-view.ts");
 		const choice = await showMergeGate(ctx, { featureId, record });
 		dispatchToAgent(mergeDecisionMessage(featureId, choice));
 		const label = choice.kind === "leave_open" ? "leave open" : choice.kind;
 		ctx.ui.notify(`pi-harness: merge gate — ${label} (forwarded to the deliver step).`);
+		return true;
 	};
 
 	// Reference flows as their own commands (1:1): /readiness-report and /readiness-fix.
@@ -813,10 +817,16 @@ export default function registerHarnessExtension(pi: ExtensionAPI): void {
 	pi.on("tool_execution_end", (event, ctx) => {
 		if (isSubagentTool(event.toolName)) clearLiveAgents(event.toolCallId);
 		if (event.toolName === "store_plan" && !event.isError && mode.active && mode.featureId) pendingProposal = mode.featureId;
-		// store_delivery com awaiting_merge → abre o merge gate quando o agente ficar idle.
-		if (event.toolName === "store_delivery" && !event.isError && mode.active && mode.featureId) {
-			const rec = readDeliveryRecord(ctx.cwd, mode.featureId);
-			if (rec?.state === "awaiting_merge") pendingMerge = mode.featureId;
+		// store_delivery com awaiting_merge → abre o merge gate quando o agente ficar idle. O featureId
+		// vem dos DETAILS do próprio tool call (mode.featureId podia divergir → record errado/nenhum).
+		if (event.toolName === "store_delivery" && !event.isError) {
+			const det = (event.result as { details?: { featureId?: string; state?: string } } | undefined)?.details;
+			const fid = det?.featureId ?? mode.featureId;
+			const state = det?.state ?? (fid ? readDeliveryRecord(ctx.cwd, fid)?.state : undefined);
+			if (fid && state === "awaiting_merge") {
+				pendingMerge = fid;
+				mergeGateHandled.delete(fid); // novo arm re-habilita o overlay
+			}
 		}
 	});
 	pi.on("agent_end", async (_event, ctx) => {
@@ -826,10 +836,17 @@ export default function registerHarnessExtension(pi: ExtensionAPI): void {
 			pendingProposal = null;
 			await showProposal(ctx, fid);
 		}
-		if (pendingMerge) {
-			const fid = pendingMerge;
-			pendingMerge = null;
-			await showMerge(ctx, fid);
+		let mergeFid = pendingMerge;
+		pendingMerge = null;
+		// Resgate do disco: /reload (pendingMerge é memória) ou torn read não podem perder o gate —
+		// se o record diz awaiting_merge e ainda não mostrámos nesta sessão, abre na mesma.
+		if (!mergeFid && mode.active && mode.featureId && !mergeGateHandled.has(mode.featureId)) {
+			if (readDeliveryRecord(ctx.cwd, mode.featureId)?.state === "awaiting_merge") mergeFid = mode.featureId;
+		}
+		if (mergeFid) {
+			const shown = await showMerge(ctx, mergeFid);
+			if (shown) mergeGateHandled.add(mergeFid);
+			else pendingMerge = mergeFid; // record ilegível neste instante — re-arma pro próximo idle
 		}
 	});
 

@@ -48,7 +48,17 @@ const URL_RE = /https?:\/\/[^\s<>)\]]+/g;
 const TRAILING_PUNCT = /[.,;:!?]+$/;
 
 /** Tokens comuns que casam `XXX-\d+` mas NÃO são issue keys (evita falso-positivo no scan cru). */
-const NON_ISSUE_PREFIXES = new Set(["UTF", "SHA", "BASE", "ISO", "RFC", "IPV", "MD", "CVE", "ES", "EC", "AES", "PBKDF2"]);
+const NON_ISSUE_PREFIXES = new Set([
+	"UTF", "SHA", "BASE", "ISO", "RFC", "IPV", "MD", "CVE", "ES", "EC", "AES", "PBKDF2",
+	"RC", "STEP", "ISSUE", "X86", "ARM", "GPT", "HTTP", "TCP", "UDP", "PART", "PHASE", "FIX", "WP",
+]);
+
+/** Prefixo passível de ser team key: ≥2 letras no início — `v2-1`, `q3-2024` e afins (letra única
+ * + dígitos) não são issue keys. Lowercase É aceite: branches/feature ids normalizam pra minúsculas
+ * (`user/eng-123-slug` → ENG-123). */
+function plausibleTeamPrefix(raw: string): boolean {
+	return /^[A-Za-z]{2,}/.test(raw);
+}
 
 /** Normaliza uma URL para `origin+pathname` (sem query/fragment/pontuação final). `undefined` se não parseável. */
 function canonicalUrl(raw: string): { canonical: string; url: URL } | undefined {
@@ -63,6 +73,7 @@ export function scanBareKeys(text: string | undefined): string[] {
 	if (!text) return [];
 	const out = new Set<string>();
 	for (const m of text.matchAll(BARE_KEY)) {
+		if (!plausibleTeamPrefix(m[1])) continue;
 		const prefix = m[1].toUpperCase();
 		if (NON_ISSUE_PREFIXES.has(prefix)) continue;
 		out.add(`${prefix}-${m[2]}`);

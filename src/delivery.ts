@@ -11,6 +11,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { runDir } from "./handoff.ts";
+import { writeJsonAtomic } from "./plan.ts";
 
 /** Estado de um check de CI individual. */
 export type CheckState = "passed" | "failed" | "pending" | "skipped";
@@ -114,7 +115,7 @@ export function readDeliveryRecord(cwd: string, featureId: string): DeliveryReco
 export function writeDeliveryRecord(cwd: string, featureId: string, rec: DeliveryRecord): void {
 	const dir = deliveryDir(cwd, featureId);
 	fs.mkdirSync(dir, { recursive: true });
-	fs.writeFileSync(deliveryPath(cwd, featureId), `${JSON.stringify(normalizeDeliveryRecord(rec), null, 2)}\n`);
+	writeJsonAtomic(deliveryPath(cwd, featureId), normalizeDeliveryRecord(rec));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

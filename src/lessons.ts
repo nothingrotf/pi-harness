@@ -19,6 +19,7 @@
  */
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { writeJsonAtomic } from "./plan.ts";
 
 /** Sinais válidos — sempre grounded num output de verificação do harness. */
 export const LESSON_SIGNALS = {
@@ -151,7 +152,11 @@ export function addLesson(store: LessonsStore, input: AddLessonInput): AddLesson
 		if (!existing.features.includes(feature)) existing.features.push(feature);
 		existing.recurrence = existing.features.length;
 		existing.lastSeen = now;
-		if (!existing.evidence.includes(ev)) existing.evidence.push(ev);
+		// cap: mantém a primeira (origem) + as últimas 9 — evidência crescia sem teto por recorrência
+		if (!existing.evidence.includes(ev)) {
+			existing.evidence.push(ev);
+			if (existing.evidence.length > 10) existing.evidence.splice(1, existing.evidence.length - 10);
+		}
 		let promoted = false;
 		if (existing.status === "candidate" && existing.recurrence >= store.promoteThreshold) {
 			existing.status = "confirmed";
@@ -183,6 +188,8 @@ export function addLesson(store: LessonsStore, input: AddLessonInput): AddLesson
 export function penalizeLesson(store: LessonsStore, id: string, now: () => string = nowIso): { ok: boolean; lesson?: Lesson; error?: string } {
 	const lesson = store.lessons.find((l) => l.id.toLowerCase() === id.toLowerCase());
 	if (!lesson) return { ok: false, error: `no lesson with id ${id}` };
+	// só confirmed viram guidance — penalizar um candidate quarentenava algo que nunca foi aplicado
+	if (lesson.status !== "confirmed") return { ok: false, error: `lesson ${lesson.id} is ${lesson.status} — only confirmed lessons (active guidance) can be penalized` };
 	lesson.harmful += 1;
 	lesson.lastSeen = now();
 	if (lesson.harmful >= store.quarantineThreshold) lesson.status = "quarantined";
@@ -253,6 +260,15 @@ export function lessonsMdPath(cwd: string): string {
 	return path.join(profileDir(cwd), "LESSONS.md");
 }
 
+function maxLessonIdNum(lessons: Lesson[]): number {
+	let max = 0;
+	for (const l of lessons) {
+		const m = /^L-(\d+)$/.exec(l.id ?? "");
+		if (m) max = Math.max(max, Number(m[1]));
+	}
+	return max;
+}
+
 export function readLessonsStore(cwd: string): LessonsStore {
 	try {
 		const data = JSON.parse(fs.readFileSync(lessonsJsonPath(cwd), "utf8")) as Partial<LessonsStore>;
@@ -261,7 +277,9 @@ export function readLessonsStore(cwd: string): LessonsStore {
 			promoteThreshold: data.promoteThreshold ?? LESSON_DEFAULTS.promoteThreshold,
 			windowDays: data.windowDays ?? LESSON_DEFAULTS.windowDays,
 			quarantineThreshold: data.quarantineThreshold ?? LESSON_DEFAULTS.quarantineThreshold,
-			nextId: data.nextId ?? 1,
+			// nextId NUNCA abaixo de max(id)+1: um lessons.json sem nextId (merge manual/schema antigo)
+			// com nextId=1 gerava L-001 DUPLICADO.
+			nextId: Math.max(data.nextId ?? 1, maxLessonIdNum(data.lessons ?? []) + 1),
 			lessons: data.lessons ?? [],
 		};
 	} catch {
@@ -272,6 +290,6 @@ export function readLessonsStore(cwd: string): LessonsStore {
 /** Grava lessons.json + re-renderiza LESSONS.md (acoplados — o md nunca diverge do json). */
 export function writeLessonsStore(cwd: string, store: LessonsStore): void {
 	fs.mkdirSync(profileDir(cwd), { recursive: true });
-	fs.writeFileSync(lessonsJsonPath(cwd), `${JSON.stringify(store, null, 2)}\n`);
+	writeJsonAtomic(lessonsJsonPath(cwd), store);
 	fs.writeFileSync(lessonsMdPath(cwd), renderLessons(store));
 }

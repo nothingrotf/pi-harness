@@ -153,3 +153,24 @@ test("renderLessons + persistência: json + LESSONS.md acoplados; round-trip", (
 	// render direto bate
 	assert.ok(renderLessons(back).includes("L-001"));
 });
+
+test("readLessonsStore: nextId nunca abaixo de max(id)+1 (regressão: lessons.json sem nextId gerava L-001 duplicado)", () => {
+	const d = fs.mkdtempSync(path.join(os.tmpdir(), "harness-lessons-"));
+	fs.mkdirSync(path.join(d, ".harness", "profile"), { recursive: true });
+	const raw = { schema: 1, lessons: [{ id: "L-003", key: "k", text: "x", signal: "gate_fail", status: "candidate", features: ["f"], recurrence: 1, harmful: 0, evidence: [], created: "t", lastSeen: "t" }] };
+	fs.writeFileSync(path.join(d, ".harness", "profile", "lessons.json"), JSON.stringify(raw));
+	const s = readLessonsStore(d);
+	assert.equal(s.nextId, 4, "recomputa de max(id)+1");
+	const r = add(s, "feat-b", "Never reuse an existing lesson id when the counter is missing");
+	assert.ok(r.ok && r.lesson.id === "L-004", "id novo não colide");
+});
+
+test("penalizeLesson: só confirmed pode ser penalizada (regressão: candidate ia pra quarentena sem nunca ter sido guidance)", () => {
+	const s = emptyStore();
+	const r = add(s, "feat-a", "Assert the exact persisted status value, not just that a status field exists");
+	assert.ok(r.ok && r.lesson.status === "candidate");
+	const p = penalizeLesson(s, r.ok ? r.lesson.id : "");
+	assert.equal(p.ok, false);
+	assert.match(p.error ?? "", /only confirmed/);
+	assert.equal(r.ok ? r.lesson.harmful : -1, 0, "candidate intocada");
+});
