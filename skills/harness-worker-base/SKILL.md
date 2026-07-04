@@ -102,26 +102,27 @@ flows; keep changes focused; stay in scope (note clearly-unrelated issues in `di
 `non_blocking` prefixed "Pre-existing:" — check `harness.md` "Known Pre-Existing Issues"
 to avoid re-reporting; don't go off-track to fix them). On conflict, the repo's `AGENTS.md` wins.
 
-## Phase 2: Work the task list (one continuous session)
-Work through **every task in your list, in order, in THIS session** — do not stop after one. Keep
-your own todo (the `todo` tool / a checklist) to track them. For each task, top to bottom:
+## Phase 2: Work the tasks (one continuous session, driven by `next_task`)
+The harness hands you tasks **one at a time** and records progress **by machine** — do NOT assume the
+list, the `next_task` tool is the source of truth. Loop until it says you're done:
 
-1. **Mark it started:** call `task_progress({ featureId, taskId, status: "started" })` so the live
-   Feature Control shows the right task.
+1. **Pull the next task:** call `next_task({ featureId })`. It returns the task spec (id, skillName,
+   description, preconditions, expectedBehavior, fulfills) and records it as started. When it reports
+   **all tasks are done**, stop the loop and go to Phase 3 (one `EndFeatureRun`).
 2. **Invoke the task's `skillName` skill** and follow its Work Procedure. **If the skill doesn't
    exist**, do not proceed — EndFeatureRun with `returnToOrchestrator: true` explaining which skill
    is missing.
 3. **Implement + verify** to satisfy that task's `expectedBehavior` and `fulfills` assertions
    (write tests per the `harness-generate-tests` skill where the task warrants them).
-4. **Commit the repo change with the task id in the message** (e.g. `[<taskId>] <summary>`). One
-   commit per task gives a clean trail and is how a resumed session knows what's already done.
-5. **Mark it completed:** call `task_progress({ featureId, taskId, status: "completed" })`, then
-   move to the next task.
+4. **Commit the repo change with the task id in the message** (e.g. `[<taskId>] <summary>`). You
+   **MUST commit before moving on** — `next_task` re-hands you the same task until a commit lands
+   (that git-HEAD check is how the harness marks the task done deterministically, without trusting
+   the message or you to self-report).
+5. **Call `next_task` again** for the following task.
 
 **Resume / re-run safety (critical).** If you were restarted (a fresh attempt after a failure, or a
-hard-kill recovery), run `git log --oneline` FIRST and identify which tasks are already committed
-— **skip them**. Never redo committed work; only do the remaining pending tasks. On a graceful
-resume you continue exactly where you left off.
+hard-kill recovery), just call `next_task` — it resumes at the next uncommitted task automatically
+(it checks git HEAD, never re-completes an uncommitted task). Never redo committed work.
 
 **Stop and return early** (one `EndFeatureRun` with `returnToOrchestrator: true`) if a task is
 blocked by something outside your scope (missing dependency, unmet precondition, broken manifest,

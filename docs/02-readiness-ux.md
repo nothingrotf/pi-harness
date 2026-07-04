@@ -152,12 +152,12 @@ igual** por critério; bandas L1 0-20 · L2 20-40 · L3 40-60 · L4 60-80 · L5 
 ## 7. Flows (comandos) + coordenação (sessões isoladas)
 
 Dois slash-commands portados como comandos próprios, agora com **sessões
-isoladas** (via `pi-subagents`) pra alinhar a coordenação com o referência:
+isoladas** (via `@tintinweb/pi-subagents`) pra alinhar a coordenação com o referência:
 
 - **`/readiness-report`** (estágio create) — dispara o **agente dedicado
   `harness-readiness-auditor`** numa sessão isolada fresh-context, espelhando a sessão
   dedicada `readiness-evaluation` (auditor de referência) do referência:
-  `subagent({ agent: "harness-readiness-auditor", async: true, task: … })` que termina
+  `Agent({ subagent_type: "harness-readiness-auditor", description: …, prompt: … })` que termina
   chamando `store_agent_readiness_report`. (gate `reaudit` = mesmo caminho.)
 - **`/readiness-fix [args]`** — port 1:1 do a referência (3 variantes: sem report →
   audit; report+args → match semântico; report+sem args → AskUser categoria/sinal).
@@ -169,8 +169,8 @@ isoladas** (via `pi-subagents`) pra alinhar a coordenação com o referência:
 ### Agentes dedicados (analog do auditor de referência / readiness-remediation)
 
 Em vez dos builtins genéricos `delegate`/`worker`, pi-harness traz dois agentes
-dedicados (em `agents/`, contribuídos pro pi-subagents via
-`PI_SUBAGENT_EXTRA_AGENT_DIRS` — sem escrever no repo do usuário):
+dedicados (em `agents/`, contribuídos pro @tintinweb/pi-subagents — espelhados no dir
+global de agents via symlink, sem escrever no repo do usuário):
 
 | Agente | Tools | Contexto | Papel |
 |---|---|---|---|
@@ -181,7 +181,7 @@ dedicados (em `agents/`, contribuídos pro pi-subagents via
 
 O motor agora é o **ReadinessRunner** (`src/readiness-runner.ts`): código
 determinístico que **ele mesmo spawna** as sessões isoladas (`pi --print`), igual
-ao `runner de referência`. Sem depender do modelo chamar a tool `subagent`.
+ao `runner de referência`. Sem depender do modelo chamar a tool `Agent`.
 
 | runner de referência (referência) | ReadinessRunner (pi-harness) |
 |---|---|
@@ -209,7 +209,7 @@ calls streamam ao vivo na própria sessão e o **rpiv-todo** renderiza o **Plan 
 (`pi.sendUserMessage`) que manda o modelo: (1) criar o plano de 5 fases com a tool
 `todo`, (2) rodar a skill `harness-readiness-audit` marcando cada fase in_progress→completed,
 (3) chamar `store_agent_readiness_report` (valida + grava). Zero widget custom, zero
-subprocesso — só compor pi-subagents + rpiv-todo + a skill + a store tool.
+subprocesso — só compor @tintinweb/pi-subagents + rpiv-todo + a skill + a store tool.
 
 ```
 ●  📊 Starting agent readiness evaluation
@@ -220,7 +220,7 @@ Plan · 1/5
 ```
 
 O fix (`/readiness-fix`) idem: uma todo por sinal falhando, cada fix opcionalmente
-isolado num `subagent` (agent `harness-readiness-remediator`).
+isolado num `Agent` (subagent_type `harness-readiness-remediator`).
 
 ### Alternativa headless: ReadinessRunner (code-initiated, runner de referência 1:1)
 
@@ -232,12 +232,12 @@ handler bloqueante congela o TUI; o nativo dá o streaming de graça.
 
 ### Plugins companheiros (requeridos pra coordenação)
 
-- **`pi-subagents`** — spawna as sessões isoladas (audit + fix por critério) e
-  descobre os agentes dedicados via `PI_SUBAGENT_EXTRA_AGENT_DIRS`.
+- **`@tintinweb/pi-subagents`** — spawna as sessões isoladas (audit + fix por critério) e
+  descobre os agentes dedicados no dir global de agents (espelho via symlink).
 - **`@juicesharp/rpiv-todo`** — rastreia os fixes (um todo por critério; overlay
   sobrevive a /reload e compaction).
 
-NÃO reimplementamos as utilidades do pi-subagents (worktrees, async tracking,
+NÃO reimplementamos as utilidades do @tintinweb/pi-subagents (worktrees, async tracking,
 chains, acceptance, intercom — ~31k LOC): ele já está instalado e o design é
 **compor**, não forkar. Só adotamos o que casa 1:1 com o referência: agentes
 dedicados isolados + um overlay de todo.

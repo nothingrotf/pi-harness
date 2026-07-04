@@ -36,8 +36,8 @@ TIER 1 — REPO PROFILE   (gera 1x, refresh sob demanda, COMMITADO)   .harness/p
         │  (input read-only de TODA feature)
         ▼
 TIER 2 — FEATURE RUN    (por feature, SEQUENCIAL, GITIGNORED)        .harness/runs/<id>/
-   feature.md (intent + decisões gray-area) · contract.md (FROZEN) · plan.md (tasks)
-   state.json · progress_log.jsonl · handoffs/ · validation/ · evidence/
+   feature.md (intent + decisões gray-area) · contract.md (FROZEN) · plan.json (tasks)
+   feature-run.json · status.json · progress_log.jsonl · handoffs/ · validation/ · evidence/
         │  archive → merge conhecimento novo no profile/library/  (Tier 1 acumula)
         ▼
    próxima feature na fila incremental (reusa o mesmo Tier 1)
@@ -59,7 +59,7 @@ TIER 2 — FEATURE RUN    (por feature, SEQUENCIAL, GITIGNORED)        .harness/
 ```
 1. ensureProfile()    # existe? skip. drift de fingerprint / --refresh? re-deriva (merge, não clobber)
 2. CONVERGE           # gray-area-policy: intent → contract FROZEN; lê o profile como EVIDÊNCIA
-3. DECOMPOSE → plan.md  # tasks ordenadas (thin/fat), cada task → assertion
+3. DECOMPOSE → plan.json  # tasks ordenadas (thin/fat), cada task → assertion
 4. RUN                # runner determinístico fino, worker sequencial, verified gate
 5. SHIP GATE          # harness-code-review (3 eixos) + harness-qa-validator (se user-facing) vs contract
 6. ARCHIVE            # decisões/conhecimento → profile/library/ (acumula)

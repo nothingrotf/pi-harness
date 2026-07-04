@@ -34,8 +34,9 @@ full contents of the changed files. Use Bash directly, or an `Explore` agent whe
 is large.
 
 ## 2) Launch the three axes in parallel
-Spawn all three via the **`subagent` tool** (pi-subagents) **in the same message** — they run as
-isolated fresh-context sessions and are **visible live in the UI**. Pass each the **same** scoped
+Spawn all three via the **`Agent` tool** (@tintinweb/pi-subagents) **in the same message** — one
+`Agent` call per axis with `run_in_background: true` on each so they run concurrently as isolated
+fresh-context sessions, **visible live in the UI**. Pass each the **same** scoped
 diff + file contents (`### Git / diff output` and `### Changed file contents`):
 - `harness-correctness-review` — bugs, breaking changes, security, devex regressions, feature-flag leaks. **Generic.**
 - `harness-quality-review` — maintainability, structure, file-size growth, spaghetti, abstractions, code-judo. Scores against the cached **`.harness/profile/library/coding-principles.md`** (the same generic bias the worker read up-front — author-review symmetry), then goes beyond it. **Generic.** Tell it where the doc is.

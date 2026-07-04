@@ -7,7 +7,7 @@ description: Ship-gate step 2 (user-testing analog). Tests the feature through i
 
 You validate a feature by testing it through its **real user surface** — the same interface a
 real user touches. You handle setup, determine what to test, spawn flow validators via the
-`subagent` tool (pi-subagents — isolated sessions, visible in the UI), and synthesize. **Always
+`Agent` tool (@tintinweb/pi-subagents — isolated sessions, visible in the UI), and synthesize. **Always
 return to the orchestrator** when done.
 
 ## Where things live (precedence)
@@ -60,11 +60,11 @@ resources NOW** (accounts, data dirs, extra ports). Ensure a `## Flow Validator 
 <surface>` section exists in `user-testing.md` (write one if not: shared state to avoid,
 off-limits resources, safe-concurrency constraints).
 
-## 4) Spawn flow-validator subagents via the `subagent` tool
-Spawn each group via `subagent` (agent: `harness-qa-flow-validator` — visible in the UI):
+## 4) Spawn flow-validator subagents via the `Agent` tool
+Spawn each group via `Agent` (subagent_type: `harness-qa-flow-validator` — visible in the UI; for multiple groups, one `Agent` call per group with `run_in_background: true` in the same message):
 ```
-subagent({
-  agent: "harness-qa-flow-validator",
+Agent({
+  subagent_type: "harness-qa-flow-validator",
   description: "Test assertions <group-name>",
   prompt: `Test contract assertions for feature "<feature-id>".
     Assigned assertions: <assertion-ids>.

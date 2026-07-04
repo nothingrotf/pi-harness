@@ -88,12 +88,14 @@ No host do Pi a superfície tem **três** canais:
    > do único worker running/paused (o `KG0`), ocupando ~35% do corpo (mín 4 linhas, escondida
    > em telas minúsculas; geometria `mainLayout` = `ET`/`BT`/`oT`). Título `Active Worker  #N  <id>
    > … Duration <d>` + linha em branco + entries (mensagem/tool, 2 linhas cada, `floor(sA/2)` no
-   > tail), flanqueadas só por colunas `│` (sem caixa). **Fonte do transcript (mapa de casos,
-   > `transcriptSource`):** o caminho NATIVO `get_entries` (pi 0.80.3 — `parseSessionEntries` em
-   > `src/session-read.ts`, read-only/cacheado) sobre a sessão `--session-id` do worker headless
-   > (`runs/<id>/sessions/*.jsonl`), com **fallback** ao nosso parser tolerante (`control-worker.ts`,
-   > `foldTranscript` = o `g2H`) e, em último caso, ao `recentActivity` do subagent vivo. O
-   > `entriesFromSessionEntries` ignora entries não-message (compaction/branch/model_change/custom).
+   > tail), flanqueadas só por colunas `│` (sem caixa). **Fonte do transcript:** o caminho NATIVO lê
+   > a transcript REAL — no worker **headless** a sessão `--session-id` (`runs/<id>/sessions/*.jsonl`,
+   > via `parseSessionEntries` pi 0.80.3, `src/session-read.ts`); no subagent **in-session**
+   > (@tintinweb) o `.output` JSONL que ele streama (`…/{sessionId}/tasks/{agentId}.output`,
+   > `readAgentOutputEntries`, localizado por `agentId` + a sessão-pai) — ambos read-only/cacheados e
+   > foldados pelo `foldTranscript` (= o `g2H`). **Fallback** (1º frame, antes do ficheiro existir) = o
+   > buffer rolante de `recentActivity` (a string `activity` do @tintinweb acumulada por `mergeActivity`).
+   > O `entriesFromSessionEntries` ignora entries não-message (compaction/branch/model_change/custom).
    > O evento nativo `session_tree` (+ o watcher de fs) re-tica o cockpit ao vivo.
    overlayOptions:{width:"100%",maxHeight:"100%",anchor:"top-left",margin:0}})`; o render lê
    `tui.terminal.rows/columns` e emite EXATAMENTE `rows` linhas opacas.
@@ -360,8 +362,8 @@ e ao deep-dive de dados (doc UI 10) + persistência (doc 07):
   derivarem do disco e sobreviverem a `/reload`/kill (orphan = `task_started` sem terminal).
 - **Worker #n + duração** (doc 10 `mnR`) — derivados (não armazenados): #n por ordem de início,
   duração = `task_started`→handoff (ou now p/ o running). Visíveis na view Workers.
-- **Worker Activity** (doc 10 `Qb1`/`recentActivity`) — `live-agents` extrai `recentTools`/
-  `currentTool` do `AgentProgress`; o run card mostra o bloco "Worker Activity".
+- **Worker Activity** (doc 10 `recentActivity`) — `live-agents` acumula a string `activity` do
+  `AgentDetails` (@tintinweb) num buffer rolante (`mergeActivity`); o run card mostra o bloco "Worker Activity".
 - **Header `Time <elapsed>`** — do `startedAt` (primeiro `run_started`).
 - **Models: skip-scrutiny / skip-user-testing** (doc UI §8) — toggles no `model-config`; honrados
   pelo `injectShipGate` (headless) e pelo `buildRunDispatch` (nativo).
@@ -390,5 +392,94 @@ A barra (`stripParts`/`progressBar` em `control-model.ts`) agora é **3 segmento
   card + a **Coverage view** — "done" = todas passed coincide com a barra cheia (gate completo).
 - `readControlModel` lê os skips do `model-config` p/ o `gateSteps`; ambas as superfícies
   (overlay + run card + Runs picker) usam os MESMOS `model.counts`.
-</content>
-</invoke>
+
+## Revisão 4 — paridade 1:1 com o cap. 08b (layout + nav restaurados) [implementado]
+
+Passe de fidelidade ao **08b (Mission Control: inner panels)**: portamos o *chrome* que faltava,
+mantendo o rebrand (Feature/Task, sem Mission/Milestones/Credits) e os nossos diferenciais
+(Coverage, Delivery). O que mudou em `control-*`:
+
+- **Split de colunas do `main` restaurado ao Droid (§1).** ESQUERDA = **só o cartão Active Task**
+  (skill · milestone? · Preconditions · Expected Behavior · Description); DIREITA = **lista de Tasks
+  + divisor + Progress Log** empilhados. O divisor é o **`cnu`** (`control-draw.cnuRow`): a metade
+  DIREITA vira régua `├──┤` numa linha (`rightDivider` no `drawMain`), a esquerda segue fluindo.
+  (Antes: esquerda = Active Task + lista; direita = só log.)
+- **Sub-views são INSET (§2).** `drawSub` agora aceita `chrome` (a banda de título + a barra de
+  progresso do Feature Control PERSISTEM por cima de Tasks/Workers/Coverage/Delivery/detalhes) —
+  o look "inset" do Droid, em vez de uma caixa autônoma por view.
+- **Nav F/W/M + g/G (§3, §9).** Os footers de lista reganham `g Top`/`G Bottom` (via
+  `setSelectedIndex`; `G` = `shift+g`) e os atalhos de salto `W`/`F`/`M` (além do nosso `Tab`).
+- **Tabs de filtro com contagem (§3).** `All (8) │ Pending (3) │ …` (`taskTabLabels`/`workerTabLabels`).
+- **Progress Log newest-first + colorido por segmento (§1b/§1d).** `progressSegments` (o `Enu`):
+  id da task em `accent` (o "ref"), ícones por estado (✓ success · ✗ error · ↩ warning), verbo `muted`;
+  janela invertida (mais recente no topo).
+- **K2H (§1a/§4).** `parseNumbered` quebra `"(1) … (2) …"` em itens numerados no cartão e no
+  Task detail; sem marcador, 1 item por linha.
+- **Handoff: `[blocking]` em VERMELHO (§8)** e tags **`(current)`/`(completed)`** na última worker
+  session do Task detail (§4).
+- **Glifos 1:1:** cancelled/failed `✘`→`✗` (alinha com o `lnu`/`enu` do Droid e com delivery/readiness).
+- **Fix latente:** `theme.fg("secondary", …)` (usável no build antigo, **lança** no pi 0.80.3 — não
+  existe "secondary" no tema) → trocado por `text`/`muted` em todo o `control-view` (inclui a banda
+  Active Worker, que crashava no render de mensagens).
+- **NÃO mudou (segue §1 do thesis):** sem Mission/Milestones/Credits/factoryd, sem `session_viewer`
+  com interrupt-and-chat (workers são subagents efêmeros), sem Pause/Resume (overlay read-only).
+  O `milestone` no cartão é **condicional** — estrutura 1:1, mas ausente (tasks do pi não têm o campo).
+
+## Revisão 5 — paridade final com o gap-scan do droid-missions [implementado]
+
+Fecha os missings apontados na comparação pi-harness × droid-missions (além dos sons, que
+vivem fora deste repo):
+
+- **Session viewer completo (droid §7b "Worker Session")** — nova view `session` no overlay:
+  `Enter` num worker (view Workers) abre o transcript da sessão (gravada em disco via
+  `readNativeWorkerEntries`/`readWorkerSession`, ou o `.output` do live agent), com **densidade
+  `[`/`]` (1–5, default 4)**, **scroll `↑↓`/j/k/g/G com follow-tail** (offset null = colado ao fim;
+  chegar ao fim re-engaja o follow), header rico (Session · Task · Status · Duration · density ·
+  range), `s` steer (interrupt-and-chat, já existia no main) e `h` → handoff. Puros:
+  `sessionWindow`/`scrollOffset`/`cycleDensity` (control-worker.ts, testados). O argumento
+  "workers efêmeros → não portável" da Revisão 2 caducou com os workers session-backed (RPC).
+- **Ctrl+R rename inline no Runs picker** (droid missions picker) — `renameRun` (runs.ts, puro:
+  valida slug/colisão, renomeia o dir e reescreve o featureId em plan/status/feature-run) +
+  `renameModePointer` (mode-store.ts: o ponteiro persistido segue o novo nome). O run ATIVO não
+  renomeia; a linha "+ New feature" tampouco.
+- **Per-row load errors no picker** — `RunSummary.loadError`: um run corrompido degrada A LINHA
+  (`⚠ <id> · load error: …`, Enter recusado com aviso) em vez de quebrar o picker.
+- **`O` = Run Dir no main** (o `D Mission Dir` do Droid — o nosso `D` é Delivery): abre
+  `.harness/runs/<id>/` no gestor de ficheiros (`openDirCommand`: open/explorer/xdg-open).
+- **Onboarding once-only** — o card intro do fluxo de feature agora é gated pelo
+  `hasSeenFeatureOnboarding` (o `hasSeenMissionOnboarding` do Droid) em
+  `~/.pi/agent/pi-harness/ui-state.json` (src/ui-state.ts): aparece na primeira feature de todas
+  e nunca mais ("continue" grava; cancelar não — re-aparece).
+- **Hints proativos de readiness** (droid doc 06 §6) — src/readiness-hints.ts: no startup, sem
+  report → "Run /readiness-report…"; com report → o primeiro dos **6 checks L1 locais baratos**
+  (`lint_config`/`type_check`/`formatter`/`unit_tests_exist`/`readme`/`env_template`) → "No
+  linter detected. Run /readiness-fix…". Supressão 24h/path em
+  `~/.pi/agent/pi-harness/cli-hints.json` (o análogo do `~/.factory/cli-hints.json`).
+- **Completion gate** (droid: mission completa ⇔ toda assertion `passed`) — ver docs/00 §runner:
+  o runLoop recusa `completed` com assertion não-passed (`completion_gate_failed` →
+  `orchestrator_turn`); bypass quando o qa-validator (quem flipa o status.json) foi pulado.
+- **Correção desta revisão**: a nota "Pause/Resume adiado (overlay read-only)" das Revisões 1–4
+  estava DESATUALIZADA — `P`/`R`/`Shift+R`/`S` já existem via run-registry (pauseRun/steerWorker).
+
+Mock do `main` (layout restaurado):
+```
+┌───────────────────────────────────────────────────────────────┐
+│ ⛬ Feature Control   ~/dev/acme                              Time 2m  ·  ● Live  │
+├───────────────────────────────────────────────────────────────┤
+│ ●  Running   ███████▒▒▒▒░░  6/12  [+2]                                          │
+├───────────────────────────────────┬───────────────────────────────┤
+│ Active Task  T2                  │ Tasks                              1/3 │
+│                                 │  ✓ T1  bootstrap rate-limit          │
+│ skill  worker                   │ [● T2  add token-bucket]  ← inverse   │
+│ fulfills A3, A4                 │  ○ T3  wire routes + config          │
+│                                 ├───────────────────────────┤  ← cnu (só direita)
+│ Preconditions                   │ Progress Log              6-10 of 10 │
+│    · token-bucket module exists  │  1m  task T2 started                 │  ← newest-first, colorido
+│ Expected Behavior               │  2m  task T1 completed ✓             │
+│    · 429 on burst                 │  3m  plan stored: 3 tasks / 12 …    │
+├────────────────────────────────────┴───────────────────────────────┤
+│ Active Worker  #2  9f3a4b2c  ● live      … mini-transcript ao vivo …         │
+├───────────────────────────────────────────────────────────────┤
+│ F Tasks   W Workers   C Coverage   D Delivery   M Models   Tab Next   Ctrl+T Close │
+└───────────────────────────────────────────────────────────────┘
+```
