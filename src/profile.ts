@@ -24,6 +24,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { changedParts, computeFingerprintParts, type FingerprintParts, gitHead } from "./fingerprint.ts";
+import { writeJsonAtomic } from "./plan.ts";
 
 export const PROFILE_VERSION = 1;
 
@@ -58,7 +59,7 @@ export function readProfile(cwd: string): Profile | null {
 
 export function writeProfile(cwd: string, profile: Profile): void {
 	fs.mkdirSync(profileDir(cwd), { recursive: true });
-	fs.writeFileSync(profilePath(cwd), `${JSON.stringify(profile, null, 2)}\n`);
+	writeJsonAtomic(profilePath(cwd), profile);
 }
 
 /**

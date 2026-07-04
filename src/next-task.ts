@@ -112,12 +112,18 @@ interface RawEvent {
 	event?: string;
 	taskId?: string;
 	id?: string;
+	successState?: string;
 }
-/** taskIds com task_completed (ou step_completed) no progress_log — o conjunto "completo". */
+/**
+ * taskIds com task_completed (ou step_completed) no progress_log — o conjunto "completo".
+ * Eventos com `successState` VÊM do recordHandoff (EndFeatureRun) e são IGNORADOS: o taskId ali
+ * é fornecido pelo worker — um EndFeatureRun com um id de task do plano marcaria a task como
+ * feita SEM commit (bypass do git gate do next_task). Só os eventos do runner/next_task contam.
+ */
 export function completedTaskIds(events: RawEvent[]): Set<string> {
 	const s = new Set<string>();
 	for (const e of events) {
-		if (e.event === "task_completed" || e.event === "step_completed") {
+		if ((e.event === "task_completed" || e.event === "step_completed") && e.successState === undefined) {
 			const id = String(e.taskId ?? e.id ?? "");
 			if (id) s.add(id);
 		}

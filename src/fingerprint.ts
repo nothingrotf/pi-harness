@@ -56,6 +56,14 @@ const RULE_DIRS = [
 ];
 
 const TOOLCFG = [
+	// package.json e vite/vitest configs contam: há repos que configuram lint/format/test AÍ
+	// (eslintConfig/prettier keys, plugins vite-plus) — drift ali era invisível ao fingerprint.
+	"package.json",
+	"vite.config.ts",
+	"vite.config.js",
+	"vitest.config.ts",
+	"vitest.config.js",
+	"vitest.workspace.ts",
 	"tsconfig.json",
 	"tsconfig.base.json",
 	"biome.json",
@@ -159,7 +167,17 @@ export function gitHead(cwd: string): string | null {
 	try {
 		const head = fs.readFileSync(path.join(cwd, ".git", "HEAD"), "utf8").trim();
 		if (head.startsWith("ref:")) {
-			return fs.readFileSync(path.join(cwd, ".git", head.slice(4).trim()), "utf8").trim().slice(0, 12);
+			const ref = head.slice(4).trim();
+			try {
+				return fs.readFileSync(path.join(cwd, ".git", ref), "utf8").trim().slice(0, 12);
+			} catch {
+				// ref não solto — após `git gc`/`git pack-refs` vive em packed-refs (sourceCommit ficava null)
+				const packed = fs.readFileSync(path.join(cwd, ".git", "packed-refs"), "utf8");
+				for (const line of packed.split("\n")) {
+					if (line.endsWith(` ${ref}`)) return line.slice(0, 12);
+				}
+				return null;
+			}
 		}
 		return head.slice(0, 12);
 	} catch {

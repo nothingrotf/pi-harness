@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { firstUncompleted, planNextTask } from "../src/next-task.ts";
+import { completedTaskIds, firstUncompleted, planNextTask } from "../src/next-task.ts";
 
 const IDS = ["T1", "T2", "T3"];
 
@@ -55,4 +55,15 @@ test("planNextTask: ativo já estava no conjunto completo → apenas segue pro p
 	// (ex.: task_completed do ativo já gravado por uma chamada anterior) → não recompleta, só avança.
 	const d = planNextTask(IDS, new Set(["T1"]), { activeTaskId: "T1", head: "sha0" }, "sha0");
 	assert.deepEqual(d, { action: "start", taskId: "T2" });
+});
+
+test("completedTaskIds: ignora task_completed vindo de EndFeatureRun (successState presente) — bypass do git gate", () => {
+	const done = completedTaskIds([
+		{ event: "task_completed", taskId: "T1" }, // runner/next_task → conta
+		{ event: "task_completed", taskId: "T2", successState: "success" }, // recordHandoff (worker-supplied) → NÃO conta
+		{ event: "step_completed", id: "implement" },
+	]);
+	assert.ok(done.has("T1"));
+	assert.ok(!done.has("T2"), "EndFeatureRun não marca tasks do plano como feitas");
+	assert.ok(done.has("implement"));
 });

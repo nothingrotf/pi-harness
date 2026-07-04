@@ -9,6 +9,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { type PathOpts, resolveAgentDir } from "./model-config.ts";
+import { writeJsonAtomic } from "./plan.ts";
 
 export interface UiState {
 	/** o card de onboarding da feature já foi visto (Droid: hasSeenMissionOnboarding). */
@@ -32,7 +33,7 @@ export function saveUiState(state: UiState, opts: PathOpts = {}): void {
 	try {
 		const p = uiStatePath(opts);
 		fs.mkdirSync(path.dirname(p), { recursive: true });
-		fs.writeFileSync(p, `${JSON.stringify(state, null, 2)}\n`);
+		writeJsonAtomic(p, state);
 	} catch {
 		// best-effort — sem persistência o card só re-aparece
 	}

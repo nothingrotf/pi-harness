@@ -35,7 +35,17 @@ export const sessionApiReady: Promise<void> = (async () => {
 	}
 })();
 
+// Cache por ficheiro com TETO (insertion-order eviction): sem ele, um entry por transcript de
+// worker/subagent ficava em memória PARA SEMPRE (sessões longas, múltiplas features).
+const ENTRY_CACHE_MAX = 32;
 const entryCache = new Map<string, { key: string; entries: WorkerEntry[] }>();
+function cacheSet(file: string, value: { key: string; entries: WorkerEntry[] }): void {
+	if (!entryCache.has(file) && entryCache.size >= ENTRY_CACHE_MAX) {
+		const oldest = entryCache.keys().next().value;
+		if (oldest !== undefined) entryCache.delete(oldest);
+	}
+	entryCache.set(file, value);
+}
 
 /** Lê + folda as entries nativas de um ficheiro de sessão (read-only, cacheado por mtime/size). null em falha/indisponível. */
 export function readNativeSessionFile(file: string): WorkerEntry[] | null {
@@ -58,7 +68,7 @@ export function readNativeSessionFile(file: string): WorkerEntry[] | null {
 			// best-effort
 		}
 		const entries = entriesFromSessionEntries(fe);
-		entryCache.set(file, { key, entries });
+		cacheSet(file, { key, entries });
 		return entries;
 	} catch {
 		return null; // ficheiro parcial/erro → o caller faz fallback (parser tolerante)
@@ -115,13 +125,26 @@ function sessionTasksDirs(root: string): string[] {
  * MAIS RECENTE (mtime) na pasta `tasks/` da sessão — a banda é singular (KG0), o mais fresco é o
  * worker vivo; (3) se o sessionId for desconhecido, varre qualquer sessão do cwd. null se nada. PURO.
  */
+const resolveMemo = new Map<string, { at: number; file: string | null }>();
+const RESOLVE_MEMO_MS = 500;
+
 export function resolveAgentOutputFile(cwd: string, sessionId: string | null | undefined, agentId: string | null | undefined): string | null {
 	const uid = process.getuid?.() ?? 0;
 	const root = path.join(os.tmpdir(), `pi-subagents-${uid}`, encodeCwd(cwd));
+	// Memo curto (500ms): isto corre A CADA FRAME do TUI e o scan estata todos os .output de todas
+	// as sessões — sem memo, o custo cresce com o histórico de subagents.
+	const memoKey = `${root}|${sessionId ?? ""}|${agentId ?? ""}`;
+	const memo = resolveMemo.get(memoKey);
+	if (memo && Date.now() - memo.at < RESOLVE_MEMO_MS) return memo.file;
+	const remember = (file: string | null): string | null => {
+		if (resolveMemo.size > 16) resolveMemo.clear();
+		resolveMemo.set(memoKey, { at: Date.now(), file });
+		return file;
+	};
 	if (sessionId && agentId) {
 		const exact = path.join(root, sessionId, "tasks", `${agentId}.output`);
 		try {
-			if (fs.statSync(exact).isFile()) return exact;
+			if (fs.statSync(exact).isFile()) return remember(exact);
 		} catch {
 			/* cai pro scan por mtime */
 		}
@@ -145,7 +168,7 @@ export function resolveAgentOutputFile(cwd: string, sessionId: string | null | u
 			}
 		}
 	}
-	return best?.p ?? null;
+	return remember(best?.p ?? null);
 }
 
 /**
@@ -183,7 +206,7 @@ export function readAgentOutputEntries(cwd: string, sessionId: string | null | u
 			}
 		}
 		const entries = foldTranscript(messages as Parameters<typeof foldTranscript>[0]);
-		entryCache.set(file, { key, entries });
+		cacheSet(file, { key, entries });
 		return entries;
 	} catch {
 		return null; // ficheiro parcial/erro → fallback

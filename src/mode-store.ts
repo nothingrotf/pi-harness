@@ -10,6 +10,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { HarnessMode, Phase } from "./mode.ts";
+import { writeJsonAtomic } from "./plan.ts";
 
 export interface PersistedMode {
 	active: boolean;
@@ -30,7 +31,7 @@ export function saveMode(cwd: string, mode: HarnessMode): void {
 		}
 		const data: PersistedMode = { active: true, featureId: mode.featureId, phase: mode.phase };
 		fs.mkdirSync(path.dirname(sessionPath(cwd)), { recursive: true });
-		fs.writeFileSync(sessionPath(cwd), `${JSON.stringify(data)}\n`);
+		writeJsonAtomic(sessionPath(cwd), data, false);
 	} catch {
 		// best-effort — a ausência só significa "sem auto-resume"
 	}
@@ -54,7 +55,7 @@ export function renameModePointer(cwd: string, oldId: string, newId: string): vo
 	try {
 		const cur = loadMode(cwd);
 		if (cur && cur.featureId === oldId) {
-			fs.writeFileSync(sessionPath(cwd), `${JSON.stringify({ ...cur, featureId: newId })}\n`);
+			writeJsonAtomic(sessionPath(cwd), { ...cur, featureId: newId }, false);
 		}
 	} catch {
 		// best-effort
