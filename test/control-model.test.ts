@@ -340,6 +340,18 @@ test("buildTaskRows: handoff de SUCESSO do impl step marca TODAS as tasks comple
 	assert.equal(rows.find((r) => r.id === "T2")?.status, "cancelled");
 });
 
+test("buildTaskRows: com K batches, sucesso de implement-1 marca SÓ as tasks do batch 1 (não todas)", () => {
+	// doc 05: um handoff de sucesso de implement-1 NÃO implica implement-2 (T3) feito.
+	const r = run([
+		{ id: "implement-1", kind: "task", skillName: "backend-worker", status: "completed", attempts: 1, workerSessionIds: ["w1"], tasks: [{ id: "T1", skillName: "backend-worker" }, { id: "T2", skillName: "backend-worker" }] },
+		{ id: "implement-2", kind: "task", skillName: "frontend-worker", status: "in_progress", attempts: 1, workerSessionIds: ["w2"], tasks: [{ id: "T3", skillName: "frontend-worker" }] },
+	]);
+	const rows = buildTaskRows(plan(), r, { handoffs: [okHandoff("implement-1", "z")] });
+	assert.equal(rows.find((x) => x.id === "T1")?.status, "completed", "batch 1 done");
+	assert.equal(rows.find((x) => x.id === "T2")?.status, "completed", "batch 1 done");
+	assert.notEqual(rows.find((x) => x.id === "T3")?.status, "completed", "batch 2 NÃO é marcado por um sucesso do batch 1");
+});
+
 test("activeItem: prefere in_progress; senão o próximo pending se running; null sem run", () => {
 	assert.equal(activeItem(plan(), null), null);
 	const inProg = activeItem(

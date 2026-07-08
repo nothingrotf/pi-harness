@@ -16,7 +16,7 @@ import {
 	readPlan,
 	readStatus,
 } from "./plan.ts";
-import { IMPL_STEP_ID } from "./feature-runner.ts";
+import { isImplStepId } from "./feature-runner.ts";
 import type { FeatureRun, FeatureRunStatus, StepStatus } from "./feature-runner.ts";
 import { type PersistedHandoff, runDir } from "./handoff.ts";
 import { loadModelConfig } from "./model-config.ts";
@@ -267,15 +267,20 @@ export function buildTaskRows(plan: Plan | null, run: FeatureRun | null, disk: D
 	const stepById = new Map<string, StepStatus>();
 	for (const s of run?.steps ?? []) if (s.kind === "task") stepById.set(s.id, s.status);
 	const derived = deriveTaskStatuses(disk.handoffs ?? [], disk.progressRaw ?? []);
-	// Backstop FINAL (git-free) — paridade com o headless FeatureRunner (feature-runner.ts:357): um
-	// handoff de SUCESSO do impl step (IMPL_STEP_ID cobre TODAS as tasks) implica todas completas.
-	// A fonte de verdade AO VIVO por task é o tool `next_task` (grava task_started/task_completed nas
-	// fronteiras) — este é só o coalesce do fim, caso o worker feche direto sem exaurir o loop.
-	const implSuccess = (disk.handoffs ?? []).some((h) => h.taskId === IMPL_STEP_ID && h.successState === "success");
+	// Backstop FINAL (git-free) — paridade com o headless FeatureRunner: um handoff de SUCESSO de um
+	// batch step marca as tasks DAQUELE batch (não todas — doc 05: com K batches, um sucesso de
+	// implement-1 NÃO implica implement-2 feito). A fonte de verdade AO VIVO por task é o tool
+	// `next_task` (grava task_started/task_completed nas fronteiras); este é só o coalesce do fim.
+	const succeededSteps = new Set((disk.handoffs ?? []).filter((h) => h.successState === "success").map((h) => h.taskId));
+	const batchDone = new Set<string>();
+	for (const s of run?.steps ?? []) if (s.kind === "task" && succeededSteps.has(s.id)) for (const t of s.tasks ?? []) batchDone.add(t.id);
+	// Legado sem run (nativo, sem feature-run.json p/ mapear batch→tasks): um sucesso do impl step
+	// cobre todas as tasks (comportamento antigo, só quando não há steps p/ escopar).
+	const legacyImplSuccess = !run?.steps?.length && [...succeededSteps].some(isImplStepId);
 	return plan.tasks.map((t) => {
 		const stepSt = stepById.get(t.id);
 		let status: TaskStatusV = stepSt !== undefined ? stepStatusToTask(stepSt) : derived.get(t.id) ?? "pending";
-		if (status !== "completed" && status !== "cancelled" && implSuccess) status = "completed";
+		if (status !== "completed" && status !== "cancelled" && (batchDone.has(t.id) || legacyImplSuccess)) status = "completed";
 		return {
 			id: t.id,
 			skillName: t.skillName,
