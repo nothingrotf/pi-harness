@@ -17,6 +17,7 @@
 import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { type FeatureRun, IMPL_STEP_ID } from "./feature-runner.ts";
 import { runDir } from "./handoff.ts";
 import { writeJsonAtomic } from "./plan.ts";
 
@@ -38,6 +39,21 @@ export interface NextTaskDecision {
 /** Primeiro taskId (na ordem do plano) ainda não completo, excluindo `exclude`. */
 export function firstUncompleted(taskIds: string[], completed: Set<string>, exclude?: string): string | undefined {
 	return taskIds.find((id) => id !== exclude && !completed.has(id));
+}
+
+/**
+ * Universo do `next_task` escopado ao BATCH em execução (doc 05 §5.1). Num plano com K batches
+ * (steps `implement-1..K`), o worker do batch k só pode receber as tasks DA SUA FATIA — senão
+ * correria o resto da feature. O step `in_progress` do feature-run.json carrega essa fatia
+ * (`step.tasks`). Fallback (sem run, ou step sem tasks) = o plano inteiro + `IMPL_STEP_ID` — o
+ * caso legado K=1, onde o único step "implement" JÁ carrega o plano todo (mesmo universo, sem
+ * mudança de comportamento). O `completed` continua GLOBAL: um worker de batch fresco pula os
+ * batches anteriores de graça (firstUncompleted só olha dentro do universo do batch).
+ */
+export function batchUniverse(run: FeatureRun | null | undefined, planTaskIds: string[]): { taskIds: string[]; batchId: string } {
+	const ip = run?.steps.find((s) => s.status === "in_progress" && s.kind === "task" && (s.tasks?.length ?? 0) > 0);
+	if (ip?.tasks?.length) return { taskIds: ip.tasks.map((t) => t.id), batchId: ip.id };
+	return { taskIds: planTaskIds, batchId: IMPL_STEP_ID };
 }
 
 /**

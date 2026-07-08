@@ -1,8 +1,15 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { completedTaskIds, firstUncompleted, planNextTask } from "../src/next-task.ts";
+import type { FeatureRun, FeatureStep } from "../src/feature-runner.ts";
+import { batchUniverse, completedTaskIds, firstUncompleted, planNextTask } from "../src/next-task.ts";
 
 const IDS = ["T1", "T2", "T3"];
+
+/** Constrói um FeatureRun mínimo com os steps dados (só os campos que batchUniverse lê). */
+function runWith(steps: Partial<FeatureStep>[]): FeatureRun {
+	return { steps: steps as FeatureStep[] } as unknown as FeatureRun;
+}
+const PLAN_IDS = ["T1", "T2", "T3", "T4", "T5", "T6"];
 
 test("firstUncompleted: primeiro não-completo na ordem, excluindo `exclude`", () => {
 	assert.equal(firstUncompleted(IDS, new Set(), undefined), "T1");
@@ -55,6 +62,34 @@ test("planNextTask: ativo já estava no conjunto completo → apenas segue pro p
 	// (ex.: task_completed do ativo já gravado por uma chamada anterior) → não recompleta, só avança.
 	const d = planNextTask(IDS, new Set(["T1"]), { activeTaskId: "T1", head: "sha0" }, "sha0");
 	assert.deepEqual(d, { action: "start", taskId: "T2" });
+});
+
+test("batchUniverse: sem run (null/undefined) → plano inteiro + IMPL_STEP_ID (legado K=1)", () => {
+	assert.deepEqual(batchUniverse(null, PLAN_IDS), { taskIds: PLAN_IDS, batchId: "implement" });
+	assert.deepEqual(batchUniverse(undefined, PLAN_IDS), { taskIds: PLAN_IDS, batchId: "implement" });
+});
+
+test("batchUniverse: step único 'implement' in_progress (carrega o plano todo) → mesmo universo", () => {
+	const run = runWith([{ id: "implement", kind: "task", status: "in_progress", tasks: PLAN_IDS.map((id) => ({ id, skillName: "w" })) }]);
+	assert.deepEqual(batchUniverse(run, PLAN_IDS), { taskIds: PLAN_IDS, batchId: "implement" });
+});
+
+test("batchUniverse: K batches — implement-2 in_progress → SÓ a fatia do batch 2 + batchId implement-2", () => {
+	const run = runWith([
+		{ id: "implement-1", kind: "task", status: "completed", tasks: [{ id: "T1", skillName: "w" }, { id: "T2", skillName: "w" }, { id: "T3", skillName: "w" }] },
+		{ id: "implement-2", kind: "task", status: "in_progress", tasks: [{ id: "T4", skillName: "w" }, { id: "T5", skillName: "w" }, { id: "T6", skillName: "w" }] },
+	]);
+	assert.deepEqual(batchUniverse(run, PLAN_IDS), { taskIds: ["T4", "T5", "T6"], batchId: "implement-2" });
+});
+
+test("batchUniverse: nenhum step in_progress (tudo pending) → fallback plano inteiro", () => {
+	const run = runWith([{ id: "implement-1", kind: "task", status: "pending", tasks: [{ id: "T1", skillName: "w" }] }]);
+	assert.deepEqual(batchUniverse(run, PLAN_IDS), { taskIds: PLAN_IDS, batchId: "implement" });
+});
+
+test("batchUniverse: ship-gate in_progress (kind != task) → fallback (só batch de implementação escopa)", () => {
+	const run = runWith([{ id: "ship-gate-qa-validator", kind: "ship-gate", status: "in_progress" }]);
+	assert.deepEqual(batchUniverse(run, PLAN_IDS), { taskIds: PLAN_IDS, batchId: "implement" });
 });
 
 test("completedTaskIds: ignora task_completed vindo de EndFeatureRun (successState presente) — bypass do git gate", () => {

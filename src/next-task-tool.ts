@@ -7,8 +7,8 @@
 import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { appendProgress } from "./handoff.ts";
-import { readPlan } from "./plan.ts";
-import { clearNextTaskState, completedTaskIds, gitHead, gitIsAncestor, planNextTask, readNextTaskState, readProgressEvents, writeNextTaskState } from "./next-task.ts";
+import { readFeatureRun, readPlan } from "./plan.ts";
+import { batchUniverse, clearNextTaskState, completedTaskIds, gitHead, gitIsAncestor, planNextTask, readNextTaskState, readProgressEvents, writeNextTaskState } from "./next-task.ts";
 
 const PARAMS = Type.Object({
 	featureId: Type.String({ description: "The feature id (from your bootstrap) — selects the run directory." }),
@@ -26,7 +26,9 @@ export function registerNextTaskTool(pi: ExtensionAPI): void {
 				const { featureId } = params as { featureId: string };
 				const plan = readPlan(ctx.cwd, featureId);
 				if (!plan) return { content: [{ type: "text", text: `No plan.json for feature "${featureId}".` }], details: { error: "no_plan" } };
-				const taskIds = plan.tasks.map((t) => t.id);
+				// Escopa o universo à fatia do batch em execução (doc 05 §5.1): o step in_progress do
+				// feature-run.json carrega as tasks DESTE batch. Fallback (K=1/sem run) = plano inteiro.
+				const { taskIds, batchId } = batchUniverse(readFeatureRun(ctx.cwd, featureId), plan.tasks.map((t) => t.id));
 				const completed = completedTaskIds(readProgressEvents(ctx.cwd, featureId));
 				const state = readNextTaskState(ctx.cwd, featureId);
 				const head = gitHead(ctx.cwd);
@@ -36,7 +38,7 @@ export function registerNextTaskTool(pi: ExtensionAPI): void {
 
 				if (d.action === "done") {
 					clearNextTaskState(ctx.cwd, featureId);
-					return { content: [{ type: "text", text: '✓ All tasks are committed. Call EndFeatureRun ONCE now (taskId="implement"), then end your turn.' }], details: { action: "done" } };
+					return { content: [{ type: "text", text: `✓ All tasks in this batch are committed. Call EndFeatureRun ONCE now (taskId="${batchId}"), then end your turn.` }], details: { action: "done", batchId } };
 				}
 
 				const task = plan.tasks.find((t) => t.id === d.taskId);
