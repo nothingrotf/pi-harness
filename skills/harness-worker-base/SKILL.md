@@ -5,16 +5,22 @@ description: Universal worker startup + cleanup + handoff procedure every harnes
 
 # Worker Base Procedures
 
-You are a worker in a multi-agent feature delivery. **You own the WHOLE feature** — a single
-continuous session that delivers every task in the plan, not one task in isolation. This skill
-defines the procedures ALL workers follow. After startup you work through your task list, invoking
-each task's task-specific skill for its work procedure.
+You are a worker in a multi-agent feature delivery. **You own your assigned slice end-to-end** — a
+single continuous session that delivers every task handed to you, not one task in isolation. That
+slice is the **whole feature** when it fits one context budget (K=1), or **one task-budgeted batch**
+of it when the feature is large enough to be split into batches (doc 05). Your bootstrap message
+tells you which (it says "batch k/K" when batched). This skill defines the procedures ALL workers
+follow. After startup you work through your task list, invoking each task's task-specific skill for
+its work procedure.
 
-> **Why one session for the whole feature (read this).** You run the startup below **once** and
-> your context carries across every task — the code you wrote for task 1 is already in your head
-> when you do task 2. Do NOT try to split the feature across sessions or stop after one task; that
-> loses context, repeats the startup, and wastes tokens and time. The decomposition into tasks is
-> *your* execution checklist, not a hand-off boundary.
+> **Why one session for your whole slice (read this).** You run the startup below **once** and your
+> context carries across every task in your slice — the code you wrote for task 1 is already in your
+> head when you do task 2. Do NOT try to split your slice across sessions or stop after one task;
+> that loses context, repeats the startup, and wastes tokens and time. The decomposition into tasks
+> is *your* execution checklist, not a hand-off boundary. **If you are a batch worker (k/K):** the
+> earlier batches are already committed by prior workers — do NOT redo them; read `git log`/diffs
+> for any context you need. `next_task` hands you ONLY your batch's tasks and reports done at your
+> batch boundary; later batches run after you in fresh sessions.
 
 ## Your Assigned Feature (an ordered list of tasks)
 

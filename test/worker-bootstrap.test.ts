@@ -41,6 +41,35 @@ test("buildWorkerBootstrap: impl multi-task → loop next_task (uma sessão, sem
 	assert.doesNotMatch(m, /"skillName": "frontend-worker"/);
 });
 
+test("buildWorkerBootstrap: batch step (K>1) → copy de BATCH k/K, next_task escopado, leia commits anteriores", () => {
+	const batch2: FeatureStep = {
+		id: "implement-2",
+		kind: "task",
+		skillName: "frontend-worker",
+		tasks: [
+			{ id: "T8", skillName: "frontend-worker", description: "ui", fulfills: ["A-8"] },
+			{ id: "T9", skillName: "frontend-worker", description: "ui2", fulfills: ["A-9"] },
+		],
+		fulfills: ["A-8", "A-9"],
+		status: "pending",
+		attempts: 0,
+		workerSessionIds: [],
+		batchIndex: 2,
+		batchTotal: 3,
+	};
+	const m = buildWorkerBootstrap(batch2, { featureId: "feat-x", workerSessionId: "ws-2" });
+	assert.match(m, /BATCH 2\/3 of feature "feat-x"/);
+	assert.match(m, /you own \*\*batch 2\*\*/);
+	assert.match(m, /Earlier batches were already delivered and COMMITTED/);
+	assert.match(m, /git log/, "orienta a reconstruir contexto dos commits anteriores");
+	assert.match(m, /ONLY this batch's tasks/);
+	assert.match(m, /taskId="implement-2"/, "EndFeatureRun usa o id do batch step");
+	assert.match(m, /Batch 2\/3 has 2 tasks \(T8, T9\)/);
+	// fonte de verdade = next_task; nada de spec completa inline.
+	assert.doesNotMatch(m, /```json/);
+	assert.doesNotMatch(m, /WHOLE feature/, "não usa a copy de feature inteira (K=1)");
+});
+
 test("buildWorkerBootstrap: ship gate pula harness-worker-base e invoca o validator direto", () => {
 	const m = buildWorkerBootstrap(gate, { featureId: "feat-x", workerSessionId: "ws-9" });
 	assert.doesNotMatch(m, /harness-worker-base/);

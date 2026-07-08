@@ -86,6 +86,10 @@ export interface FeatureStep {
 	/** ids de sessão usados por tentativa (analog de feature.workerSessionIds, doc 07). O
 	 * último = a sessão corrente/resumível (resume re-attacha; nova tentativa = id novo). */
 	workerSessionIds: string[];
+	/** Posição do batch (doc 05): 1-based. Presente só quando K>1 (feature rachada em batches). */
+	batchIndex?: number;
+	/** Total de batches (K) da feature. Presente só quando K>1. undefined → K=1 (feature inteira). */
+	batchTotal?: number;
 }
 
 export interface FeatureRun {
@@ -277,6 +281,8 @@ export function planFeatureRun(featureId: string, tasks: PlanTaskRef[], now: () 
 		status: "pending" as const,
 		attempts: 0,
 		workerSessionIds: [],
+		// K>1: carimba a posição do batch (o bootstrap do worker usa p/ "batch k/K"); K=1 fica limpo.
+		...(batches.length > 1 ? { batchIndex: idx + 1, batchTotal: batches.length } : {}),
 	}));
 	return { runId: genRunId(now), featureId, status: "running", steps, gateInjected: false, createdAt: ts, updatedAt: ts };
 }

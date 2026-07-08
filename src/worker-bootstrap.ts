@@ -46,10 +46,36 @@ export function buildWorkerBootstrap(step: FeatureStep, opts: BootstrapOpts): st
 		].join("\n");
 	}
 
-	// Worker de implementação: dono da feature inteira (ou de uma fix task). Trabalha TODAS as
-	// tasks numa única sessão. Multi-task → loop `next_task` (o harness sequencia; fronteiras gravadas
-	// por máquina). Single (fix) → a task única direto (sem loop).
+	// Worker de implementação: dono da feature inteira (K=1), de UM BATCH (K>1, doc 05), ou de uma
+	// fix task. Trabalha as tasks da sua fatia numa única sessão. Multi-task/batch → loop `next_task`
+	// (o harness sequencia; fronteiras gravadas por máquina). Single (fix) → a task única direto.
 	const tasks = stepTasks(step);
+	const isBatch = (step.batchTotal ?? 1) > 1;
+
+	if (isBatch) {
+		return [
+			"<system-reminder>",
+			`You are a worker assigned to deliver BATCH ${step.batchIndex}/${step.batchTotal} of feature "${opts.featureId}".`,
+			"## Worker Session",
+			`Your worker session id is: ${opts.workerSessionId}`,
+			`This feature is split into ${step.batchTotal} task-budgeted batches (doc 05); you own **batch ${step.batchIndex}** (${tasks.length} tasks). Earlier batches were already delivered and COMMITTED by prior workers — do NOT redo them; read \`git log\`/diffs for any context you need. Later batches run AFTER you in fresh sessions. Your context is fresh for this batch (that is the point — no compaction).`,
+			`The harness hands you ONLY this batch's tasks ONE AT A TIME via \`next_task\` and records progress DETERMINISTICALLY (it marks a task done only AFTER you commit).`,
+			"REMEMBER TO CALL EndFeatureRun **ONCE** WHEN `next_task` REPORTS ALL TASKS IN THIS BATCH ARE DONE (even on errors). End your turn immediately after.",
+			"</system-reminder>",
+			"## Your Task",
+			"1. Invoke the 'harness-worker-base' skill for startup procedures — run it **once** for this batch.",
+			"2. LOOP until done:",
+			`   a. Call \`next_task({ featureId: "${opts.featureId}" })\` — it returns ONLY this batch's next task (id, skillName, description, preconditions, expectedBehavior, fulfills).`,
+			"   b. Invoke that task's `skillName` skill, implement it, and run its verification.",
+			"   c. COMMIT the repo change with the task id in the message (e.g. `[<taskId>] <summary>`). You MUST commit — `next_task` will not advance you otherwise.",
+			"   d. Call `next_task` again for the following task.",
+			`3. When \`next_task\` reports all tasks in THIS batch are done, call EndFeatureRun **once** (taskId="${step.id}"), or with returnToOrchestrator:true if you are blocked.`,
+			"4. On resume / re-run, just call `next_task` — it resumes at the next uncommitted task in this batch automatically. Never redo committed work.",
+			"## This Batch",
+			`Batch ${step.batchIndex}/${step.batchTotal} has ${tasks.length} tasks (${tasks.map((t) => t.id).join(", ")}). The full spec of each is delivered by \`next_task\` — the tool is the source of truth; the list is NOT inlined here on purpose.`,
+		].join("\n");
+	}
+
 	const multi = tasks.length > 1;
 
 	if (multi) {
