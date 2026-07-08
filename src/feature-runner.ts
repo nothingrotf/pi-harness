@@ -68,6 +68,9 @@ export interface PlanTaskRef {
 	cohesion?: string;
 	/** Força uma emenda de batch ANTES desta task (fronteira dura; doc 05 §4). Opcional. */
 	batchBreakBefore?: boolean;
+	/** Peso da task no budget do batch (doc 05 §10, token-aware). Default 1 (contagem). > 1 numa
+	 * task pesada → consome mais budget → batches menores ao redor. Opcional. */
+	weight?: number;
 }
 
 export interface FeatureStep {

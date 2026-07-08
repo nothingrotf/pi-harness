@@ -29,6 +29,8 @@ export interface Task {
 	cohesion?: string;
 	/** Força uma emenda de batch ANTES desta task (fronteira dura; doc 05 §4). Opcional. */
 	batchBreakBefore?: boolean;
+	/** Peso da task no budget do batch (doc 05 §10, token-aware). Default 1. > 1 = task pesada. Opcional. */
+	weight?: number;
 }
 
 export interface Plan {
@@ -234,7 +236,7 @@ export function buildFeatureRun(cwd: string, featureId: string, now?: () => stri
 	if (!plan) return null;
 	return planFeatureRun(
 		featureId,
-		plan.tasks.map((t) => ({ id: t.id, skillName: t.skillName, description: t.description, fulfills: t.fulfills, preconditions: t.preconditions, expectedBehavior: t.expectedBehavior, cohesion: t.cohesion, batchBreakBefore: t.batchBreakBefore })),
+		plan.tasks.map((t) => ({ id: t.id, skillName: t.skillName, description: t.description, fulfills: t.fulfills, preconditions: t.preconditions, expectedBehavior: t.expectedBehavior, cohesion: t.cohesion, batchBreakBefore: t.batchBreakBefore, weight: t.weight })),
 		now,
 	);
 }

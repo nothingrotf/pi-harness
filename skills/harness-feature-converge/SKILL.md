@@ -223,6 +223,7 @@ Tasks execute in array order — the topmost pending runs next. Each task:
 | `fulfills` | contract assertion IDs this task COMPLETES |
 | `cohesion` | *(optional)* batching cohesion tag — see below |
 | `batchBreakBefore` | *(optional)* force a batch seam before this task — see below |
+| `weight` | *(optional)* batch-budget weight (default 1; >1 = unusually heavy task) — see below |
 
 (Tasks carry no `status` field — assertion status lives per-ID in `status.json`, written by
 `store_plan`; do not add a task-level `status`.)
@@ -240,6 +241,9 @@ A large feature is split into task-budgeted batches (~7 tasks), one fresh worker
 - **`batchBreakBefore: true`** — force a seam before a task at a hard dependency/domain frontier
   (rare). A change in `skillName` (worker type) is already treated as a preferred seam automatically;
   you don't mark those.
+- **`weight: <n>`** — token-aware budget (default 1). Set >1 on an unusually **heavy** task (lots of
+  code/context) so it consumes more of the ~7 budget → smaller batches around it. Use rarely; most
+  tasks are weight 1.
 
 Most tasks need NEITHER field — order foundational-first and let the budget cut. Only add a lever
 when a budget cut would land in the middle of a cluster that must be built with shared context.

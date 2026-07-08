@@ -42,6 +42,19 @@ function cutForbidden(a: PlanTaskRef, b: PlanTaskRef): boolean {
 }
 
 /**
+ * Peso da task no budget (doc 05 §10: budget token-aware). Default 1 = contagem pura (sem
+ * regressão). O author (converge) marca `weight` > 1 numa task PESADA (muito código/contexto) pra
+ * ela consumir mais budget → batches menores ao redor dela, sem inventar um estimador de tokens.
+ */
+function weightOf(t: PlanTaskRef): number {
+	const w = t.weight;
+	return typeof w === "number" && Number.isFinite(w) && w > 0 ? w : 1;
+}
+function sumWeight(ts: PlanTaskRef[]): number {
+	return ts.reduce((s, t) => s + weightOf(t), 0);
+}
+
+/**
  * Empacota `tasks` (na ordem do plano) em batches por budget + coesão. Retorna `PlanTaskRef[][]`
  * (sempre ≥1 batch quando há tasks; `[]` quando não há). NÃO muta as tasks.
  *
@@ -51,10 +64,11 @@ export function batchTasks(tasks: PlanTaskRef[], budget: number = batchBudget())
 	if (tasks.length === 0) return [];
 	// Desligado explicitamente (env 0/inválido): um batch só.
 	if (budget <= 0) return [tasks.slice()];
-	// Legado K=1 (byte-idêntico ao planFeatureRun de antes do batching): T ≤ budget E sem emenda
-	// dura. Uma `batchBreakBefore` presente FORÇA o split mesmo abaixo do budget (é opt-in do author).
+	// Legado K=1 (byte-idêntico ao planFeatureRun de antes do batching): peso total ≤ budget E sem
+	// emenda dura. Com pesos default (1) ⇒ sumWeight == count ⇒ mesma condição de antes. Uma
+	// `batchBreakBefore` presente FORÇA o split mesmo abaixo do budget (é opt-in do author).
 	const hasForcedBreak = tasks.some((t, i) => i > 0 && t.batchBreakBefore);
-	if (tasks.length <= budget && !hasForcedBreak) return [tasks.slice()];
+	if (sumWeight(tasks) <= budget && !hasForcedBreak) return [tasks.slice()];
 
 	// Piso suave pra cortar cedo numa emenda de skill (alinha batches a worker types sem fragmentar):
 	// só permite o corte antecipado quando o batch já está com ≥60% do budget.
@@ -76,11 +90,12 @@ export function batchTasks(tasks: PlanTaskRef[], budget: number = batchBudget())
 		if (!next) continue; // última task: o batch corrente vai no flush final
 		if (cutForbidden(t, next)) continue; // nunca racha um cluster de coesão (overflow permitido)
 
-		const atBudget = current.length >= budget;
+		const w = sumWeight(current); // budget token-aware: soma de pesos, não contagem (default 1 = count)
+		const atBudget = w >= budget;
 		const skillSeam = t.skillName !== next.skillName;
 		// Fecha: (a) ao atingir o budget, em qualquer emenda permitida; ou (b) numa emenda de skill
 		// com o batch já ≥ softFloor (bônus de localização — budget ainda manda, isto só antecipa).
-		if (atBudget || (skillSeam && current.length >= softFloor)) {
+		if (atBudget || (skillSeam && w >= softFloor)) {
 			batches.push(current);
 			current = [];
 		}

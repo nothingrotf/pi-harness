@@ -199,9 +199,9 @@ baratos**.
 | Batches sequenciais | "batch never starts until prev complete" | já é sequencial (steps em ordem no runLoop) | `feature-runner.ts` runLoop |
 | Compact summary entre batches | tasks/commits/tests/deviations | `EndFeatureRun` por batch (já expõe `workerHandoffs`) | `handoff.ts` / runner |
 | Offer-then-confirm sub-agents | "want sub-agents? y/n" | **NÃO portado** — batching é decisão automática de sizing (somos runner determinístico) | — |
-| Context budget (<40k / monitor) | Context Loading Strategy | budget token-aware que dirige o tamanho do batch | `feature-runner.ts` + env |
+| Context budget (<40k / monitor) | Context Loading Strategy | budget token-aware via **peso por task** (`weight`, author-supplied) | `batch.ts` `weightOf`/`sumWeight` |
 | Verifier (author ≠ verifier) | `sub-agents.md` Verifier | JÁ TEMOS: ship gate injetado (code-review → qa-validator → deliver) | runner (`SHIP_GATE`) |
-| Discrimination/mutation sensor | Verifier step 2 | parcial (`harness-generate-tests`); portar o sensor scratch-state pro qa-validator | `skills/harness-qa-validator` |
+| Discrimination/mutation sensor | Verifier step 2 | **ADICIONADO**: sensor scratch-state bounded no code-review (§1.5) | `skills/harness-code-review` §1.5 |
 
 ## 8. O que NÃO portamos (e por quê)
 
@@ -228,8 +228,10 @@ Cada passo é independentemente entregável e reversível; 1–2 já provam o mo
 
 ## 10. Pontos abertos [aberto]
 
-- **Budget token-aware vs task-count.** Começar com ~7 fixo (simples) e evoluir pra peso por task
-  (tlc >40k)? Heurística de peso por task ainda não definida.
+- **Budget token-aware** [RESOLVIDO phase 7] — realizado como **peso por task** (`weight`,
+  default 1 = contagem). O author (converge) marca uma task pesada com `weight>1` → ela consome mais
+  budget → batches menores ao redor, SEM inventar um estimador de tokens. Um estimador automático
+  (peso derivado de diff/descrição) continua aberto se algum dia valer a pena.
 - **`cohesion` no schema do `store_plan`.** Campo opcional novo em `plan.json` — validar que
   `store_plan` aceita e o coverage invariant ignora. Definir se `batchBreakBefore` também entra.
 - **Contagem de startup.** worker-base roda 1× **por batch**. Confirmar que o custo de startup ×K

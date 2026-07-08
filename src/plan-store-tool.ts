@@ -21,6 +21,7 @@ const TaskSchema = Type.Object({
 	expectedBehavior: Type.Optional(Type.Array(Type.String())),
 	cohesion: Type.Optional(Type.String({ description: "Batching cohesion tag (doc 05): consecutive tasks with the SAME non-empty tag are never split across batches. Budget drives batch SIZE; cohesion only constrains WHERE the cut lands. Omit for free budget-driven cuts." })),
 	batchBreakBefore: Type.Optional(Type.Boolean({ description: "Force a batch seam BEFORE this task (hard boundary; doc 05). Rare — use at a genuine dependency/domain frontier." })),
+	weight: Type.Optional(Type.Number({ description: "Batch-budget weight (doc 05, token-aware). Default 1 (counts as one task). Set > 1 for an unusually heavy task so it consumes more budget → smaller batches around it. Omit for normal tasks." })),
 });
 
 const PARAMS = Type.Object({

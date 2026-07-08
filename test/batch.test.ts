@@ -119,6 +119,32 @@ test("emenda de skill NÃO corta se o batch ainda está abaixo do softFloor", ()
 	);
 });
 
+test("weight: task pesada consome mais budget (token-aware, doc 05 §10)", () => {
+	// budget 7. 3 tasks leves (w1) + 1 pesada (w4) + 3 leves = peso total 10 > 7 → racha.
+	const tasks: PlanTaskRef[] = [
+		{ id: "T1", skillName: "w" },
+		{ id: "T2", skillName: "w" },
+		{ id: "T3", skillName: "w" },
+		{ id: "T4", skillName: "w", weight: 4 }, // pesada
+		{ id: "T5", skillName: "w" },
+		{ id: "T6", skillName: "w" },
+		{ id: "T7", skillName: "w" },
+	];
+	// T1(1)T2(2)T3(3)T4(+4=7) → atBudget em T4 → corta [T1..T4]; T5T6T7 = [T5..T7].
+	assert.deepEqual(ids(batchTasks(tasks, 7)), [
+		["T1", "T2", "T3", "T4"],
+		["T5", "T6", "T7"],
+	]);
+});
+
+test("weight: default 1 — pesos ausentes = contagem pura (K=1 byte-idêntico preservado)", () => {
+	// 7 tasks sem weight, budget 7 → peso total 7 ≤ budget → um batch (legado).
+	assert.deepEqual(ids(batchTasks(mk(7), 7)), [["T1", "T2", "T3", "T4", "T5", "T6", "T7"]]);
+	// weight inválido/≤0 cai pra 1.
+	const tasks: PlanTaskRef[] = [{ id: "T1", skillName: "w", weight: 0 }, { id: "T2", skillName: "w", weight: -3 }];
+	assert.deepEqual(ids(batchTasks(tasks, 7)), [["T1", "T2"]]);
+});
+
 test("batchBudget: env HARNESS_TASK_BUDGET", () => {
 	assert.equal(batchBudget({} as NodeJS.ProcessEnv), DEFAULT_BATCH_BUDGET);
 	assert.equal(batchBudget({ HARNESS_TASK_BUDGET: "10" } as unknown as NodeJS.ProcessEnv), 10);

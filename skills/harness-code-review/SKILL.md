@@ -53,6 +53,27 @@ Collect what the reviewers need to judge **claims vs reality**, not just the dif
   X", "handled the error path") against the actual diff and flag procedure deviations.
 Use Bash directly, or an `Explore` agent when the changed set is large.
 
+## 1.5) Discrimination sensor (do the tests actually catch regressions? — bounded, scratch-state only)
+The programmatic gate (§0) proves the suite **runs green**; it does NOT prove the tests would
+**fail** on a real regression. This is the TLC-Verifier discrimination check (doc 05 phase 7),
+author≠verifier: the workers wrote these tests; you independently confirm they discriminate. Run it
+after a green gate, **only over the feature/fix diff's changed code**, and **only in scratch state**
+(never mutate the real tree):
+1. Pick **1–3** behavior-level mutations on the changed code (tiered: 1–2 for a standard feature,
+   ≥3–5 for a P0/critical path — auth, payments, migrations). A mutation is a small semantic flip:
+   invert a condition, change a returned value, drop a required side effect, off-by-one on a bound.
+   Target lines that a `fulfills` assertion or a listed edge case depends on — not cosmetic code.
+2. Apply each mutation in **throwaway state** (`git stash`/a temp worktree/an in-place edit you will
+   `git checkout --` immediately after), run the **relevant** tests (narrow selection, not the whole
+   suite), and confirm they **FAIL** (kill the mutant). Then **discard the mutation** — the real
+   working tree must be byte-identical afterward (verify `git status` clean).
+3. A **surviving** mutant (tests still pass with the fault) = the suite doesn't discriminate that
+   behavior → a **blocking finding** (`axis: "correctness"`, `finding: "tests survive mutation: <what>"`,
+   `file:line`). The orchestrator turns it into a fix task (strengthen the test), same as any blocking
+   finding. Record killed/survived per mutation in the synthesis (`sensor` block below).
+Do NOT weaken or delete tests here; you only probe them. If the gate was red you never reach this
+step. Keep it bounded — this is a sensor, not full mutation-testing tooling.
+
 ## 2) Launch the three axes in parallel
 Spawn all three via the **`Agent` tool** (@tintinweb/pi-subagents) **in the same message** — one
 `Agent` call per axis with `run_in_background: true` on each so they run concurrently as isolated
@@ -104,6 +125,7 @@ Write `.harness/runs/<feature-id>/validation/harness-code-review/synthesis.json`
   "feature": "<feature-id>", "round": 1, "status": "pass" | "fail",
   "scope": "full" | "fix-delta",
   "gate": { "test": {"passed":true}, "typecheck": {"passed":true}, "lint": {"passed":true} },
+  "sensor": { "mutations": 2, "killed": 2, "survived": 0, "survivors": [] },
   "axes": { "correctness": {...}, "quality": {...}, "conventions": {...} },
   "blockingFindings": [ { "axis":"correctness|quality|conventions", "file":"...", "line":0, "finding":"...", "rule":"<rule or null>" } ],
   "appliedUpdates": [ { "target":"services.yaml|library", "description":"..." } ],
