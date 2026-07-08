@@ -50,6 +50,11 @@ export interface PlanTaskRef {
 	fulfills?: string[];
 	preconditions?: string[];
 	expectedBehavior?: string[];
+	/** Trilho de coesão do batching (doc 05 §4): tasks consecutivas com a MESMA tag não-vazia
+	 * nunca são rachadas entre batches (cluster coeso: auth-core, migration-seq). Opcional. */
+	cohesion?: string;
+	/** Força uma emenda de batch ANTES desta task (fronteira dura; doc 05 §4). Opcional. */
+	batchBreakBefore?: boolean;
 }
 
 export interface FeatureStep {
