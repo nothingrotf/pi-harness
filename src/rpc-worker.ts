@@ -20,8 +20,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { FeatureStep, SpawnCtx, SpawnFn, SpawnOutcome } from "./feature-runner.ts";
-import { buildWorkerSystemPrompt, isUsageLimitEvent, rpcWorkerArgs, rpcWorkerPrompt, workerInactivityMs, writePromptFile } from "./feature-spawn.ts";
-import { handoffOutcome } from "./handoff.ts";
+import { buildWorkerSystemPrompt, isUsageLimitEvent, isWorkerCrashEvent, rpcWorkerArgs, rpcWorkerPrompt, workerInactivityMs, writePromptFile } from "./feature-spawn.ts";
+import { handoffOutcome, readHandoffExact } from "./handoff.ts";
 import { type HarnessModelConfig, resolveChoice, roleForStep } from "./model-config.ts";
 
 /** O subconjunto do RpcClient que o driver usa — permite injetar um fake nos testes. */
@@ -146,6 +146,8 @@ export function makeRpcSpawn(opts: RpcSpawnOpts): SpawnFn {
 		let usageLimit = false;
 		let aborted = false;
 		let inactivity = false;
+		let crashed = false;
+		let agentEnded = false;
 		let started = false;
 		try {
 			await client.start();
@@ -179,7 +181,16 @@ export function makeRpcSpawn(opts: RpcSpawnOpts): SpawnFn {
 						finish();
 						return;
 					}
-					if ((ev as { type?: string })?.type === "agent_end") finish();
+					// Morte do child/wire ANTES do agent_end → falha rápida (não espera o watchdog de 10 min).
+					if (!crashed && isWorkerCrashEvent(ev)) {
+						crashed = true;
+						finish();
+						return;
+					}
+					if ((ev as { type?: string })?.type === "agent_end") {
+						agentEnded = true;
+						finish();
+					}
 				});
 				onAbort = () => {
 					aborted = true;
@@ -190,12 +201,20 @@ export function makeRpcSpawn(opts: RpcSpawnOpts): SpawnFn {
 					else ctx.signal.addEventListener("abort", onAbort, { once: true });
 				}
 				arm();
-				client.prompt(rpcWorkerPrompt(step, ctx.resume)).catch(() => finish());
+				// prompt rejeitado = wire quebrado / child morto (NUNCA um fim normal, que vem por agent_end):
+				// marca crashed a menos que já seja abort/usage/inactivity ou o turno tenha terminado.
+				client.prompt(rpcWorkerPrompt(step, ctx.resume)).catch(() => {
+					if (!aborted && !usageLimit && !inactivity && !agentEnded) crashed = true;
+					finish();
+				});
 			});
 		} catch {
 			// start/prompt falhou → trata como failure (o handoff abaixo virá vazio → success:false)
 		} finally {
-			if (started && (aborted || usageLimit || inactivity)) {
+			// `crashed` INCLUÍDO: num falso-positivo de crash o child ainda está VIVO — sem abort, o
+			// stop() SIGTERM/SIGKILLa um turno em voo e o runner spawnaria um 2º worker em paralelo.
+			// Num crash real o abort é um no-op inofensivo (child já morto).
+			if (started && (aborted || usageLimit || inactivity || crashed)) {
 				try {
 					await client.abort(); // pausa graceful: interrompe; o transcript --session-id fica p/ resume
 				} catch {
@@ -214,8 +233,14 @@ export function makeRpcSpawn(opts: RpcSpawnOpts): SpawnFn {
 		if (aborted) return { code: null, aborted: true };
 		if (usageLimit) return { code: null, usageLimit: true };
 		if (inactivity) return { code: null, inactivity: true };
+		// `reported` = o worker gravou um handoff NESTA tentativa (wsid exato) — o runLoop usa pra
+		// distinguir falha reportada (→ orchestrator) de wedge mecânico do re-attach (→ degrade).
+		const reported = readHandoffExact(ctx.cwd, opts.featureId, step.id, workerSessionId) != null;
+		// Crash sem agent_end E sem handoff de sucesso em disco → requeue rápido. Se o child morreu
+		// DEPOIS de gravar o EndFeatureRun (race benigno), o handoff abaixo ainda conta o sucesso.
+		if (crashed && !handoffOutcome(ctx.cwd, opts.featureId, step.id, workerSessionId).success) return { code: 1, crashed: true, reported };
 		// Sucesso/returnToOrchestrator vêm do handoff que o worker escreveu via EndFeatureRun.
 		const out = handoffOutcome(ctx.cwd, opts.featureId, step.id, workerSessionId);
-		return { code: 0, success: out.success, returnToOrchestrator: out.returnToOrchestrator };
+		return { code: 0, success: out.success, returnToOrchestrator: out.returnToOrchestrator, reported };
 	};
 }

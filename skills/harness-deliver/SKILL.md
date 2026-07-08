@@ -24,7 +24,7 @@ composed into one gated flow.
 | `src/linear-link.ts` (harness package) | canonical, tested Linear/Jira link extractor (droid §4.1 port) | |
 
 **The interface (cockpit).** Every `store_delivery` call updates the **Delivery tab** in Feature
-Control (Ctrl+T) live (PR · linked issue · CI checks · fix-loop · merge state). Call it at each
+Control (Alt+T) live (PR · linked issue · CI checks · fix-loop · merge state). Call it at each
 transition so the human watching the cockpit sees progress — don't batch. The human **merge gate**
 is a TUI overlay, not a chat question: you trigger it by writing `state:"awaiting_merge"` (Step 5).
 
@@ -36,6 +36,10 @@ is a TUI overlay, not a chat question: you trigger it by writing `state:"awaitin
    (Step 3) for the existing PR, don't open a second one.
 3. Confirm `gh auth status` and a clean-enough tree. Commit any pending feature work on the
    feature branch first (conventional-commit subject). Never deliver with an unrelated dirty tree.
+4. **Remote pre-check** (droid `inspect_mission_readiness.hasRemote`): `git remote` — if the repo
+   has **no remote**, a PR is impossible. Call `store_delivery` with `hasRemote:false` +
+   `state:"ci_blocked"` and return to the orchestrator (surface it early, don't fail late at
+   `git push`). Otherwise record `hasRemote:true` and continue.
 
 ## 1) Resolve the linked Linear / Jira issue (droid-style scrape)
 Gather three signals and extract issue references — **branch + commits + PR body**:
@@ -68,6 +72,14 @@ above. If `linearIssueIds`/`jiraIssueKeys` are empty and there are `candidateKey
 skill runs in the orchestrator chat), confirm the issue once; otherwise note "no issue linked" —
 **a missing link is non-fatal** (it only widens `attributionGaps` in analytics, doc `09` §5.2).
 
+**Verify candidates against real issues (Linear MCP, when connected).** If the `mcp` tool exposes a
+Linear server (e.g. `linear`/`mcp.linear.app`), use it to turn *candidate* keys into *confirmed*
+links WITHOUT an `ask_user_question`: look the candidate up (`get_issue`/search); if it resolves to
+a real issue, promote it from `candidateKeys` to `linearIssueIds` in `store_delivery`. This is the
+droid three-path Linear access (connector broker / Linear MCP / `LINEAR_API_KEY`, doc `09` §1–3)
+reduced to the one path portable here — the MCP. If no Linear MCP is connected, stay parse-only
+(the current behavior). Never block delivery on Linear being reachable.
+
 ## 2) Assemble & open the PR
 - **Branch:** the harness already created the feature branch at run-start (`{type}/{key}-{slug}` from
   `.harness/profile/delivery.json`) when on a clean base — so `HEAD` is usually the feature branch.
@@ -81,9 +93,14 @@ skill runs in the orchestrator chat), confirm the issue once; otherwise note "no
   `09` §4.1: putting the Linear URL in the body is enough to link it).
 - **Open:** `git push -u origin HEAD` then `gh pr create --base <base> --title <conv-title> --body <body>`.
   If a PR already exists for the branch, **update** it (`gh pr edit`) instead of creating a duplicate.
+  Use `--draft` when you already know CI will need a fix-loop (escalating a likely `ci_blocked`) so
+  a human isn't paged prematurely; record `draft:true`.
+- **Capture the Git-AI record** (droid `09` §4.2 — enables commits⋈issue joins downstream):
+  `repoFullName` = `gh repo view --json nameWithOwner -q .nameWithOwner`; `commitShas` =
+  `git log --format=%H origin/<base>..HEAD`; `prCreatedAt` = the PR's `createdAt`.
 - **Publish to the cockpit:** call **`store_delivery`** with `state:"open"`, the `prNumber`/`prUrl`/
-  `prTitle`/`baseBranch`/`headBranch`, and the resolved `linkedIssues`. This lights up the Delivery
-  tab (Ctrl+T).
+  `prTitle`/`baseBranch`/`headBranch`/`repoFullName`/`commitShas`/`prCreatedAt`/`draft`, and the
+  resolved `linkedIssues`. This lights up the Delivery tab (Alt+T).
 
 ## 3) Watch CI (ci-watcher analog)
 `gh pr checks` is the **source of truth** for overall PR CI state.
@@ -122,13 +139,25 @@ relevant ship-gate step.
 ## 5) Human merge/cancel gate — a TUI overlay, **never merge autonomously**
 When CI is green **and** the PR is mergeable (`gh pr view --json mergeable,mergeStateStatus,reviewDecision`):
 
-1. Call **`store_delivery`** with `state:"awaiting_merge"` (CI checks all `passed`). This **pops the
-   merge-gate overlay** in the cockpit — a Merge / Cancel / Leave-open menu (the human's call). Then
+0. **Generate the semantic diff summary FIRST** (droid `generate_semantic_diff` — the human decides
+   *with* context, not just title + CI). Read the feature diff (`git diff --stat origin/<base>..HEAD`
+   for `filesChanged`/`insertions`/`deletions`, and the diff body for content) and write a concise
+   **2–6 line prose summary** of what this delivery actually changes (the behavioral/structural gist,
+   not a file list). Pass it as `diff:{summary, filesChanged, insertions, deletions}` in the SAME
+   `store_delivery` call that flips `awaiting_merge` — the merge-gate overlay renders it so the human
+   sees *what ships* before deciding.
+1. Call **`store_delivery`** with `state:"awaiting_merge"` (CI checks all `passed`, plus the `diff`
+   from step 0). This **pops the merge-gate overlay** in the cockpit — a Merge / Cancel / Leave-open
+   menu (the human's call), showing the diff summary. Then
    **end your turn** and wait: the human's choice comes back to you as a `[harness-deliver] Human
    merge gate decision…` message.
 2. **Act on the injected decision** (it names the exact `gh`):
    - **MERGE** → `gh pr merge --squash` (respect `harness.md` strategy); the `Closes <issue>` line
-     transitions the Linear/Jira issue → call `store_delivery` `state:"merged"`.
+     transitions the Linear/Jira issue → call `store_delivery` `state:"merged"` with `prMergedAt`
+     (the merge timestamp) to complete the Git-AI record.
+     If the PR was opened `--draft`, `gh pr ready` it first.
+     If a Linear MCP is connected and an issue is linked, **post a PR-link comment** on the issue
+     and confirm it transitioned (comment/`update_issue`) — best-effort, never blocking.
    - **CANCEL** → `gh pr close --delete-branch` → call `store_delivery` `state:"cancelled"`.
    - **LEAVE OPEN** → call `store_delivery` `state:"open"`; a human merges later.
 

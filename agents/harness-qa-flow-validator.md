@@ -43,8 +43,8 @@ description, pass/fail criteria, and required evidence.
 
 ## 2) Test each assertion (through the real surface)
 Your prompt names the tool. `agent-browser`/`tuistory` are CLIs — drive them via `bash` (you have
-no Skill tool; if the CLI is not installed, fall back to `curl`/HTTP and say so in the report). Skill
-tool first for usage docs.
+no Skill tool). Get usage from the CLI itself (`agent-browser --help`, `tuistory --help`) before
+driving a flow. If the named CLI is not installed, fall back to `curl`/HTTP and say so in the report.
 - **Web UI** (agent-browser): screenshots at key points (REQUIRED); check console errors after each flow (`agent-browser errors`); note relevant network requests.
 - **CLI/TUI** (tuistory): terminal snapshots at key points; verify keyboard interactions + output.
 - **API** (curl): real requests; record request/response.

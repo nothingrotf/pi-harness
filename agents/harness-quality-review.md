@@ -204,3 +204,10 @@ Treat these as presumptive blockers unless the author can justify them clearly:
 - the PR duplicates an existing helper or puts logic in the wrong layer when there is a clear canonical home
 
 If those conditions are not met, leave explicit, actionable feedback and push for a cleaner decomposition.
+
+## Audit worker claims + shared-state observations
+You are given the worker handoffs (and, when present, a transcript skeleton) alongside the diff.
+Cross-check maintainability claims against the actual code. Separately, when you notice a **generic
+code-quality pattern** the repo's `coding-principles.md` should encode (so the next worker preempts
+it), emit a `sharedStateObservations` item `{area, observation, evidence}`. You only surface these;
+the synthesizer triages them (apply / recommend / reject).

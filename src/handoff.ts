@@ -141,3 +141,83 @@ export function readHandoffExact(cwd: string, featureId: string, taskId: string,
 		return null;
 	}
 }
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Handoff item dismissal (droid: dismiss_handoff_items) — o orchestrator marca discoveredIssues
+// que ele decidiu NÃO acionar, COM justificativa, pra não ressurgirem a cada run_feature. A trilha
+// auditavel é o ponto: uma no-action decidida vira fato registrado, não esquecimento silencioso.
+
+export interface DismissedItem {
+	/** a assinatura do item (a `description` do discoveredIssue, normalizada) — chave de dedup/match. */
+	ref: string;
+	/** por que foi dispensado (obrigatório — a justificativa é o valor). */
+	reason: string;
+	at: string;
+}
+
+function dismissedPath(cwd: string, featureId: string): string {
+	return path.join(runDir(cwd, featureId), "dismissed.json");
+}
+
+/** Normaliza a assinatura de um item dispensado (trim + colapsa espaço) — match tolerante a whitespace. */
+export function dismissalRef(description: string): string {
+	return String(description ?? "").replace(/\s+/g, " ").trim();
+}
+
+/** Lê os itens dispensados do run (tolerante: ausente/corrupto → []). */
+export function readDismissed(cwd: string, featureId: string): DismissedItem[] {
+	try {
+		const arr = JSON.parse(fs.readFileSync(dismissedPath(cwd, featureId), "utf8"));
+		return Array.isArray(arr) ? (arr as DismissedItem[]) : [];
+	} catch {
+		return [];
+	}
+}
+
+/** dismissed.json existe mas não parseia → quarentena (preserva a evidência, não clobbera). */
+function quarantineCorruptDismissed(cwd: string, featureId: string, now: () => string): void {
+	const file = dismissedPath(cwd, featureId);
+	try {
+		if (!fs.existsSync(file)) return;
+		JSON.parse(fs.readFileSync(file, "utf8"));
+	} catch {
+		try {
+			fs.renameSync(file, `${file}.corrupt-${now().replace(/[^0-9]/g, "").slice(0, 14)}`);
+		} catch {
+			// best-effort
+		}
+	}
+}
+
+/** O conjunto de refs dispensados (pra filtrar discoveredIssues no report). */
+export function dismissedRefs(cwd: string, featureId: string): Set<string> {
+	return new Set(readDismissed(cwd, featureId).map((d) => d.ref));
+}
+
+/**
+ * Append de itens dispensados (dedup por ref — re-dispensar atualiza a razão) + evento
+ * `handoff_items_dismissed` na trilha. Retorna a lista final. Escrita atômica (tmp+rename).
+ */
+export function appendDismissed(cwd: string, featureId: string, items: { description: string; reason: string }[], now: () => string = () => new Date().toISOString()): DismissedItem[] {
+	// Corrupto → quarentena ANTES do merge: senão readDismissed devolve [] e o rewrite descartaria
+	// silenciosamente todas as dismissals anteriores (que então ressurgiriam no report).
+	quarantineCorruptDismissed(cwd, featureId, now);
+	const existing = readDismissed(cwd, featureId);
+	const byRef = new Map(existing.map((d) => [d.ref, d]));
+	const added: DismissedItem[] = [];
+	for (const it of items) {
+		const ref = dismissalRef(it.description);
+		if (!ref) continue;
+		const rec: DismissedItem = { ref, reason: String(it.reason ?? "").trim() || "(no reason given)", at: now() };
+		byRef.set(ref, rec);
+		added.push(rec);
+	}
+	const final = [...byRef.values()];
+	const dir = runDir(cwd, featureId);
+	fs.mkdirSync(dir, { recursive: true });
+	const tmp = path.join(dir, `dismissed.json.tmp-${process.pid}`);
+	fs.writeFileSync(tmp, `${JSON.stringify(final, null, 2)}\n`);
+	fs.renameSync(tmp, dismissedPath(cwd, featureId));
+	if (added.length) appendProgress(cwd, featureId, "handoff_items_dismissed", { count: added.length, refs: added.map((d) => d.ref) }, now);
+	return final;
+}

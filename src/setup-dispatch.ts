@@ -15,7 +15,7 @@ export const SETUP_PHASES: readonly string[] = [
 	"Phase 2: architecture.md",
 	"Phase 3: services.yaml + init.sh",
 	"Phase 4: Credentials & accounts",
-	"Phase 5: harness.md (operational overlay)",
+	"Phase 5: harness.md (operational overlay) + delivery.json (machine-read branch config)",
 	"Phase 6: skills/<worker-type>/ (worker system)",
 	"Phase 7: Profile readiness check (verify-by-execution)",
 	"Phase 8: library/ (incl. coding-principles.md + repo-facts.md)",
@@ -38,7 +38,7 @@ export function buildSetupDispatch(tools: DispatchTools = {}): string {
 	}
 	lines.push(
 		`${n++}. **Readiness first (consume + trigger):** if .harness/profile/readiness.json is absent, run the \`harness-readiness-audit\` skill to compute it (store the snapshot). Then READ readiness.json and let it inform the profile — its level + weakest categories show where the repo is thin; record them in repo-facts.md and let them focus the conventions-map.`,
-		`${n++}. Author the profile artifacts under .harness/profile/: architecture.md, services.yaml, init.sh, harness.md, skills/<worker-type>/SKILL.md, library/*.md (incl. conventions-map.md + the generic coding-principles.md the ship-gate quality axis scores against). Extract from what the repo already declares first (brownfield); do NOT rewrite the repo's own AGENTS.md/.agents/rules. Verify the commands by executing them before trusting them.`,
+		`${n++}. Author the profile artifacts under .harness/profile/: architecture.md, services.yaml, init.sh, harness.md, delivery.json (the machine-read branch/base/merge config the run-start code parses), skills/<worker-type>/SKILL.md, library/*.md (incl. conventions-map.md + the generic coding-principles.md the ship-gate quality axis scores against). Extract from what the repo already declares first (brownfield); do NOT rewrite the repo's own AGENTS.md/.agents/rules. Verify the commands by executing them before trusting them.`,
 		`${n++}. Finish by calling the \`store_profile\` tool — it validates the artifacts exist and stamps .harness/profile/profile.json. Do NOT hand-write profile.json.`,
 		`${n++}. Then give a short summary of what you authored and the commands the profile standardizes.`,
 	);

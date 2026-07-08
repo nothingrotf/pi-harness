@@ -71,6 +71,7 @@ test("deliveryLines: null → 'no PR yet'; com record → PR + CI + merge", () =
 			linkedIssues: { linearIssueIds: ["ENG-1"], jiraIssueKeys: [], candidateKeys: [] },
 			ci: { state: "passed", iterations: 1, checks: [{ name: "test", state: "passed" }], primaryFailure: null },
 			state: "awaiting_merge",
+			commitShas: [],
 			fixesApplied: [],
 		},
 	});

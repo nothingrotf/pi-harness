@@ -22,6 +22,28 @@ test("registerRun com cwd: lock on-disk — pid vivo noutro processo bloqueia; p
 	assert.equal(fs.existsSync(lock), false, "release remove o lock");
 });
 
+test("registerRun com cwd: lock corrupto/ilegível é tratado como stale (roubado atomicamente)", () => {
+	const d = fs.mkdtempSync(path.join(os.tmpdir(), "harness-lock-"));
+	const lock = path.join(d, ".harness", "runs", "feat-corrupt", "run.lock");
+	fs.mkdirSync(path.dirname(lock), { recursive: true });
+	fs.writeFileSync(lock, "{ not json"); // corrupto → sem pid vivo comproável → stale
+	const c = registerRun("feat-corrupt", d);
+	assert.ok(c);
+	assert.equal(JSON.parse(fs.readFileSync(lock, "utf8")).pid, process.pid, "lock corrupto roubado");
+	unregisterRun("feat-corrupt", d);
+});
+
+test("registerRun com cwd: aquisição fresh escreve o lock atomicamente (wx, sem race window)", () => {
+	const d = fs.mkdtempSync(path.join(os.tmpdir(), "harness-lock-"));
+	const lock = path.join(d, ".harness", "runs", "feat-fresh", "run.lock");
+	assert.equal(fs.existsSync(lock), false);
+	const c = registerRun("feat-fresh", d);
+	assert.ok(c);
+	assert.equal(JSON.parse(fs.readFileSync(lock, "utf8")).pid, process.pid);
+	unregisterRun("feat-fresh", d);
+	assert.equal(fs.existsSync(lock), false);
+});
+
 test("registerRun: 1 run por feature; pauseRun aborta; unregister limpa", () => {
 	const c = registerRun("feat-a");
 	assert.equal(isRunActive("feat-a"), true);

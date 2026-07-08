@@ -10,8 +10,8 @@
  * runLoop com gateSkip do config, e devolve o run final + o report textual.
  */
 import { type FeatureRun, runLoop } from "./feature-runner.ts";
-import { appendProgress, latestHandoff, type PersistedHandoff } from "./handoff.ts";
-import { loadModelConfig, skippedGateSkills } from "./model-config.ts";
+import { appendProgress, dismissedRefs, handoffOutcome, latestHandoff, type PersistedHandoff } from "./handoff.ts";
+import { loadModelConfig, resolveChoice, roleForStep, skippedGateSkills } from "./model-config.ts";
 import { completionGate, ensureAssertions, loadOrBuildFeatureRun, readPlan, writeFeatureRun } from "./plan.ts";
 import { applyResumeMode, buildRunReport, insertFixTasks, type ResumeModeOpts } from "./run-control.ts";
 import { clearWorkerClient, registerRun, registerWorkerClient, unregisterRun } from "./run-registry.ts";
@@ -68,6 +68,13 @@ export async function executeFeatureRun(cwd: string, featureId: string, opts: Ex
 				// End-of-run gate (droid parity): só completa com TODAS as assertions `passed`.
 				// Bypass quando o qa-validator (quem flipa status.json) foi pulado — senão deadlocka.
 				completionGate: skippedGateSkills(cfg).has("harness-qa-validator") ? undefined : () => completionGate(cwd, featureId),
+				// Grava o modelo EFETIVO por step no step_started (o que o child realmente recebe via --model).
+				describeStepModel: (step) => resolveChoice(cfg, roleForStep(step), opts.model),
+				// Reconciliação pós-HARD-kill: se a última sessão do step já gravou success em disco, NÃO re-roda.
+				reconcileCompleted: (step) => {
+					const wsid = step.workerSessionIds?.at(-1);
+					return !!wsid && handoffOutcome(cwd, featureId, step.id, wsid).success;
+				},
 			},
 			controller.signal,
 			{ resume: mode.resume, heartbeatMs: HEARTBEAT_MS },
@@ -77,7 +84,7 @@ export async function executeFeatureRun(cwd: string, featureId: string, opts: Ex
 			const h = latestHandoff(cwd, featureId, s.id);
 			if (h) handoffs.set(s.id, h);
 		}
-		return { ok: true, run: final, report: buildRunReport(final, handoffs, { note: mode.note, insertedFixTasks: inserted }) };
+		return { ok: true, run: final, report: buildRunReport(final, handoffs, { note: mode.note, insertedFixTasks: inserted, dismissed: dismissedRefs(cwd, featureId) }) };
 	} finally {
 		unregisterRun(featureId, cwd);
 		clearWorkerClient(featureId);

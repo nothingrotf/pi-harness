@@ -70,7 +70,7 @@ Agent({
     Assigned assertions: <assertion-ids>.
     Isolation context: <app URL, credentials, data dir, namespace, port, working dir, …>.
     Run dir: .harness/runs/<feature-id>/ · Profile: .harness/profile/
-    Testing tool: <tool-or-skill> (invoke built-in skills like agent-browser/tuistory via the Skill tool first).
+    Testing tool: <tool> (agent-browser/tuistory are CLIs — drive via bash; get usage with `<tool> --help` first).
     Write report to: .harness/runs/<feature-id>/validation/user-testing/flows/<group-id>.json
     Save evidence to: .harness/runs/<feature-id>/evidence/<group-id>/
     Flow Validator Guidance section: "Flow Validator Guidance: <surface>".

@@ -491,6 +491,28 @@ export interface WorkerRow {
 	startedAt?: string;
 	/** duração ms (completados: recordedAt−startedAt; rodando: now−startedAt). */
 	durationMs?: number;
+	/** modelo EFETIVO com que o step rodou (ref "provider/id") — do step_started. undefined = herdou a sessão. */
+	model?: string;
+	/** effort/thinking efetivo (do step_started). */
+	thinking?: string;
+}
+
+/**
+ * Modelo+effort EFETIVO por ROLE (task→worker, ship-gate→validator), extraído dos `step_started`
+ * gravados pelo runner (source-of-truth do que rodou). Como o config é per-role, todo step do
+ * mesmo kind compartilha o modelo — indexamos por kind. Primeiro visto vence (estável no run).
+ */
+export function modelByKind(progressRaw: ProgressRaw[]): Map<string, { model?: string; thinking?: string }> {
+	const m = new Map<string, { model?: string; thinking?: string }>();
+	for (const e of progressRaw) {
+		if (str(e.event) !== "step_started") continue;
+		const kind = str(e.kind) || "task";
+		if (m.has(kind)) continue;
+		const model = str(e.model) || undefined;
+		const thinking = str(e.thinking) || undefined;
+		if (model || thinking) m.set(kind, { model, thinking });
+	}
+	return m;
 }
 
 function handoffStatus(h: PersistedHandoff): WorkerStatusV {
@@ -519,6 +541,13 @@ function startTimesByTask(progressRaw: ProgressRaw[]): Map<string, string> {
  */
 export function buildWorkerRows(run: FeatureRun | null, handoffs: PersistedHandoff[], progressRaw: ProgressRaw[] = [], now: number = Date.now()): WorkerRow[] {
 	const startByTask = startTimesByTask(progressRaw);
+	const mByKind = modelByKind(progressRaw);
+	// Kind (role) de uma row: se o taskId é um step conhecido usa o kind dele; sub-tasks (T1..) do
+	// impl step herdam "task" (worker). Cada kind mapeia ao modelo per-role gravado no step_started.
+	const modelFor = (taskId: string): { model?: string; thinking?: string } => {
+		const kind = run?.steps.find((s) => s.id === taskId)?.kind ?? "task";
+		return mByKind.get(kind) ?? mByKind.get("task") ?? {};
+	};
 	const dur = (start: string | undefined, end: string | undefined): number | undefined => {
 		if (!start) return undefined;
 		const s = Date.parse(start);
@@ -533,6 +562,7 @@ export function buildWorkerRows(run: FeatureRun | null, handoffs: PersistedHando
 		recordedAt: h.recordedAt,
 		startedAt: startByTask.get(h.taskId),
 		durationMs: dur(startByTask.get(h.taskId), h.recordedAt),
+		...modelFor(h.taskId),
 	}));
 	// 1 worker por feature: quando o step in_progress é o impl/fix step (kind "task" com `tasks`), o
 	// worker "running" está na sub-task com task_started mais recente — não no id "implement".
@@ -544,7 +574,7 @@ export function buildWorkerRows(run: FeatureRun | null, handoffs: PersistedHando
 		// wsid da sessão VIVA: a row running é keyed à sub-task ativa (T1..), mas a SESSÃO pertence ao
 		// step in_progress (1 worker por feature) — sem isto o Active Worker não acha o .jsonl e cai
 		// no placeholder "working…" mesmo com o transcript a crescer em disco.
-		rows.push({ workerSessionId: ipStep?.workerSessionIds?.at(-1) ?? "—", taskId: activeId, status: "running", startedAt: start, durationMs: dur(start, undefined) });
+		rows.push({ workerSessionId: ipStep?.workerSessionIds?.at(-1) ?? "—", taskId: activeId, status: "running", startedAt: start, durationMs: dur(start, undefined), ...modelFor(activeId) });
 	}
 	// #n por ordem de início (startedAt → recordedAt) ascendente — estável.
 	[...rows].sort((a, b) => (a.startedAt ?? a.recordedAt ?? "").localeCompare(b.startedAt ?? b.recordedAt ?? "")).forEach((r, i) => {
@@ -648,6 +678,22 @@ export function progressSegments(e: ProgressRaw): ProgressSegment[] {
 			return [SEG("task ", "muted"), SEG(id, "accent"), SEG(" failed", "error")];
 		case "step_paused":
 			return [SEG(id, "accent"), SEG(` paused (${str(e.reason)})`, "warning")];
+		case "step_failed":
+			return [SEG(id, "accent"), SEG(` failed (${str(e.reason)})`, "error")];
+		case "step_resumed":
+			return [SEG(id, "accent"), SEG(" resumed", "muted")];
+		case "step_preempted":
+			return [SEG(id, "accent"), SEG(" preempted (fix runs first)", "warning")];
+		case "step_reconciled":
+			return [SEG(id, "accent"), SEG(" reconciled ✓", "success"), SEG(" (success on disk after kill)", "dim")];
+		case "step_orphan_requeued":
+			return [SEG(id, "accent"), SEG(" requeued", "warning"), SEG(" (orphan cleanup)", "dim")];
+		case "step_resume_degraded":
+			return [SEG(id, "accent"), SEG(" resume failed → fresh restart", "warning")];
+		case "handoff_items_dismissed":
+			return [SEG("dismissed ", "muted"), SEG(`${str(e.count)} handoff item(s)`, "accent")];
+		case "completion_gate_failed":
+			return [SEG("completion gate: ", "muted"), SEG("assertions still pending", "warning")];
 		case "ship_gate_injected":
 			return [SEG("ship gate injected ", "muted"), SEG("(code-review → qa-validator)", "dim")];
 		default:
@@ -655,37 +701,14 @@ export function progressSegments(e: ProgressRaw): ProgressSegment[] {
 	}
 }
 
-/** Mapeia um evento cru numa linha humana (rebrand: "Worker #N ..." → task/step). */
+/**
+ * A linha humana de um evento cru = o JOIN dos segmentos coloridos (fonte ÚNICA de verdade:
+ * `progressSegments`). Antes eram dois switches gêmeos mantidos em sincronia à mão (um teste até
+ * afirmava a igualdade); derivar aqui elimina a duplicação e faz casos novos aparecerem nos dois
+ * lugares automaticamente. A view pinta os segmentos; isto é o texto plano (fallback/testes).
+ */
 export function formatProgressEntry(e: ProgressRaw): string {
-	const id = str(e.id ?? e.taskId);
-	switch (e.event) {
-		case "plan_stored":
-			return `plan stored: ${str(e.tasks)} tasks / ${str(e.assertions)} assertions`;
-		case "run_started":
-			return `run started${e.message ? `: ${str(e.message)}` : ""}`;
-		case "step_started":
-			return `${id} started${e.attempt ? ` (attempt ${str(e.attempt)})` : ""}`;
-		case "task_started":
-			return `task ${id} started`;
-		case "step_completed":
-			return `${id} completed ✓`;
-		case "step_returned":
-			return `${id} returned${e.returnToOrchestrator ? " → orchestrator" : ""}`;
-		case "step_error":
-			return `${id} error: ${str(e.error)}`;
-		case "step_paused":
-			return `${id} paused (${str(e.reason)})`;
-		case "ship_gate_injected":
-			return "ship gate injected (code-review → qa-validator)";
-		case "task_completed":
-			return `task ${id} completed ✓`;
-		case "task_failed":
-			return `task ${id} failed`;
-		case "task_returned":
-			return `task ${id} returned → orchestrator`;
-		default:
-			return str(e.event) || "(event)";
-	}
+	return progressSegments(e).map((s) => s.text).join("");
 }
 
 /** Projeta os eventos crus em entries renderizáveis (ordem preservada: mais antigo → recente). */

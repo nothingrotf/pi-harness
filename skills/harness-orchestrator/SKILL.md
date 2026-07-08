@@ -113,7 +113,7 @@ Once you've designed the worker skills (profile), proceed to create feature arti
 You work with the cached profile and the per-feature run directory.
 | Directory | What it is | Files |
 |-----------|------------|-------|
-| **`.harness/profile/`** | The cached repo profile (committed). Stable across features; authored/refreshed by `harness-setup`. | `architecture.md`, `services.yaml`, `init.sh`, `harness.md`, `library/`, `skills/<worker-type>/`, `readiness.json`, `profile.json` |
+| **`.harness/profile/`** | The cached repo profile (committed). Stable across features; authored/refreshed by `harness-setup`. | `architecture.md`, `services.yaml`, `init.sh`, `harness.md`, `delivery.json`, `library/`, `skills/<worker-type>/`, `readiness.json`, `profile.json` |
 | **`.harness/runs/<feature-id>/`** | The per-feature run (gitignored). Ephemeral; authored by `harness-feature-converge`. | `feature.md`, `contract.md`, `status.json`, `plan.json`, `feature-run.json`, `progress_log.jsonl`, `handoffs/`, `validation/`, `sessions/`, `evidence/` |
 | **repo root(s)** | The git repositories where implementation work happens. | implementation code / commits |
 The **detailed schema for every artifact lives in the authoring skill** (`harness-setup` for the profile, `harness-feature-converge` for the run) — not duplicated here. The orchestrator owns the **order, the invariants, and the checklist**:
@@ -130,6 +130,7 @@ Note: `feature.md` (the intent + scope) is authored at the start of convergence.
 - [ ] `services.yaml` defines all commands (including `test`/`typecheck`/`lint`) and services (ports hardcoded)
 - [ ] `init.sh` sets up the environment (idempotent)
 - [ ] `harness.md` exists with boundaries + directives + testing guidance (defers to the repo's AGENTS.md for code conventions)
+- [ ] `delivery.json` exists (machine-read branch template/base/merge config — `store_profile` requires it; run-start code parses it, not the harness.md prose)
 - [ ] `skills/<worker-type>/SKILL.md` for each worker type, each with Required Skills & Tools, Work Procedure ending in the verified gate, and a complete Example Handoff
 - [ ] `library/` initialized with topic files incl. `user-testing.md` (with `## Validation Concurrency`)
 - [ ] `readiness.json` present and fresh
@@ -137,11 +138,11 @@ Note: `feature.md` (the intent + scope) is authored at the start of convergence.
 - [ ] `feature.md` captures intent + scope + every requirement the user mentioned
 - [ ] `contract.md` exists with exhaustive black-box assertions, FROZEN
 - [ ] status initialized with all assertion IDs `"pending"`
-- [ ] `plan.json` has all tasks (id, description, skillName, preconditions, expectedBehavior, fulfills, status), ordered foundational-first
+- [ ] `plan.json` has all tasks (id, description, skillName, preconditions, expectedBehavior, fulfills), ordered foundational-first (task status is NOT a task field — assertion status lives in `status.json`)
 - [ ] Every assertion ID in `contract.md` is claimed by exactly one task's `fulfills`
 Once all artifacts are ready, proceed to execution.
 ### 4. Managing Execution
-**One execution model (droid parity):** you (the orchestrator) run **HERE in the chat** as the architect/manager, and you hand execution to the **deterministic runner** by calling the **`run_feature` tool** (the `start_mission_run` analog — BLOCKING). The runner spawns **one session-backed worker** for the whole feature (`pi --mode rpc`; it loops `next_task`, commit per task) and then the ship-gate validators as sessions. You NEVER spawn implementation workers as `Agent` subagents — `Agent` is for **analysis/investigation delegation only**. The runner enforces the rules deterministically (one worker per feature, preemption of fix work, attempt budget, failure→return, pause/resume, per-role model config); the TUI observes via the cockpit (Ctrl+T) reading the run's disk state. Headless/CI uses the same runner (`/harness run --headless` or `/harness "<feature>" --headless`), just without you in the loop.
+**One execution model (droid parity):** you (the orchestrator) run **HERE in the chat** as the architect/manager, and you hand execution to the **deterministic runner** by calling the **`run_feature` tool** (the `start_mission_run` analog — BLOCKING). The runner spawns **one session-backed worker** for the whole feature (`pi --mode rpc`; it loops `next_task`, commit per task) and then the ship-gate validators as sessions. You NEVER spawn implementation workers as `Agent` subagents — `Agent` is for **analysis/investigation delegation only**. The runner enforces the rules deterministically (one worker per feature, preemption of fix work, attempt budget, failure→return, pause/resume, per-role model config); the TUI observes via the cockpit (Alt+T) reading the run's disk state. Headless/CI uses the same runner (`/harness run --headless` or `/harness "<feature>" --headless`), just without you in the loop.
 
 #### File / Commit Hygiene
 Before handing control to the runner, ensure the feature-run artifacts are up-to-date, consistent, and complete. Never commit uncommitted implementation changes from workers — all implementation code must be linked to a worker session's commit.
@@ -214,7 +215,7 @@ You, above anyone else, determine feature success.
 - `store_agent_readiness_report` — persist the readiness snapshot (readiness gate / audits)
 - `todo` — the Plan (one todo per `run_feature` round); `ask_user_question` — structured decisions on blockers/gray areas
 - `Agent` (@tintinweb/pi-subagents) — spawn a sub-agent for ANALYSIS/INVESTIGATION only (subagent_type + description + self-contained prompt; always specify outputs + require filepaths back). NEVER for implementation — that is `run_feature`'s job
-- record handoff decisions you chose **not** to act on, with justification, persisting anything relevant into the right shared state (`harness.md` / a task description) — analog of `dismiss_handoff_items`
+- `dismiss_handoff_items` — record handoff discovered-issues you deliberately chose **not** to act on, WITH a justification each (out-of-scope / pre-existing / already-tracked / wontfix). Persists `dismissed.json` + a `handoff_items_dismissed` log event so they don't resurface in later `run_feature` reports. Use it instead of silently ignoring an issue — never to bury a real blocking finding (fix those). Still persist any genuinely systemic learning into the right shared state (`harness.md` / a task description).
 - `Skill`, `Write`/`Edit`, bash, read, web search/fetch
 REMINDER:
 Architectural Design & Decomposition

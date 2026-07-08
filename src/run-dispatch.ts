@@ -70,14 +70,14 @@ export function buildRunDispatch(featureId: string, tools: DispatchTools = {}, g
 	if (tools.todo) {
 		// UM todo por ROUND de run_feature — NÃO por task: run_feature é BLOCKING, então o
 		// orchestrator não consegue ticar todos mid-run e uma lista por-task ficaria stale o run
-		// inteiro (o progresso por-task AO VIVO é o run card no transcript + o cockpit Ctrl+T).
+		// inteiro (o progresso por-task AO VIVO é o run card no transcript + o cockpit Alt+T).
 		const gateLabel = gateNames.length ? ` + ship gate: ${gateNames.join(" → ")}` : "";
 		lines.push(
-			`${n++}. **Create the Plan with the \`todo\` tool** — one todo per \`run_feature\` ROUND, NOT one per task (\`run_feature\` is BLOCKING: you cannot update todos while it runs, so per-task todos would sit stale; live per-task progress is the run card in the transcript and the Feature Control cockpit, Ctrl+T). Start with a single todo "run feature: all tasks${gateLabel}"; mark it completed when the call returns, and add one todo per fix round on \`orchestrator_turn\`.`,
+			`${n++}. **Create the Plan with the \`todo\` tool** — one todo per \`run_feature\` ROUND, NOT one per task (\`run_feature\` is BLOCKING: you cannot update todos while it runs, so per-task todos would sit stale; live per-task progress is the run card in the transcript and the Feature Control cockpit, Alt+T). Start with a single todo "run feature: all tasks${gateLabel}"; mark it completed when the call returns, and add one todo per fix round on \`orchestrator_turn\`.`,
 		);
 	}
 	lines.push(
-		`${n++}. **Call the \`run_feature\` tool** with featureId="${featureId}" — it is BLOCKING and owns execution: it spawns ONE session-backed worker for the whole feature (it runs \`harness-worker-base\` once, then loops with \`next_task\` — commit per task; it can't advance without committing), then injects and runs the ship gate${skipNote ? skipNote : ` (${gateNames.join(" → ")}) as validator sessions`}. Attempt budgets, pause/resume and per-role model config are enforced by the runner. Watch progress in the cockpit (Ctrl+T).`,
+		`${n++}. **Call the \`run_feature\` tool** with featureId="${featureId}" — it is BLOCKING and owns execution: it spawns ONE session-backed worker for the whole feature (it runs \`harness-worker-base\` once, then loops with \`next_task\` — commit per task; it can't advance without committing), then injects and runs the ship gate${skipNote ? skipNote : ` (${gateNames.join(" → ")}) as validator sessions`}. Attempt budgets, pause/resume and per-role model config are enforced by the runner. Watch progress in the cockpit (Alt+T).`,
 	);
 	const askOnBlock = tools.askUser ? "use the `ask_user_question` tool to ask the user (don't guess)" : "return to the user with the specific blocker (don't guess)";
 	const delegate = tools.subagent ? "delegate root-cause analysis to `Agent` subagents (analysis ONLY — code reading, flow tracing; NEVER implementation)" : "analyze the root cause from the handoff and the repo state";

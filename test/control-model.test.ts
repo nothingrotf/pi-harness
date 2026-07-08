@@ -17,6 +17,7 @@ import {
 	apportion,
 	formatDuration,
 	formatProgressEntry,
+	modelByKind,
 	progressSegments,
 	type ProgressRaw,
 	gateDoneCount,
@@ -161,6 +162,32 @@ test("buildWorkerRows: #n por ordem de início + duração (start=task_started �
 	assert.equal(byTask.T2.workerNumber, 2);
 	assert.equal(byTask.T1.durationMs, 5 * 60_000, "T1: 00:00→00:05 = 5min");
 	assert.equal(byTask.T2.durationMs, 6 * 60_000, "T2: 00:06→00:12 = 6min");
+});
+
+test("modelByKind: extrai model+thinking por kind do step_started (per-role, primeiro vence)", () => {
+	const m = modelByKind([
+		{ event: "run_started" },
+		{ event: "step_started", id: "implement", kind: "task", model: "anthropic/claude-opus-4", thinking: "xhigh" },
+		{ event: "step_started", id: "implement", kind: "task", model: "anthropic/claude-sonnet-4" }, // 2º ignorado
+		{ event: "step_started", id: "harness-code-review", kind: "ship-gate", model: "anthropic/claude-haiku-4" },
+		{ event: "step_started", id: "x", kind: "task" }, // sem model → não sobrescreve
+	]);
+	assert.deepEqual(m.get("task"), { model: "anthropic/claude-opus-4", thinking: "xhigh" });
+	assert.deepEqual(m.get("ship-gate"), { model: "anthropic/claude-haiku-4", thinking: undefined });
+});
+
+test("buildWorkerRows: anexa o modelo EFETIVO por role (task→worker, ship-gate→validator)", () => {
+	const progress: ProgressRaw[] = [
+		{ event: "step_started", id: "implement", kind: "task", model: "anthropic/claude-opus-4", thinking: "high", ts: "2026-06-29T00:00:00.000Z" },
+		{ event: "task_started", taskId: "T1", ts: "2026-06-29T00:00:01.000Z" },
+		{ event: "step_started", id: "harness-code-review", kind: "ship-gate", model: "anthropic/claude-haiku-4", ts: "2026-06-29T00:05:00.000Z" },
+	];
+	const run = { steps: [{ id: "implement", kind: "task", tasks: [{ id: "T1" }] }, { id: "harness-code-review", kind: "ship-gate" }] } as unknown as FeatureRun;
+	const rows = buildWorkerRows(run, [okHandoff("T1", "2026-06-29T00:04:00.000Z"), okHandoff("harness-code-review", "2026-06-29T00:06:00.000Z")], progress, Date.parse("2026-06-29T00:10:00.000Z"));
+	const byTask = Object.fromEntries(rows.map((r) => [r.taskId, r]));
+	assert.equal(byTask.T1.model, "anthropic/claude-opus-4", "sub-task herda o modelo do worker role");
+	assert.equal(byTask.T1.thinking, "high");
+	assert.equal(byTask["harness-code-review"].model, "anthropic/claude-haiku-4", "ship-gate usa o modelo do validator role");
 });
 
 test("buildControlModel: a screenshot EXATA (T1 returned + T2-T5 done, sem task_started) fica coerente", () => {
@@ -445,6 +472,11 @@ test("formatProgressEntry: mapeia os eventos do runner/handoff/store", () => {
 	assert.equal(formatProgressEntry({ event: "task_completed", taskId: "T1" }), "task T1 completed ✓");
 	assert.equal(formatProgressEntry({ event: "task_failed", taskId: "T2" }), "task T2 failed");
 	assert.equal(formatProgressEntry({ event: "mystery" }), "mystery");
+	// derivado dos segmentos: branch_ready (que o switch antigo omitia) + os eventos de resiliência novos
+	assert.equal(formatProgressEntry({ event: "branch_ready", branch: "feat/x" }), "branch ready: feat/x");
+	assert.equal(formatProgressEntry({ event: "step_reconciled", id: "implement" }), "implement reconciled ✓ (success on disk after kill)");
+	assert.equal(formatProgressEntry({ event: "step_failed", id: "implement", reason: "worker_crashed" }), "implement failed (worker_crashed)");
+	assert.equal(formatProgressEntry({ event: "handoff_items_dismissed", count: 2 }), "dismissed 2 handoff item(s)");
 });
 
 test("progressSegments: join dos .text == formatProgressEntry; tons por estado (Enu analog)", () => {

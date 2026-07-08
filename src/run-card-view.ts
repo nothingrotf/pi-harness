@@ -2,7 +2,7 @@
  * Run card no transcript (cap. 09) — a view fina que registra o renderer da mensagem custom
  * `harness-run` e a envia ao iniciar um run. O cartão VIVE no transcript (como o tool-card
  * `start_mission_run` do Droid) e se AUTO-ATUALIZA: o render lê o snapshot vivo (run-store) a
- * cada ciclo do TUI; o watcher (control-strip) atualiza o snapshot + dispara o render. Ctrl+T
+ * cada ciclo do TUI; o watcher (control-strip) atualiza o snapshot + dispara o render. Alt+T
  * abre o Feature Control full-screen (opt-in). Conteúdo/strings vêm do módulo puro run-card.ts.
  */
 import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
@@ -15,7 +15,7 @@ import { listLiveAgents } from "./live-agents.ts";
 const RUN_CARD_TYPE = "harness-run";
 export { RUN_CARD_TYPE };
 
-/** Pinta o cartão com o tema ativo (accent = laranja-análogo; estado tonalizado; hint ctrl+t). */
+/** Pinta o cartão com o tema ativo (accent = laranja-análogo; estado tonalizado; hint alt+t). */
 function colorizeCard(theme: Theme, card: RunCard): string[] {
 	const accent = (s: string): string => theme.fg("accent", s);
 	const accentB = (s: string): string => theme.bold(theme.fg("accent", s));
@@ -36,7 +36,7 @@ function colorizeCard(theme: Theme, card: RunCard): string[] {
 		lines.push(`  ${dim("Worker Activity:")}`);
 		for (const a of card.activity) lines.push(`    ${dim(a)}`);
 	}
-	if (card.showHint) lines.push(`  ${accent("ctrl+t")} ${dim("to enter Feature Control")}`);
+	if (card.showHint) lines.push(`  ${accent("alt+t")} ${dim("to enter Feature Control")}`);
 	return lines;
 }
 

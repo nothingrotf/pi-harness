@@ -31,11 +31,11 @@ test("controlMidPos: ~50%, clampado pra caber as duas colunas", () => {
 	assert.ok(controlMidPos(200) <= 200 - 18);
 });
 
-test("footerItems(main): F/W/C/D/O/Models/Tab/Ctrl+T, formato KEY LABEL", () => {
+test("footerItems(main): F/W/C/D/O/Models/Tab/Alt+T, formato KEY LABEL", () => {
 	const f = footerItems("main");
 	assert.deepEqual(
 		f.map((i) => i.key),
-		["F", "W", "C", "D", "O", "M", "Tab", "Ctrl+T"],
+		["F", "W", "C", "D", "O", "M", "Tab", "Alt+T"],
 	);
 	assert.equal(f[0].label, "Tasks");
 	assert.equal(f.find((i) => i.key === "D")?.label, "Delivery");

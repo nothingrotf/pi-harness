@@ -73,6 +73,19 @@ test("setLiveAgents: acumula recentActivity num buffer rolante por agent (o @tin
 	clearAllLiveAgents();
 });
 
+test("setLiveAgents: startedAtMs é o anchor do PRIMEIRO frame e persiste entre updates (Duration ao vivo)", () => {
+	clearAllLiveAgents();
+	setLiveAgents("call-t", agentsFromDetails({ status: "running", description: "Run T3 x", toolUses: 1, tokens: "1k", activity: "a", agentId: "ag2" }));
+	const first = listLiveAgents()[0].startedAtMs;
+	assert.ok(typeof first === "number" && first > 0, "anchor setado no primeiro frame");
+	setLiveAgents("call-t", agentsFromDetails({ status: "running", description: "Run T3 x", toolUses: 2, tokens: "2k", activity: "b", agentId: "ag2" }));
+	assert.equal(listLiveAgents()[0].startedAtMs, first, "anchor NÃO re-anda em frames seguintes");
+	clearAllLiveAgents();
+	setLiveAgents("call-t", agentsFromDetails({ status: "running", description: "Run T3 x", toolUses: 1, tokens: "1k", activity: "c", agentId: "ag2" }));
+	assert.ok((listLiveAgents()[0].startedAtMs as number) >= (first as number), "clear limpa o anchor (novo run → novo anchor)");
+	clearAllLiveAgents();
+});
+
 test("store: set/clear por toolCallId, listLiveAgents achata e ordena por index", () => {
 	clearAllLiveAgents();
 	setLiveAgents("call-a", agentsFromArgs({ prompt: "x", subagent_type: "w", description: "Run T2 b" }).map((a) => ({ ...a, index: 1 })));

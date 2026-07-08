@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { injectShipGate, planFeatureRun } from "../src/feature-runner.ts";
-import type { PersistedHandoff } from "../src/handoff.ts";
+import { dismissalRef, type PersistedHandoff } from "../src/handoff.ts";
 import { applyResumeMode, buildRunReport, insertFixTasks } from "../src/run-control.ts";
 
 const NOW = () => "2026-07-02T00:00:00.000Z";
@@ -110,4 +110,26 @@ test("buildRunReport: status + steps + handoff de step não-completo + next acti
 	assert.match(buildRunReport(run, new Map()), /budget exhausted/);
 	run.pauseReason = "aborted";
 	assert.match(buildRunReport(run, new Map()), /resumeWorkerSessionId/);
+});
+
+test("buildRunReport: discoveredIssues dispensados (dismissed) NÃO ressurgem", () => {
+	const run = pausedRun();
+	run.status = "orchestrator_turn";
+	run.steps[0].status = "pending";
+	const h: PersistedHandoff = {
+		taskId: "implement", workerSessionId: "ws_b", successState: "failure", returnToOrchestrator: true, validatorsPassed: false,
+		handoff: {
+			whatWasImplemented: "x", whatWasLeftUndone: "", verification: { commandsRun: [] },
+			discoveredIssues: [
+				{ severity: "blocking", description: "real bug still open" },
+				{ severity: "suggestion", description: "pre-existing lint debt" },
+			],
+		},
+		recordedAt: NOW(),
+	};
+	// dispensa "pre-existing lint debt" (ref NORMALIZADO, como dismissedRefs() devolve do disco) → só o bug real fica.
+	const report = buildRunReport(run, new Map([["implement", h]]), { dismissed: new Set([dismissalRef("pre-existing   lint debt")]) });
+	assert.match(report, /issue \[blocking\]: real bug still open/);
+	assert.doesNotMatch(report, /pre-existing lint debt/, "item dispensado não aparece");
+	assert.match(report, /1 issue\(s\) previously dismissed/);
 });

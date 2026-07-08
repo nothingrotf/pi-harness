@@ -16,7 +16,7 @@ Da interface de extensão (`@earendil-works/pi-coding-agent`, `ExtensionAPI` +
 | Comando de entrada | `pi.registerCommand("harness", {...})` |
 | Tool (se preciso) | `pi.registerTool({...})` |
 | **Sinal de modo/progresso (COMPATÍVEL)** | `ctx.ui.setStatus(key, text \| undefined)` — a statusline compõe (pi-fusiontui lê `getExtensionStatuses()`) |
-| Dashboard sob demanda | `ctx.ui.custom(factory)` (modal `Ctrl+T` / `/harness control`) |
+| Dashboard sob demanda | `ctx.ui.custom(factory)` (modal `Alt+T` / `/harness control`) |
 | ~~Badge aboveEditor / recolorir o input~~ | **EVITADO**: `setWidget(aboveEditor)` / `setEditorComponent` clobberam extensões donas do editor/footer (pi-fusiontui) |
 | Painel de readiness (foco de teclado) | `ctx.ui.custom(factory, {overlay:true})` |
 | Gates simples | `ctx.ui.select / confirm / input / notify` |
@@ -35,14 +35,14 @@ Manifesto da extensão (no `package.json`):
 registerCommand("harness", handler)    # /harness <pedido> · setup · status · run · control · exit
 ui.setStatus("harness", "◆ <fase>")                # modo (a statusline compõe — ex.: pi-fusiontui)
 ui.setStatus("harness-progress", "██▒▒ 6/12 · T2")   # progresso (durante o run; control-strip.ts)
-ui.custom(readinessGate / featureControl / proposal)            # gate · overlay Ctrl+T · proposal
+ui.custom(readinessGate / featureControl / proposal)            # gate · overlay Alt+T · proposal
 on("session_start"/"session_shutdown" + "tool_execution_end"/"agent_end")  # liga/limpa modo + proposal
 ```
 
 **Sinal de modo via `setStatus` APENAS** (decisão de COMPATIBILIDADE): nada de
 `setWidget(aboveEditor)` nem `setEditorComponent`. Extensões de UI (pi-fusiontui) são
 donas do **editor** Droid + do **footer**; clobberá-los quebra a UI delas. A statusline
-já compõe os nossos `setStatus`. O dashboard rico é o overlay modal `Ctrl+T`.
+já compõe os nossos `setStatus`. O dashboard rico é o overlay modal `Alt+T`.
 
 ## 3. O fluxo de entrada
 

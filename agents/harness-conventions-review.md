@@ -70,3 +70,11 @@ Prioritize: (1) boundary/contract violations, (2) ADR/architectural conformance 
 Every finding names the rule it breaks and shows `file:line`. Skip cosmetic nits when boundary
 or architectural breaks exist. Be direct and high-conviction; do not soften a boundary bypass or
 an ADR contradiction into a mild suggestion. Do **not** spawn nested subagents.
+
+## Audit worker claims + shared-state observations
+You are given the worker handoffs (and, when present, a transcript skeleton) alongside the diff.
+Cross-check claims ("followed the repo's X pattern", "added the ADR-required field") against the
+actual code — a claim the diff doesn't support is a finding. Separately, when you notice a fact the
+repo's guidance should encode or a **conventions-map gap** (a rule/ADR that isn't indexed, a stale
+entry), emit a `sharedStateObservations` item `{area, observation, evidence}`. You only surface
+these; the synthesizer triages them (apply / recommend / reject).

@@ -34,12 +34,39 @@ export interface LinkedIssues {
 	candidateKeys: string[];
 }
 
+/**
+ * Resumo do diff da feature (o `generate_semantic_diff` do droid): um sumário AI do que a entrega
+ * muda + as estatísticas, mostrado no overlay de merge para o humano decidir COM contexto (não só
+ * título + CI). Gerado pela skill harness-deliver ANTES de `awaiting_merge`.
+ */
+export interface DiffSummary {
+	/** sumário em prosa do que o diff faz (2–6 linhas), gerado pelo agente. */
+	summary?: string;
+	filesChanged?: number;
+	insertions?: number;
+	deletions?: number;
+}
+
 export interface DeliveryRecord {
 	prNumber?: number;
 	prUrl?: string;
 	prTitle?: string;
 	baseBranch?: string;
 	headBranch?: string;
+	/** "owner/repo" (git remote) — identidade do repo pro record Git-AI-style (join commits⋈issue). */
+	repoFullName?: string;
+	/** PR é draft (`gh pr create --draft`) — usado pra escalar `ci_blocked` sem pedir merge. */
+	draft?: boolean;
+	/** o repo tem remote? (droid: inspect_mission_readiness.hasRemote) — pré-check da entrega. */
+	hasRemote?: boolean;
+	/** ISO de criação do PR (Git-AI record). */
+	prCreatedAt?: string;
+	/** ISO do merge (Git-AI record). */
+	prMergedAt?: string;
+	/** SHAs dos commits que a entrega inclui (`git log %H base..HEAD`) — join downstream commits⋈issue. */
+	commitShas: string[];
+	/** resumo semântico do diff (gerado antes do merge gate). */
+	diff?: DiffSummary;
 	linkedIssues: LinkedIssues;
 	ci: {
 		state: CiState;
@@ -89,12 +116,28 @@ export function normalizeDeliveryRecord(raw: unknown): DeliveryRecord {
 				.filter((c): c is Record<string, unknown> => !!c && typeof c === "object")
 				.map((c) => ({ name: typeof c.name === "string" ? c.name : "check", state: asCheckState(c.state), ...(typeof c.link === "string" ? { link: c.link } : {}) }))
 		: [];
+	const diffRaw = (r.diff && typeof r.diff === "object" ? r.diff : null) as Record<string, unknown> | null;
+	const diff: DiffSummary | undefined = diffRaw
+		? {
+				...(typeof diffRaw.summary === "string" ? { summary: diffRaw.summary } : {}),
+				...(typeof diffRaw.filesChanged === "number" ? { filesChanged: diffRaw.filesChanged } : {}),
+				...(typeof diffRaw.insertions === "number" ? { insertions: diffRaw.insertions } : {}),
+				...(typeof diffRaw.deletions === "number" ? { deletions: diffRaw.deletions } : {}),
+			}
+		: undefined;
 	return {
 		...(typeof r.prNumber === "number" ? { prNumber: r.prNumber } : {}),
 		...(typeof r.prUrl === "string" ? { prUrl: r.prUrl } : {}),
 		...(typeof r.prTitle === "string" ? { prTitle: r.prTitle } : {}),
 		...(typeof r.baseBranch === "string" ? { baseBranch: r.baseBranch } : {}),
 		...(typeof r.headBranch === "string" ? { headBranch: r.headBranch } : {}),
+		...(typeof r.repoFullName === "string" ? { repoFullName: r.repoFullName } : {}),
+		...(typeof r.draft === "boolean" ? { draft: r.draft } : {}),
+		...(typeof r.hasRemote === "boolean" ? { hasRemote: r.hasRemote } : {}),
+		...(typeof r.prCreatedAt === "string" ? { prCreatedAt: r.prCreatedAt } : {}),
+		...(typeof r.prMergedAt === "string" ? { prMergedAt: r.prMergedAt } : {}),
+		commitShas: strArr(r.commitShas),
+		...(diff ? { diff } : {}),
 		linkedIssues: { linearIssueIds: strArr(li.linearIssueIds), jiraIssueKeys: strArr(li.jiraIssueKeys), candidateKeys: strArr(li.candidateKeys) },
 		ci: { state: asCiState(ci.state), iterations: typeof ci.iterations === "number" ? ci.iterations : 0, checks, primaryFailure: typeof ci.primaryFailure === "string" ? ci.primaryFailure : null },
 		state: asDeliveryState(r.state),
@@ -304,13 +347,35 @@ export const MERGE_OPTIONS: readonly MergeOption[] = [
 	{ value: "leave_open", label: "Leave open", description: "keep the PR open; a human merges later" },
 ];
 
-/** Linhas-resumo do overlay de merge (CI + issue + mergeability). */
+/** Estatística do diff em 1 linha: "12 files  +340 −120" ("" quando desconhecida). */
+export function diffStatLine(rec: DeliveryRecord): string {
+	const d = rec.diff;
+	if (!d) return "";
+	const parts: string[] = [];
+	if (typeof d.filesChanged === "number") parts.push(`${d.filesChanged} file${d.filesChanged === 1 ? "" : "s"}`);
+	if (typeof d.insertions === "number") parts.push(`+${d.insertions}`);
+	if (typeof d.deletions === "number") parts.push(`−${d.deletions}`);
+	return parts.join("  ");
+}
+
+/**
+ * Linhas-resumo do overlay de merge (CI + issue + mergeability + o RESUMO SEMÂNTICO do diff). O
+ * humano decide COM contexto do que muda — não só título + CI (droid: o Diff Viewer + semantic diff
+ * antes de qualquer merge). Sem diff summary o overlay degrada pro comportamento antigo.
+ */
 export function mergeGateSummaryLines(rec: DeliveryRecord): string[] {
 	const green = rec.ci.state === "passed";
 	const ci = green ? "✓ CI all green" : `⚠ CI ${rec.ci.state}`;
 	const issues = [...rec.linkedIssues.linearIssueIds, ...rec.linkedIssues.jiraIssueKeys];
 	const closes = issues.length ? ` · Closes ${issues.join(", ")}` : "";
-	return [`${rec.prTitle ?? "(untitled PR)"}`, `${ci} · mergeable${closes}`, rec.prUrl ?? ""].filter((l) => l !== "");
+	const stat = diffStatLine(rec);
+	const lines = [`${rec.prTitle ?? "(untitled PR)"}${rec.draft ? "  [draft]" : ""}`, `${ci} · mergeable${closes}${stat ? ` · ${stat}` : ""}`];
+	if (rec.prUrl) lines.push(rec.prUrl);
+	if (rec.diff?.summary) {
+		lines.push("", "What this ships:");
+		for (const l of rec.diff.summary.split("\n").map((s) => s.trim()).filter(Boolean).slice(0, 8)) lines.push(`  ${l}`);
+	}
+	return lines;
 }
 
 /** Mensagem injetada de volta ao agente após a decisão humana (ele executa o gh). */

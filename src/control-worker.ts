@@ -18,6 +18,7 @@ import * as path from "node:path";
 import type { ControlModel } from "./control-model.ts";
 import { runDir } from "./handoff.ts";
 import type { LiveAgent } from "./live-agents.ts";
+import { type Effort, effortLabel, modelLabel } from "./model-config.ts";
 
 export type WorkerEntryKind = "message" | "tool";
 
@@ -39,6 +40,42 @@ export interface WorkerEntry {
 
 function oneLine(s: string): string {
 	return String(s ?? "").replace(/\s+/g, " ").trim();
+}
+
+/**
+ * Rótulo humanizado do tool (o analog do UAT label do droid, 08a §5c: "Execute" pro shell,
+ * "Read"/"Edit"/…; UPPERCASE pro tool de subagent). Fallback: Title Case das palavras
+ * (`next_task` → "Next Task").
+ */
+const TOOL_LABELS: Record<string, string> = {
+	bash: "Execute",
+	shell: "Execute",
+	read: "Read",
+	write: "Write",
+	edit: "Edit",
+	multiedit: "Edit",
+	grep: "Search",
+	find: "Find",
+	glob: "Find",
+	ls: "List",
+	web_search: "Web Search",
+	web_fetch: "Fetch",
+	todo: "Todo",
+};
+const SUBAGENT_LABEL_TOOLS = new Set(["agent", "task"]);
+
+export function toolLabel(name: string): string {
+	const raw = String(name ?? "").trim();
+	if (!raw) return "tool";
+	const key = raw.toLowerCase();
+	if (SUBAGENT_LABEL_TOOLS.has(key)) return raw.toUpperCase(); // o "UPPERCASED for the Task subagent tool"
+	const mapped = TOOL_LABELS[key];
+	if (mapped) return mapped;
+	return raw
+		.split(/[_\-\s]+/)
+		.filter(Boolean)
+		.map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+		.join(" ");
 }
 
 /** Resumo curto dos params de um tool (o `CnR(toolName,toolInput)`): pega o arg mais saliente. */
@@ -144,15 +181,33 @@ export function findWorkerSessionFile(cwd: string, featureId: string, wsid: stri
 }
 
 /**
+ * Cache mtime-keyed do fold do transcript: o cockpit re-renderiza a cada tick (~700ms) e sem cache
+ * cada frame re-lia + re-parseava o .jsonl INTEIRO (custo linear no tamanho da sessão, que só
+ * cresce). Chaveado por `file` → { mtimeMs, entries }; um mtime igual devolve o fold memoizado.
+ * Bounded (LRU simples por inserção) pra não vazar entre muitas sessões.
+ */
+const sessionFoldCache = new Map<string, { key: string; entries: WorkerEntry[] }>();
+const SESSION_FOLD_CACHE_MAX = 32;
+
+/**
  * Lê a sessão do worker (jsonl) e folda — o FALLBACK tolerante (nosso parser), usado quando o
  * reader nativo (SessionManager/get_entries, src/session-read.ts) não está disponível (testes/CI)
- * ou falha (ficheiro a ser escrito). [] se não há ficheiro.
+ * ou falha (ficheiro a ser escrito). [] se não há ficheiro. Memoizado por mtime (ver acima).
  */
 export function readWorkerSession(cwd: string, featureId: string, wsid: string): WorkerEntry[] {
 	const file = findWorkerSessionFile(cwd, featureId, wsid);
 	if (!file) return [];
 	try {
-		return foldTranscript(parseSessionJsonl(fs.readFileSync(file, "utf8")));
+		// Chave mtime+size: filesystems de mtime grosso (1s) serviriam um frame stale entre appends
+		// no mesmo tick — o size pega o append que o mtime não distingue.
+		const st = fs.statSync(file);
+		const key = `${st.mtimeMs}:${st.size}`;
+		const hit = sessionFoldCache.get(file);
+		if (hit && hit.key === key) return hit.entries;
+		const entries = foldTranscript(parseSessionJsonl(fs.readFileSync(file, "utf8")));
+		sessionFoldCache.set(file, { key, entries });
+		if (sessionFoldCache.size > SESSION_FOLD_CACHE_MAX) sessionFoldCache.delete(sessionFoldCache.keys().next().value as string);
+		return entries;
 	} catch {
 		return [];
 	}
@@ -249,11 +304,17 @@ export interface ActiveWorker {
 	source: "session" | "live";
 	/** headless: o worker session id (→ readWorkerSession). */
 	wsid?: string;
+	/** epoch ms do início (o `activeDurationAnchorMs` do droid) — permite a Duration tickar ao vivo. */
+	anchorMs?: number;
 	/** live-TUI (@tintinweb): o agent record id → localiza o `.output` JSONL do transcript real. */
 	agentId?: string;
 	durationMs?: number;
 	toolCount?: number;
 	tokens?: number;
+	/** modelo EFETIVO com que o worker rodou (ref "provider/id", do step_started). undefined = herdou a sessão. */
+	model?: string;
+	/** effort/thinking efetivo (do step_started). */
+	thinking?: string;
 	/** live-TUI: o tool em execução agora (pro fallback da banda quando não há transcript). */
 	currentTool?: string;
 	/** live-TUI: atividades recentes do subagent (→ entriesFromActivity). */
@@ -275,6 +336,7 @@ export function pickActiveWorker(model: ControlModel, live: LiveAgent[]): Active
 			status: "running",
 			source: "live",
 			agentId: la.agentId,
+			anchorMs: la.startedAtMs,
 			toolCount: la.toolCount,
 			tokens: la.tokens,
 			currentTool: la.currentTool,
@@ -293,9 +355,32 @@ export function pickActiveWorker(model: ControlModel, live: LiveAgent[]): Active
 			source: "session",
 			wsid: wr.workerSessionId === "—" ? undefined : wr.workerSessionId,
 			durationMs: wr.durationMs,
+			model: wr.model,
+			thinking: wr.thinking,
+			anchorMs: wr.startedAt ? (Number.isNaN(Date.parse(wr.startedAt)) ? undefined : Date.parse(wr.startedAt)) : undefined,
 		};
 	}
 	return null;
+}
+
+/**
+ * Duration AO VIVO do worker ativo (o `z = (e && M) ? f8T(now − M) : Q.duration` do 08a §4a):
+ * rodando + anchor → recomputa de `now`; senão a duração congelada do model; senão undefined (→ "-").
+ */
+export function liveDurationMs(aw: ActiveWorker, now: number = Date.now()): number | undefined {
+	if (aw.status === "running" && aw.anchorMs !== undefined) return Math.max(0, now - aw.anchorMs);
+	return aw.durationMs;
+}
+
+/**
+ * Rótulo do modelo do worker ativo — "opus-4.8 (XHigh)" (o modelo EFETIVO gravado no step_started).
+ * "" quando desconhecido (subagent live que herda a sessão, ou run antigo sem o campo) → a view
+ * simplesmente omite. `labels` opcional = display names do registry (senão usa o id).
+ */
+export function activeWorkerModelLabel(aw: { model?: string; thinking?: string } | null, opts: { labels?: Record<string, string> } = {}): string {
+	if (!aw || (!aw.model && !aw.thinking)) return "";
+	const m = aw.model ? modelLabel(aw.model, { labels: opts.labels }) : "inherit";
+	return aw.thinking ? `${m} (${effortLabel(aw.thinking as Effort)})` : m;
 }
 
 /**

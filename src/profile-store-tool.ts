@@ -21,7 +21,7 @@ export function registerProfileStoreTool(pi: ExtensionAPI): void {
 			name: "store_profile",
 			label: "Store Repo Profile",
 			description:
-				"Validates the Tier-1 repo profile was authored (architecture.md, services.yaml, init.sh, harness.md, skills/, library/ all present and non-empty) and stamps .harness/profile/profile.json deterministically (version, generatedAt, sourceCommit, fingerprint). Call at the END of harness-setup. Rejects (throws) when artifacts are missing — author them and call again.",
+				"Validates the Tier-1 repo profile was authored (architecture.md, services.yaml, init.sh, harness.md, delivery.json, skills/, library/ all present and non-empty) and stamps .harness/profile/profile.json deterministically (version, generatedAt, sourceCommit, fingerprint). Call at the END of harness-setup. Rejects (throws) when artifacts are missing — author them and call again.",
 			parameters: PARAMS,
 			async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
 				const res = storeProfile(ctx.cwd);

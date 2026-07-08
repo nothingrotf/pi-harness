@@ -221,7 +221,9 @@ Tasks execute in array order — the topmost pending runs next. Each task:
 | `preconditions` | what must be true before starting |
 | `expectedBehavior` | what success looks like |
 | `fulfills` | contract assertion IDs this task COMPLETES |
-| `status` | start `pending` |
+
+(Tasks carry no `status` field — assertion status lives per-ID in `status.json`, written by
+`store_plan`; do not add a task-level `status`.)
 
 **`fulfills` semantics ("completes", not "contributes to"):** only the leaf task that makes
 an assertion fully testable claims it; each assertion ID appears in **exactly one** task's

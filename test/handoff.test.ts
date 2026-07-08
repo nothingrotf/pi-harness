@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { appendProgress, type EndFeatureRunPayload, handoffOutcome, latestHandoff, recordHandoff, runDir } from "../src/handoff.ts";
+import { appendDismissed, appendProgress, dismissalRef, dismissedRefs, type EndFeatureRunPayload, handoffOutcome, latestHandoff, readDismissed, recordHandoff, runDir } from "../src/handoff.ts";
 
 function tmp(): string {
 	return fs.mkdtempSync(path.join(os.tmpdir(), "harness-handoff-"));
@@ -87,6 +87,41 @@ test("recordHandoff: emite evento determinístico no progress_log.jsonl (durabil
 	const log = fs.readFileSync(path.join(runDir(d, "feat-x"), "progress_log.jsonl"), "utf8").trim();
 	assert.match(log, /"event":"task_completed"/);
 	assert.match(log, /"event":"task_returned"/);
+});
+
+test("appendDismissed: persiste + dedup por ref (normalizado) + loga handoff_items_dismissed", () => {
+	const d = tmp();
+	const t = () => "2026-06-29T00:00:00.000Z";
+	appendDismissed(d, "feat-x", [{ description: "pre-existing   lint debt", reason: "tracked in JIRA-1" }], t);
+	// re-dispensar a MESMA (whitespace diferente) atualiza a razão, não duplica
+	appendDismissed(d, "feat-x", [{ description: "pre-existing lint debt", reason: "wontfix" }], t);
+	const rows = readDismissed(d, "feat-x");
+	assert.equal(rows.length, 1, "dedup por ref normalizado");
+	assert.equal(rows[0].ref, "pre-existing lint debt");
+	assert.equal(rows[0].reason, "wontfix", "a razão mais recente vence");
+	assert.deepEqual([...dismissedRefs(d, "feat-x")], ["pre-existing lint debt"]);
+	assert.equal(dismissalRef("  a   b "), "a b");
+	const log = fs.readFileSync(path.join(runDir(d, "feat-x"), "progress_log.jsonl"), "utf8").trim();
+	assert.match(log, /"event":"handoff_items_dismissed"/);
+});
+
+test("readDismissed: ausente/corrupto → [] (tolerante)", () => {
+	const d = tmp();
+	assert.deepEqual(readDismissed(d, "nope"), []);
+	fs.mkdirSync(runDir(d, "feat-x"), { recursive: true });
+	fs.writeFileSync(path.join(runDir(d, "feat-x"), "dismissed.json"), "{ not json");
+	assert.deepEqual(readDismissed(d, "feat-x"), []);
+});
+
+test("appendDismissed: dismissed.json corrupto é QUARENTENADO (não clobberado silenciosamente)", () => {
+	const d = tmp();
+	const dir = runDir(d, "feat-x");
+	fs.mkdirSync(dir, { recursive: true });
+	fs.writeFileSync(path.join(dir, "dismissed.json"), "{ CORRUPT");
+	appendDismissed(d, "feat-x", [{ description: "new item", reason: "wontfix" }], () => "2026-06-29T00:00:00.000Z");
+	const files = fs.readdirSync(dir);
+	assert.ok(files.some((f) => f.startsWith("dismissed.json.corrupt-")), "evidência preservada em quarentena");
+	assert.deepEqual(readDismissed(d, "feat-x").map((r) => r.ref), ["new item"], "o novo arquivo é válido");
 });
 
 test("appendProgress: append-only com timestamp", () => {

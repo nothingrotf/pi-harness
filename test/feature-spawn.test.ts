@@ -4,7 +4,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { FeatureStep } from "../src/feature-runner.ts";
-import { buildWorkerSystemPrompt, isUsageLimitEvent, rpcWorkerArgs, rpcWorkerPrompt } from "../src/feature-spawn.ts";
+import { buildWorkerSystemPrompt, isUsageLimitEvent, isWorkerCrashEvent, rpcWorkerArgs, rpcWorkerPrompt } from "../src/feature-spawn.ts";
 
 function tmp(): string {
 	return fs.mkdtempSync(path.join(os.tmpdir(), "harness-fspawn-"));
@@ -52,6 +52,19 @@ test("rpcWorkerPrompt: task normal (entrega a feature inteira) vs resume (contin
 	assert.match(rpcWorkerPrompt(gate), /Run the ship-gate validator/);
 	assert.match(rpcWorkerPrompt(task, true), /Continue EXACTLY where you left off/);
 	assert.doesNotMatch(rpcWorkerPrompt(task, true), /Deliver this feature/);
+});
+
+test("isWorkerCrashEvent: detecta morte do child/wire; ignora erros de aplicação", () => {
+	assert.equal(isWorkerCrashEvent({ type: "error", message: "child process exited with code 139" }), true);
+	assert.equal(isWorkerCrashEvent({ type: "disconnect", reason: "socket hang up" }), true);
+	assert.equal(isWorkerCrashEvent({ type: "fatal", error: "ECONNRESET" }), true);
+	assert.equal(isWorkerCrashEvent({ type: "error", message: "assertion failed: expected 200 got 404" }), false, "erro de app comum não é crash");
+	assert.equal(isWorkerCrashEvent({ type: "assistant", text: "the process exited cleanly per the logs" }), false, "menção em texto normal não dispara (type não é erro)");
+	assert.equal(isWorkerCrashEvent(null), false);
+	// extension_error = erro DENTRO do child (tool lançou) — o child está vivo; NUNCA é crash
+	// (regressão: matava um worker saudável via stop() e spawnava um 2º em paralelo).
+	assert.equal(isWorkerCrashEvent({ type: "extension_error", error: "git exited with code 128" }), false, "extension_error excluído");
+	assert.equal(isWorkerCrashEvent({ type: "error", message: "command exited with code 1" }), false, "'exited' solto (tool falhou) não é morte de processo");
 });
 
 test("isUsageLimitEvent: detecta 402/usage em evento de erro; ignora output normal", () => {

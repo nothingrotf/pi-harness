@@ -33,6 +33,8 @@ export interface LiveAgent {
 	recentActivity: string[];
 	/** o id do agent record do @tintinweb (→ localiza o `.output` JSONL do transcript real). */
 	agentId?: string;
+	/** epoch ms do primeiro frame visto (anchor da Duration ao vivo — o `activeDurationAnchorMs`). */
+	startedAtMs?: number;
 }
 
 /**
@@ -160,11 +162,14 @@ export function agentsFromDetails(details: unknown): LiveAgent[] {
 const reg = new Map<string, LiveAgent[]>();
 /** Buffer rolante de activity keyed por `${toolCallId}#${index}` (fallback do painel). */
 const activityBuf = new Map<string, string[]>();
+/** Anchor de início (epoch ms) keyed por `${toolCallId}#${index}` — setado no primeiro frame. */
+const startTimes = new Map<string, number>();
 
 export function setLiveAgents(toolCallId: string, agents: LiveAgent[]): void {
 	if (agents.length === 0) {
 		reg.delete(toolCallId);
 		for (const k of activityBuf.keys()) if (k.startsWith(`${toolCallId}#`)) activityBuf.delete(k);
+		for (const k of startTimes.keys()) if (k.startsWith(`${toolCallId}#`)) startTimes.delete(k);
 		return;
 	}
 	// Acumula a activity de cada frame num buffer rolante por agent (o @tintinweb só dá 1 string
@@ -174,16 +179,25 @@ export function setLiveAgents(toolCallId: string, agents: LiveAgent[]): void {
 		const merged = mergeActivity(activityBuf.get(key) ?? [], a.recentActivity);
 		activityBuf.set(key, merged);
 		a.recentActivity = merged;
+		// Anchor do primeiro frame → Duration ao vivo do Active Worker (Date.now() − anchor).
+		let started = startTimes.get(key);
+		if (started === undefined) {
+			started = Date.now();
+			startTimes.set(key, started);
+		}
+		a.startedAtMs = started;
 	}
 	reg.set(toolCallId, agents);
 }
 export function clearLiveAgents(toolCallId: string): void {
 	reg.delete(toolCallId);
 	for (const k of activityBuf.keys()) if (k.startsWith(`${toolCallId}#`)) activityBuf.delete(k);
+	for (const k of startTimes.keys()) if (k.startsWith(`${toolCallId}#`)) startTimes.delete(k);
 }
 export function clearAllLiveAgents(): void {
 	reg.clear();
 	activityBuf.clear();
+	startTimes.clear();
 }
 
 /** Todos os agents rodando agora (achatado), ordenados por index. */

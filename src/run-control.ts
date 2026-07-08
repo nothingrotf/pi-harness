@@ -12,7 +12,7 @@
  */
 import type { FeatureRun, PlanTaskRef } from "./feature-runner.ts";
 import { insertFixTask } from "./feature-runner.ts";
-import type { PersistedHandoff } from "./handoff.ts";
+import { dismissalRef, type PersistedHandoff } from "./handoff.ts";
 
 export interface ResumeModeOpts {
 	/** requeue: re-roda o step in_progress do zero com um worker novo (droid: restartFeature). */
@@ -77,7 +77,8 @@ const STEP_ICON: Record<string, string> = { completed: "✓", in_progress: "●"
  * Report do run pro orchestrator (o retorno do tool): status + steps + handoffs relevantes +
  * a próxima ação recomendada por status. `handoffs` = o handoff mais recente por step (quando há).
  */
-export function buildRunReport(run: FeatureRun, handoffs: Map<string, PersistedHandoff>, extra: { note?: string; insertedFixTasks?: string[] } = {}): string {
+export function buildRunReport(run: FeatureRun, handoffs: Map<string, PersistedHandoff>, extra: { note?: string; insertedFixTasks?: string[]; dismissed?: ReadonlySet<string> } = {}): string {
+	const dismissed = extra.dismissed ?? new Set<string>();
 	const lines: string[] = [];
 	lines.push(`Feature run "${run.featureId}": status=${run.status}${run.pauseReason ? ` (${run.pauseReason})` : ""}`);
 	if (extra.note) lines.push(`Mode: ${extra.note}`);
@@ -98,7 +99,16 @@ export function buildRunReport(run: FeatureRun, handoffs: Map<string, PersistedH
 			const summary = h.handoff?.salientSummary || h.handoff?.whatWasImplemented;
 			if (summary) lines.push(`    summary: ${summary}`);
 			if (h.handoff?.whatWasLeftUndone) lines.push(`    leftUndone: ${h.handoff.whatWasLeftUndone}`);
-			for (const d of h.handoff?.discoveredIssues ?? []) lines.push(`    issue [${d.severity}]: ${d.description}`);
+			// discoveredIssues já dispensados (dismiss_handoff_items) NÃO ressurgem — só os pendentes.
+			let dismissedHere = 0;
+			for (const d of h.handoff?.discoveredIssues ?? []) {
+				if (dismissed.has(dismissalRef(d.description))) {
+					dismissedHere++;
+					continue;
+				}
+				lines.push(`    issue [${d.severity}]: ${d.description}`);
+			}
+			if (dismissedHere > 0) lines.push(`    (${dismissedHere} issue(s) previously dismissed — hidden)`);
 		}
 	}
 	lines.push("", nextActionFor(run));

@@ -41,15 +41,15 @@ function runControlItems(opts: FooterOpts): FooterItem[] {
 /**
  * Itens do footer por view (cap. 08 §7: formato `KEY LABEL`, sem `:`). Rebrand: Features→Tasks,
  * +Coverage. Main ganha P/R/S state-aware (Pause · Resume/Restart · Steer — o interrupt-and-chat
- * do Droid §7b.4); Workers ganha `r` = resume DAQUELA sessão (resumeWorkerSessionId). `Ctrl+T`
- * fecha (= "Back To Orchestrator").
+ * do Droid §7b.4); Workers ganha `r` = resume DAQUELA sessão (resumeWorkerSessionId). `Alt+T`
+ * fecha (= "Back To Orchestrator") — Ctrl+T é reservado pelo Pi (thinking-toggle).
  */
 export function footerItems(view: ControlView, opts: FooterOpts = {}): FooterItem[] {
 	const models: FooterItem[] = opts.hasModels === false ? [] : [{ key: "M", label: "Models" }];
 	switch (view) {
 		case "main":
 			// `O` = abrir o dir do run no gestor de ficheiros (o `D Mission Dir` do Droid — D aqui é Delivery).
-			return [{ key: "F", label: "Tasks" }, { key: "W", label: "Workers" }, { key: "C", label: "Coverage" }, { key: "D", label: "Delivery" }, { key: "O", label: "Run Dir" }, ...runControlItems(opts), ...models, { key: "Tab", label: "Next" }, { key: "Ctrl+T", label: "Close" }];
+			return [{ key: "F", label: "Tasks" }, { key: "W", label: "Workers" }, { key: "C", label: "Coverage" }, { key: "D", label: "Delivery" }, { key: "O", label: "Run Dir" }, ...runControlItems(opts), ...models, { key: "Tab", label: "Next" }, { key: "Alt+T", label: "Close" }];
 		case "tasks":
 			// 1:1 com o `features` do Droid (§9): ↑↓ · g Top · G Bottom · Enter · T Filter · jumps W/M · Esc (+Tab nosso).
 			return [{ key: "↑↓", label: "Select" }, { key: "g", label: "Top" }, { key: "G", label: "Bottom" }, { key: "Enter", label: "Details" }, { key: "T", label: "Filter" }, { key: "W", label: "Workers" }, ...models, { key: "Tab", label: "Next" }, { key: "Esc", label: "Back" }];

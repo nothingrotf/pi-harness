@@ -16,6 +16,7 @@ function write(dir: string, rel: string, content: string): void {
 }
 function authorProfile(dir: string): void {
 	for (const f of ["architecture.md", "services.yaml", "init.sh", "harness.md"]) write(dir, `.harness/profile/${f}`, "x");
+	write(dir, ".harness/profile/delivery.json", '{"branch":{"enabled":true}}');
 	write(dir, ".harness/profile/skills/w/SKILL.md", "x");
 	write(dir, ".harness/profile/library/repo-facts.md", "x");
 	write(dir, ".harness/profile/library/conventions-map.md", "x");

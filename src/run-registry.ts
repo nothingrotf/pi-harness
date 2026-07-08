@@ -38,17 +38,38 @@ function pidAlive(pid: number): boolean {
  */
 function acquireDiskLock(cwd: string, featureId: string): void {
 	const file = lockPath(cwd, featureId);
-	try {
-		const held = JSON.parse(fs.readFileSync(file, "utf8")) as { pid?: number };
-		if (typeof held.pid === "number" && held.pid !== process.pid && pidAlive(held.pid)) {
-			throw new Error(`feature "${featureId}" is locked by a live run in another process (pid ${held.pid})`);
-		}
-	} catch (e) {
-		if ((e as Error).message?.includes("is locked by")) throw e;
-		// sem lock / corrupto / pid morto → adquire
-	}
 	fs.mkdirSync(path.dirname(file), { recursive: true });
-	fs.writeFileSync(file, `${JSON.stringify({ pid: process.pid, at: new Date().toISOString() })}\n`);
+	const payload = `${JSON.stringify({ pid: process.pid, at: new Date().toISOString() })}\n`;
+	// Atômico: `wx` falha se o arquivo existir → sem janela TOCTOU entre o read-check e o write
+	// (dois processos correndo o antigo caminho read-then-write ambos "adquiriam"). O EEXIST é a
+	// ÚNICA porta pro path de stale-steal (pid morto/corrupto), que re-tenta uma vez com `wx`.
+	try {
+		fs.writeFileSync(file, payload, { flag: "wx" });
+		return;
+	} catch (e) {
+		if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
+	}
+	// Lock existe: rouba SÓ se o dono morreu (ou o arquivo é ilegível/corrupto).
+	let held: { pid?: number } | null = null;
+	try {
+		held = JSON.parse(fs.readFileSync(file, "utf8")) as { pid?: number };
+	} catch {
+		held = null; // corrupto → tratado como stale
+	}
+	if (held && typeof held.pid === "number" && held.pid !== process.pid && pidAlive(held.pid)) {
+		throw new Error(`feature "${featureId}" is locked by a live run in another process (pid ${held.pid})`);
+	}
+	// Stale/corrupto/nosso: remove e re-adquire atomicamente. Se outro processo ganhar a corrida
+	// pelo `wx`, o EEXIST re-propaga como "locked by" (conservador — não clobbera um lock vivo).
+	try {
+		fs.rmSync(file, { force: true });
+		fs.writeFileSync(file, payload, { flag: "wx" });
+	} catch (e) {
+		if ((e as NodeJS.ErrnoException).code === "EEXIST") {
+			throw new Error(`feature "${featureId}" is locked by a live run in another process`);
+		}
+		throw e;
+	}
 }
 
 function releaseDiskLock(cwd: string, featureId: string): void {

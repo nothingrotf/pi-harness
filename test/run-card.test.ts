@@ -82,7 +82,7 @@ test("runCardPlainLines: resumo ⛬ + rows + Tasks + hint", () => {
 	assert.ok(lines.some((l) => l.includes("Progress: 1/5 [+2]")));
 	assert.ok(lines.some((l) => l.includes("Assertions: 6/12")));
 	assert.ok(lines.some((l) => l.includes("Tasks: ✓T1 ●T2 ○T3")));
-	assert.equal(lines.at(-1), "  ctrl+t to enter Feature Control");
+	assert.equal(lines.at(-1), "  alt+t to enter Feature Control");
 });
 
 test("buildRunCard: Worker Activity vem do recentActivity do live agent", () => {

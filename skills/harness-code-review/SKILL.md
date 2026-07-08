@@ -27,17 +27,42 @@ Run the programmatic validators from `.harness/profile/services.yaml` over the i
 "failure"` + `returnToOrchestrator: true` with the failing commands in `verification.commandsRun`
 and the issue in `discoveredIssues`. **Do not launch the review axes on a red gate.**
 
-## 1) Gather the feature diff (scope)
-Collect the feature's accumulated changes + the changed-file contents so the reviewers evaluate
-without guessing: the diff from the feature's base to HEAD (the task commits of this run) plus the
-full contents of the changed files. Use Bash directly, or an `Explore` agent when the changed set
-is large.
+## 0.5) Prior-run check (re-run scoping — do NOT re-review the whole diff every round)
+Read `.harness/runs/<feature-id>/validation/harness-code-review/synthesis.json` if it exists (a
+previous round). If absent → this is **round 1**, full review (below). If present → this is a
+**re-run after fix tasks**, and you MUST narrow scope, not repeat the whole 3-axis pass:
+- Set `round` = previous `round` + 1 and carry the prior synthesis as `previousRound` context.
+- **Scope the diff to the FIX commits only** — the commits added since the prior synthesis
+  (`git log <prior-head>..HEAD`; the prior head is the last task commit the prior round reviewed,
+  recoverable from the run's progress log / handoffs). Each axis reviews the fix diff **together
+  with the original blocking finding it addresses** (pass the prior `blockingFindings` as input) so
+  it verifies the fix actually resolves the issue AND introduces no regression — not a blind
+  re-scan of untouched code.
+- Findings the prior round already cleared are NOT re-litigated unless the fix touched their files.
+This is the droid scrutiny re-run protocol (review only fix features, original+fix together) and it
+is what the orchestrator promises ("re-run only re-checks what failed"). Round 1 reviews the whole
+feature diff; later rounds review the delta.
+
+## 1) Gather the feature diff + worker evidence (scope)
+Collect what the reviewers need to judge **claims vs reality**, not just the diff:
+- the diff from the feature's base to HEAD (round 1) or the fix delta (re-run, per §0.5), plus the
+  full contents of the changed files;
+- the **worker handoffs** `.harness/runs/<feature-id>/handoffs/*.json` (what the worker *claims* it
+  implemented, tested, and left undone) and, when present, the **worker transcript skeleton**
+  (`sessions/*.jsonl` tool/'message' skeleton) — so a reviewer can check a claim ("added tests for
+  X", "handled the error path") against the actual diff and flag procedure deviations.
+Use Bash directly, or an `Explore` agent when the changed set is large.
 
 ## 2) Launch the three axes in parallel
 Spawn all three via the **`Agent` tool** (@tintinweb/pi-subagents) **in the same message** — one
 `Agent` call per axis with `run_in_background: true` on each so they run concurrently as isolated
-fresh-context sessions, **visible live in the UI**. Pass each the **same** scoped
-diff + file contents (`### Git / diff output` and `### Changed file contents`):
+fresh-context sessions, **visible live in the UI**. Pass each the **same** scoped inputs:
+`### Git / diff output`, `### Changed file contents`, `### Worker handoffs (claims)`, and (when
+present) `### Worker transcript skeleton` + (on a re-run) `### Prior blocking findings`. The
+handoff/transcript let a reviewer audit worker claims and procedure deviations, not just the code.
+Ask each axis to ALSO emit `sharedStateObservations` (`{area, observation, evidence}`) for facts
+about the repo/profile it noticed while reviewing (a stale command, a missing boundary, an
+undocumented pattern) — you triage those in §4. The three axes:
 - `harness-correctness-review` — bugs, breaking changes, security, devex regressions, feature-flag leaks. **Generic.**
 - `harness-quality-review` — maintainability, structure, file-size growth, spaghetti, abstractions, code-judo. Scores against the cached **`.harness/profile/library/coding-principles.md`** (the same generic bias the worker read up-front — author-review symmetry), then goes beyond it. **Generic.** Tell it where the doc is.
 - `harness-conventions-review` — conformance to THIS repo's rules/ADRs via the cached
@@ -59,28 +84,36 @@ The **blocking findings** in your synthesis are the grounded signals the orchest
 project-local **lessons** via `store_lesson` (`signal: blocking_finding`, `source` = the finding's
 `file:line`) — surface them precisely (`file:line` + rule) so the lesson is groundable.
 
-When a finding is **systemic** (a pattern the repo's guidance should encode, or a gap in the
-conventions-map), record it as `suggestedGuidanceUpdates` in the synthesis, targeting
-**`harness.md`**, a profile **worker skill**, **`conventions-map.md`**, or — for a generic
-code-quality pattern workers should preempt — **`coding-principles.md`** (closing the loop: the
-quality finding becomes a principle the next worker reads up-front) — never the repo's own
-AGENTS.md. The orchestrator acts on these (the profile-refresh loop). Factual operational fixes
-you're confident about (a `services.yaml`/`library` correction) you may apply directly and record
-as `appliedUpdates`.
+**Triage the `sharedStateObservations` the axes emitted** through a first-principles rubric — route
+each to exactly one bucket, and record the losers too (don't let a rejected observation vanish):
+- **apply now** (`appliedUpdates`) — a factual, confident operational correction to a file you own
+  here (`services.yaml`, `library/`): a stale command, a wrong port, a missing test doc. Apply it.
+- **recommend** (`suggestedGuidanceUpdates`) — a **systemic** pattern the repo's guidance should
+  encode, or a conventions-map gap: target **`harness.md`**, a profile **worker skill**,
+  **`conventions-map.md`**, or — for a generic code-quality pattern workers should preempt —
+  **`coding-principles.md`** (closing the loop: the quality finding becomes a principle the next
+  worker reads up-front). **Never** the repo's own AGENTS.md. The orchestrator acts on these.
+- **reject** (`rejectedObservations`) — out of scope, already documented, subjective, or wrong.
+  Record `{observation, reason}` so the judgment is auditable and the same observation isn't
+  re-surfaced verbatim next round.
 
 ## 5) Write synthesis + return to orchestrator
 Write `.harness/runs/<feature-id>/validation/harness-code-review/synthesis.json`:
 ```json
 {
   "feature": "<feature-id>", "round": 1, "status": "pass" | "fail",
+  "scope": "full" | "fix-delta",
   "gate": { "test": {"passed":true}, "typecheck": {"passed":true}, "lint": {"passed":true} },
   "axes": { "correctness": {...}, "quality": {...}, "conventions": {...} },
   "blockingFindings": [ { "axis":"correctness|quality|conventions", "file":"...", "line":0, "finding":"...", "rule":"<rule or null>" } ],
   "appliedUpdates": [ { "target":"services.yaml|library", "description":"..." } ],
   "suggestedGuidanceUpdates": [ { "target":"harness.md|skills|conventions-map.md|coding-principles.md", "suggestion":"...", "evidence":"...", "isSystemic":true } ],
+  "rejectedObservations": [ { "observation":"...", "reason":"..." } ],
   "previousRound": null
 }
 ```
+On a re-run set `round` (incremented), `scope: "fix-delta"`, and `previousRound` = a short digest of
+the prior synthesis (its round + which blocking findings it raised) so the trail is self-describing.
 Call `EndFeatureRun` with `returnToOrchestrator: true` (always). Blocking findings or a red gate →
 `successState: "failure"`; otherwise `"success"`. Put the synthesis path in `salientSummary`. The
 orchestrator creates fix tasks for blocking findings (re-run only re-checks what failed), acts on

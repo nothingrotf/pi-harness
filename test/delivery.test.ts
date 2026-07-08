@@ -47,6 +47,7 @@ const FULL: DeliveryRecord = {
 	linkedIssues: { linearIssueIds: ["ENG-123"], jiraIssueKeys: [], candidateKeys: [] },
 	ci: { state: "failed", iterations: 2, checks: [{ name: "build", state: "passed" }, { name: "lint", state: "failed" }], primaryFailure: "lint: eslint no-unused-vars" },
 	state: "ci_blocked",
+	commitShas: [],
 	fixesApplied: ["eslint --fix"],
 	salientSummary: "PR opened, lint failing.",
 };
@@ -96,6 +97,14 @@ test("merge gate: opções, resumo e mensagens de decisão", () => {
 	const summary = mergeGateSummaryLines(green).join("\n");
 	assert.match(summary, /✓ CI all green/);
 	assert.match(summary, /Closes ENG-123/);
+	// com diff summary: o overlay mostra O QUE VAI (droid generate_semantic_diff) + stat + [draft]
+	const withDiff: DeliveryRecord = { ...green, draft: true, diff: { summary: "Adds F2 funnel gating\nRefactors the auth guard", filesChanged: 12, insertions: 340, deletions: 120 } };
+	const ds = mergeGateSummaryLines(withDiff).join("\n");
+	assert.match(ds, /\[draft\]/);
+	assert.match(ds, /12 files  \+340  −120/);
+	assert.match(ds, /What this ships:/);
+	assert.match(ds, /Adds F2 funnel gating/);
+	assert.match(ds, /Refactors the auth guard/);
 	assert.match(mergeDecisionMessage("feat-x", { kind: "merge" }), /gh pr merge --squash/);
 	assert.match(mergeDecisionMessage("feat-x", { kind: "cancel" }), /gh pr close --delete-branch/);
 	assert.match(mergeDecisionMessage("feat-x", { kind: "leave_open" }), /LEAVE OPEN/);
@@ -111,6 +120,7 @@ test("deliveryPanelLines: render rico — badge, issue, branch, chips de CI, fix
 		linkedIssues: { linearIssueIds: ["ADM-84"], jiraIssueKeys: [], candidateKeys: [] },
 		ci: { state: "passed", iterations: 0, checks: [{ name: "Unit", state: "passed" }, { name: "E2E", state: "passed" }], primaryFailure: null },
 		state: "awaiting_merge",
+		commitShas: [],
 		fixesApplied: [],
 		salientSummary: "mergeable, CI verde.",
 	};

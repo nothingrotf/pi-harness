@@ -25,6 +25,23 @@ const PARAMS = Type.Object({
 	prTitle: Type.Optional(Type.String()),
 	baseBranch: Type.Optional(Type.String()),
 	headBranch: Type.Optional(Type.String()),
+	repoFullName: Type.Optional(Type.String({ description: "owner/repo (from the git remote) — enables commits⋈issue joins downstream." })),
+	draft: Type.Optional(Type.Boolean({ description: "PR opened as a draft (gh pr create --draft) — use to escalate ci_blocked without asking for merge." })),
+	hasRemote: Type.Optional(Type.Boolean({ description: "Does the repo have a git remote? Pre-delivery check; false → no PR possible." })),
+	prCreatedAt: Type.Optional(Type.String({ description: "ISO timestamp the PR was created." })),
+	prMergedAt: Type.Optional(Type.String({ description: "ISO timestamp the PR merged." })),
+	commitShas: Type.Optional(Type.Array(Type.String(), { description: "Full SHAs of the commits this delivery ships (git log %H base..HEAD)." })),
+	diff: Type.Optional(
+		Type.Object(
+			{
+				summary: Type.Optional(Type.String({ description: "AI semantic-diff summary (2–6 lines) of what this delivery changes — shown in the human merge gate. Generate it BEFORE state:awaiting_merge." })),
+				filesChanged: Type.Optional(Type.Number()),
+				insertions: Type.Optional(Type.Number()),
+				deletions: Type.Optional(Type.Number()),
+			},
+			{ description: "Semantic diff summary + stats for the merge gate (droid's generate_semantic_diff analog)." },
+		),
+	),
 	linkedIssues: Type.Optional(
 		Type.Object({
 			linearIssueIds: Type.Optional(Type.Array(Type.String())),
@@ -53,7 +70,7 @@ export function registerDeliveryStoreTool(pi: ExtensionAPI): void {
 			name: "store_delivery",
 			label: "Store Delivery Record",
 			description:
-				"Persists the harness-deliver record (PR + linked Linear/Jira issue + CI checks + fix-loop + merge state) to .harness/runs/<featureId>/validation/delivery/record.json — it drives the cockpit Delivery tab (Ctrl+T) live. Call at each transition (PR opened, CI changed, fix applied). Set state:\"awaiting_merge\" once CI is green and the PR is mergeable to trigger the human merge gate overlay (the agent must never merge on its own).",
+				"Persists the harness-deliver record (PR + repo/commits + linked Linear/Jira issue + CI checks + fix-loop + semantic diff + merge state) to .harness/runs/<featureId>/validation/delivery/record.json — it drives the cockpit Delivery tab (Alt+T) live. Call at each transition (PR opened, CI changed, fix applied). Provide `diff.summary` + `commitShas` + `repoFullName` before setting state:\"awaiting_merge\" (CI green + mergeable), which pops the human merge gate overlay showing that diff summary (the agent must never merge on its own).",
 			parameters: PARAMS,
 			async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
 				const rec: DeliveryRecord = normalizeDeliveryRecord(params);

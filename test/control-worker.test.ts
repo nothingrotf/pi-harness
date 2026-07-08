@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { SESSION_DENSITY_DEFAULT, cycleDensity, entriesFromActivity, entriesFromSessionEntries, foldTranscript, parseSessionJsonl, pickActiveWorker, readWorkerSession, scrollOffset, sessionWindow, summarizeToolParams, transcriptSource, workerEntries } from "../src/control-worker.ts";
+import { SESSION_DENSITY_DEFAULT, activeWorkerModelLabel, cycleDensity, entriesFromActivity, entriesFromSessionEntries, foldTranscript, liveDurationMs, parseSessionJsonl, pickActiveWorker, readWorkerSession, scrollOffset, sessionWindow, summarizeToolParams, toolLabel, transcriptSource, workerEntries } from "../src/control-worker.ts";
 import type { ControlModel } from "../src/control-model.ts";
 import type { LiveAgent } from "../src/live-agents.ts";
 
@@ -74,6 +74,26 @@ test("readWorkerSession: lê o jsonl da sessão do worker por wsid e folda; [] s
 	assert.deepEqual(readWorkerSession(cwd, "feat-x", "—"), []);
 });
 
+test("readWorkerSession: memoiza por mtime (não re-lê o jsonl a cada frame) mas invalida ao mudar", () => {
+	const cwd = tmp();
+	const dir = path.join(cwd, ".harness", "runs", "feat-x", "sessions");
+	fs.mkdirSync(dir, { recursive: true });
+	const file = path.join(dir, "2026-06-30T00-00-00Z_ws_cache.jsonl");
+	const line = (m: unknown): string => JSON.stringify({ type: "message", message: m });
+	fs.writeFileSync(file, line({ role: "assistant", content: [{ type: "text", text: "one" }] }));
+	const first = readWorkerSession(cwd, "feat-x", "ws_cache");
+	assert.equal(first.length, 1);
+	// mesmo mtime → mesma instância memoizada (prova do cache: identidade referencial)
+	assert.strictEqual(readWorkerSession(cwd, "feat-x", "ws_cache"), first, "mtime igual → fold memoizado");
+	// muda o conteúdo + bump do mtime → invalida
+	fs.writeFileSync(file, [line({ role: "assistant", content: [{ type: "text", text: "one" }] }), line({ role: "user", content: [{ type: "text", text: "two" }] })].join("\n"));
+	const future = new Date(Date.now() + 5000);
+	fs.utimesSync(file, future, future);
+	const second = readWorkerSession(cwd, "feat-x", "ws_cache");
+	assert.notStrictEqual(second, first, "mtime novo → re-lê");
+	assert.equal(second.length, 2);
+});
+
 test("entriesFromActivity: 'bash: echo' → tool; texto solto → message", () => {
 	const e = entriesFromActivity(["bash: echo hi", "thinking about the plan"]);
 	assert.equal(e[0].kind, "tool");
@@ -116,17 +136,53 @@ test("pickActiveWorker: prefere o subagent vivo (KG0); senão a row running; sen
 	assert.equal(live?.skill, "worker", "tira o prefixo harness-");
 	assert.equal(live?.toolCount, 3);
 
-	const wrModel = model({ workers: [{ workerSessionId: "ws_z", taskId: "T2", status: "running", workerNumber: 2, durationMs: 5000 }] });
+	const wrModel = model({ workers: [{ workerSessionId: "ws_z", taskId: "T2", status: "running", workerNumber: 2, durationMs: 5000, model: "anthropic/claude-opus-4", thinking: "xhigh" }] });
 	const sess = pickActiveWorker(wrModel, []);
 	assert.equal(sess?.source, "session");
 	assert.equal(sess?.id, "T2");
 	assert.equal(sess?.wsid, "ws_z");
 	assert.equal(sess?.durationMs, 5000);
+	assert.equal(sess?.model, "anthropic/claude-opus-4", "o modelo EFETIVO propaga da WorkerRow pro ActiveWorker");
+	assert.equal(sess?.thinking, "xhigh");
+});
+
+test("activeWorkerModelLabel: \"model (Effort)\"; vazio quando herda/desconhecido", () => {
+	assert.equal(activeWorkerModelLabel(null), "");
+	assert.equal(activeWorkerModelLabel({}), "", "sem model/thinking → vazio (a view omite)");
+	assert.equal(activeWorkerModelLabel({ model: "anthropic/claude-opus-4", thinking: "xhigh" }), "claude-opus-4 (XHigh)");
+	assert.equal(activeWorkerModelLabel({ model: "anthropic/claude-opus-4" }), "claude-opus-4", "sem effort → só o modelo");
+	assert.equal(activeWorkerModelLabel({ thinking: "high" }), "inherit (High)", "herda o modelo mas fixa o effort");
+	assert.equal(activeWorkerModelLabel({ model: "anthropic/claude-opus-4" }, { labels: { "anthropic/claude-opus-4": "Claude Opus 4.8" } }), "Claude Opus 4.8", "usa o display name do registry");
 });
 
 test("pickActiveWorker: run pausado marca status paused na row running", () => {
 	const m = model({ state: "paused", workers: [{ workerSessionId: "ws_p", taskId: "T1", status: "running" }] });
 	assert.equal(pickActiveWorker(m, [])?.status, "paused");
+});
+
+test("pickActiveWorker: anchorMs vem do startedAt da row (sessão) / startedAtMs do live agent", () => {
+	const iso = new Date(1_700_000_000_000).toISOString();
+	const m = model({ workers: [{ workerSessionId: "ws_a", taskId: "T1", status: "running", startedAt: iso }] });
+	assert.equal(pickActiveWorker(m, [])?.anchorMs, 1_700_000_000_000);
+	assert.equal(pickActiveWorker(model(), [liveAgent({ startedAtMs: 123 })])?.anchorMs, 123);
+});
+
+test("liveDurationMs: rodando + anchor → now−anchor ao vivo (o z do 08a §4a); senão durationMs congelada", () => {
+	const base = { number: 1, id: "T1", label: "x", skill: "w", source: "session" as const };
+	assert.equal(liveDurationMs({ ...base, status: "running", anchorMs: 1000 }, 61_000), 60_000);
+	assert.equal(liveDurationMs({ ...base, status: "paused", anchorMs: 1000, durationMs: 5000 }, 61_000), 5000, "pausado usa a duração congelada");
+	assert.equal(liveDurationMs({ ...base, status: "running", durationMs: 7000 }, 61_000), 7000, "sem anchor cai na durationMs");
+	assert.equal(liveDurationMs({ ...base, status: "running" }, 61_000), undefined, "sem nada → undefined (título mostra '-')");
+});
+
+test("toolLabel: label humanizado (UAT do droid) — Execute/Read/Edit, UPPERCASE p/ subagent, Title Case fallback", () => {
+	assert.equal(toolLabel("bash"), "Execute");
+	assert.equal(toolLabel("read"), "Read");
+	assert.equal(toolLabel("edit"), "Edit");
+	assert.equal(toolLabel("Agent"), "AGENT", "tool de subagent é UPPERCASED (08a §5c)");
+	assert.equal(toolLabel("task"), "TASK");
+	assert.equal(toolLabel("next_task"), "Next Task", "fallback Title Case");
+	assert.equal(toolLabel(""), "tool");
 });
 
 test("entriesFromSessionEntries: folda só type:message do schema oficial; ignora compaction/branch/label", () => {

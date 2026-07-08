@@ -78,8 +78,8 @@ No host do Pi a superfície tem **três** canais:
    **auto-atualiza** (Preparing → live State/Progress/Current Task/Worker/Tasks → Done). O
    render lê um *live store* (`run-store.ts`) a cada ciclo do TUI; o watcher atualiza o store
    + dispara render. É o análogo do tool-card `start_mission_run` do Droid — fica no chat, a
-   composição segue *steerable*, e `ctrl+t` é o atalho "abrir o cockpit".
-3. **Overlay denso full-screen sob demanda** (`Ctrl+T` / `/harness control`): o dashboard
+   composição segue *steerable*, e `alt+t` é o atalho "abrir o cockpit".
+3. **Overlay denso full-screen sob demanda** (`Alt+T` / `/harness control`): o dashboard
    completo **hand-drawn** que cobre a tela inteira (cap. 08) — cantos quadrados `┌┐└┘`,
    header band, barra, 2 colunas com divisor `┬…┴`, **banda Active Worker**, footer bar,
    sub-views (Tasks/Workers/Coverage) e drilldowns. `ctx.ui.custom(factory, {overlay:true,
@@ -104,16 +104,20 @@ No host do Pi a superfície tem **três** canais:
 > widgets `aboveEditor`/`belowEditor` pro chrome de modo/progresso: extensões de UI como o
 > **pi-fusiontui** são donas do **editor** (Droid-style) e do **footer**, e clobberá-los quebra
 > a UI delas. Os nossos canais são compatíveis: `setStatus` (statuslines compõem), o **run card**
-> é uma mensagem no **transcript** (não um widget — não toca editor/footer), e o overlay `Ctrl+T`
+> é uma mensagem no **transcript** (não um widget — não toca editor/footer), e o overlay `Alt+T`
 > é modal (ctx.ui.custom `overlay:true`) e não conflita.
 
 Entrada [travado]:
 - `pi.registerCommand("harness control")` → abre o overlay (ou o Runs picker se não há run ativo).
-- `pi.registerShortcut("ctrl+t", …)` → toggle do overlay quando o modo harness está ativo.
+- `pi.registerShortcut("alt+t", …)` → toggle do overlay quando o modo harness está ativo.
+  - **Por que Alt+T (não Ctrl+T):** o Pi RESERVA `ctrl+t` (`app.thinking.toggle`, `restrictOverride`)
+    e bloqueia extensões que o reivindiquem ("conflicts with built-in shortcut. Skipping."); os
+    demais `ctrl+<letra>` são bindings do editor TUI (hijack global quebraria a edição). `alt+t`
+    é livre, seguro no terminal e mantém o mnemônico “T”. O comando `/harness control` é o fallback.
 
 API confirmada: `ctx.ui.custom<T>()` (render/`handleInput`/`invalidate`) + `ctx.ui.requestRender()`
 (live) + `ctx.ui.setWidget(key, lines, {placement:"aboveEditor"})` (faixa) +
-`pi.registerShortcut(keyId,{handler})` (Ctrl+T). Padrão de view: **render puro testável
+`pi.registerShortcut(keyId,{handler})` (Alt+T). Padrão de view: **render puro testável
 + view fina** (igual `readiness-report-view.ts`).
 
 ---
@@ -181,7 +185,7 @@ Frame compartilhada. Linha especial no topo (`+ New feature` quando aplicável),
 `●` marca o run atual, **selecionado = bold**, help abaixo com range à direita.
 Colunas: `State · Updated · Progress(passed/total) · Feature`.
 
-### 6.2 Feature Control — overlay FULL-SCREEN hand-drawn (`Ctrl+T`)  [cap. 08]
+### 6.2 Feature Control — overlay FULL-SCREEN hand-drawn (`Alt+T`)  [cap. 08]
 Tela inteira, desenhada glifo-a-glifo (cantos **quadrados** — assinatura do cap. 08), via as
 primitivas `control-draw.ts` (`rule`/`fullRow`/`twoRow` ≈ `aAT`/`FST`/`ynu`). Cores mapeadas ao
 tema (accent = laranja-análogo; **moldura = `muted`** = cinza neutro visível — `borderMuted`/
@@ -203,7 +207,7 @@ tema (accent = laranja-análogo; **moldura = `muted`** = cinza neutro visível �
 ├─────────────────────────────────────────────┴────────────────────────────────────────────┤
 │ Active Worker  ·  #T2  ·  9f3a4b2c  ·  running  (live logs in the native subagent stream)  │
 ├──────────────────────────────────────────────────────────────────────────────────────────┤
-│ F Tasks   W Workers   C Coverage   M Models   Tab Next   Ctrl+T Close                       │
+│ F Tasks   W Workers   C Coverage   M Models   Tab Next   Alt+T Close                       │
 └──────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 Ícones de task: `✓` completed · `●` in progress · `○` pending · `✘` failed/cancelled. A linha da
@@ -212,7 +216,7 @@ renderizam **dentro** da moldura (laterais `│ … │`, look "inset" do cap. 0
 SelectList. Pause/Resume seguem adiados (read-only) — ver §Pontos abertos.
 
 ### 6.2.1 Run card no transcript (`harness-run`)  [cap. 09]
-Inserido ao iniciar um run; auto-atualiza no chat (não navega — `ctrl+t` é opt-in):
+Inserido ao iniciar um run; auto-atualiza no chat (não navega — `alt+t` é opt-in):
 ```
  ⛬ harness run · Run in progress…
    State: Running
@@ -220,7 +224,7 @@ Inserido ao iniciar um run; auto-atualiza no chat (não navega — `ctrl+t` é o
    Current Task: T2
    Worker: 9f3a4b2c · #T2 · running
    Tasks: ✓T1 ●T2 ○T3
-   ctrl+t to enter Feature Control
+   alt+t to enter Feature Control
 ```
 
 ### 6.3 Sub-views (sem borda própria, dentro da frame)
@@ -261,7 +265,7 @@ Inserido ao iniciar um run; auto-atualiza no chat (não navega — `ctrl+t` é o
 | 4 | overlay Feature Control + sub-views + drilldowns | `src/control-rows.ts` (puro), `src/control-view.ts` | `test/control-rows.test.ts` |
 | 6 | **[cap. 08]** primitivas hand-drawn full-screen + layout do overlay | `src/control-draw.ts` (puro), `src/control-screen.ts` (puro), `src/control-view.ts` (reescrito p/ overlay full-screen) | `test/control-draw.test.ts`, `test/control-screen.test.ts` |
 | 7 | **[cap. 09]** run card auto-atualizável no transcript | `src/run-card.ts` (puro), `src/run-store.ts`, `src/run-card-view.ts` (registerMessageRenderer) | `test/run-card.test.ts` |
-| 5 | wire-up `/harness control` + `registerShortcut("ctrl+t")` + envio do run card | `src/extension/index.ts` | smoke ao vivo |
+| 5 | wire-up `/harness control` + `registerShortcut("alt+t")` + envio do run card | `src/extension/index.ts` | smoke ao vivo |
 
 **Estratégia de teste**: o TUI do Pi não roda headless — então **todo** render/view-model/nav
 vive em módulos **pi-free, testados** (`control-model`, `control-render`, `control-rows`, `runs`);
@@ -271,8 +275,8 @@ as views (`*-view`/`*-frame`/`*-strip`) só fazem value-import de pi e exigem sm
 ### Smoke ao vivo (manual)
 1. `/harness "<feature>"` → converge (gera `plan.json`) — o **sinal compacto** aparece na statusline.
 2. `/harness run` → o **run card** (cap. 09) cai no transcript e tica ao vivo (Preparing → live → Done).
-3. `Ctrl+T` (ou `/harness control`) → **overlay full-screen hand-drawn** (cap. 08), cobrindo a tela;
-   `F/W/C` sub-views, `T` filtro, `Enter` drilldown, `h` handoff, `M` models, `Tab` cicla, `Esc`/`Ctrl+T` fecha.
+3. `Alt+T` (ou `/harness control`) → **overlay full-screen hand-drawn** (cap. 08), cobrindo a tela;
+   `F/W/C` sub-views, `T` filtro, `Enter` drilldown, `h` handoff, `M` models, `Tab` cicla, `Esc`/`Alt+T` fecha.
 4. Sem run ativo → abre o **Runs picker** (frame `round`) primeiro.
 5. Conferir: cantos **quadrados** `┌┐└┘`, barra `█▒`, divisor `┬…┴` alinhado, linha ativa invertida, footer `KEY LABEL`.
 
@@ -480,6 +484,6 @@ Mock do `main` (layout restaurado):
 ├────────────────────────────────────┴───────────────────────────────┤
 │ Active Worker  #2  9f3a4b2c  ● live      … mini-transcript ao vivo …         │
 ├───────────────────────────────────────────────────────────────┤
-│ F Tasks   W Workers   C Coverage   D Delivery   M Models   Tab Next   Ctrl+T Close │
+│ F Tasks   W Workers   C Coverage   D Delivery   M Models   Tab Next   Alt+T Close │
 └───────────────────────────────────────────────────────────────┘
 ```

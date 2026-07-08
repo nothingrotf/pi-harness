@@ -24,10 +24,13 @@ import { splitLineRender, tabRowText, truncate, wrapText } from "./control-rende
 import {
 	type ActiveWorker,
 	SESSION_DENSITY_DEFAULT,
+	activeWorkerModelLabel,
 	cycleDensity,
 	entriesFromActivity,
+	liveDurationMs,
 	pickActiveWorker,
 	readWorkerSession,
+	toolLabel,
 	scrollOffset,
 	sessionWindow,
 	type WorkerEntry,
@@ -289,25 +292,7 @@ export function showFeatureControl(ctx: ExtensionContext, featureId: string, opt
 				return { right, dividerAt: ftRows };
 			};
 			// Banda Active Worker (cap. 08a) — mini-transcript AO VIVO do único worker running/paused:
-			// título (#N · id · Duration) + linha em branco + entries (mensagem/tool, 2 linhas cada).
-			const renderEntry = (e: WorkerEntry, w: number): string[] => {
-				if (e.kind === "message") {
-					const glyph = e.role === "user" ? ">" : e.role === "assistant" ? "⛬" : "●";
-					const gtone = e.role === "system" ? "muted" : "accent";
-					const body = wrapText(e.text ?? "", Math.max(1, w - 4), 2);
-					const l1 = ` ${theme.bold(theme.fg(gtone, glyph))} ${theme.fg("text", body[0] ?? "")}`;
-					return body[1] ? [l1, `   ${theme.fg("text", body[1])}`] : [l1, ""];
-				}
-				const label = e.toolName ?? "tool";
-				const params = truncate(e.params ?? "", Math.max(0, w - label.length - 4));
-				const l1 = ` ${theme.bold(theme.fg("accent", label))}  ${dim(params)}`;
-				if (e.result && e.result.trim()) {
-					const marker = e.isError ? "✗" : "→";
-					const tone = e.isError ? "error" : "muted";
-					return [l1, `   ${theme.fg(tone, marker)} ${theme.fg(tone, truncate(e.result.replace(/\s+/g, " ").trim(), Math.max(0, w - 5)))}`];
-				}
-				return [l1, ""];
-			};
+			// título (#N · featureId · Duration ao vivo) + linha em branco + entries (mensagem/tool, 2 linhas cada).
 			// Entry com DENSIDADE (session viewer, droid §7b.3): d = linhas máx por entry (1..5).
 			// d=1 → só a headline; mensagens embrulham até d linhas; tools = headline + result até d−1.
 			const renderEntryDense = (e: WorkerEntry, w: number, d: number): string[] => {
@@ -319,17 +304,23 @@ export function showFeatureControl(ctx: ExtensionContext, featureId: string, opt
 					for (const b of body.slice(1, d)) out.push(`   ${theme.fg("text", b)}`);
 					return out;
 				}
-				const label = e.toolName ?? "tool";
+				const label = toolLabel(e.toolName ?? "tool");
 				const params = truncate(e.params ?? "", Math.max(0, w - label.length - 4));
 				const out = [` ${theme.bold(theme.fg("accent", label))}  ${dim(params)}`];
 				if (d > 1 && e.result && e.result.trim()) {
 					const marker = e.isError ? "✗" : "→";
-					const tone = e.isError ? "error" : "muted";
-					const wrapped = wrapText(e.result.replace(/\s+/g, " ").trim(), Math.max(1, w - 5), d - 1);
-					out.push(`   ${theme.fg(tone, marker)} ${theme.fg(tone, wrapped[0] ?? "")}`);
-					for (const b of wrapped.slice(1, d - 1)) out.push(`     ${theme.fg(tone, b)}`);
+					const tone = e.isError ? "error" : "toolOutput";
+					const wrapped = wrapText(e.result.replace(/\s+/g, " ").trim(), Math.max(1, w - 4), d - 1);
+					out.push(`  ${theme.fg(tone, marker)} ${theme.fg(tone, wrapped[0] ?? "")}`);
+					for (const b of wrapped.slice(1, d - 1)) out.push(`    ${theme.fg(tone, b)}`);
 				}
 				return out;
+			};
+			// Banda Active Worker: cada entry ocupa EXATAMENTE 2 linhas (altura fixa) — é o renderEntryDense
+			// com d=2, padded a 2 linhas (antes era uma cópia quase idêntica — colapsado p/ uma fonte só).
+			const renderEntry = (e: WorkerEntry, w: number): string[] => {
+				const out = renderEntryDense(e, w, 2);
+				return [out[0] ?? "", out[1] ?? ""];
 			};
 			/** Entries do worker escolhido no session viewer (gravado → sessão em disco; live → .output). */
 			const sessionEntries = (): WorkerEntry[] => {
@@ -346,19 +337,17 @@ export function showFeatureControl(ctx: ExtensionContext, featureId: string, opt
 			};
 			const buildWorkerBand = (aw: ActiveWorker, workerRows: number, w: number): string[] => {
 				const sA = Math.max(0, workerRows - 2);
-				const idText = truncate(aw.id, Math.max(8, Math.floor(w * 0.45)));
-				const statusTag = aw.status === "paused" ? `  ${theme.fg("warning", "⏸ paused")}` : `  ${theme.fg("success", "● live")}`;
-				const left = `${accentB("Active Worker")}  ${theme.fg("muted", `#${aw.number}`)}  ${dim(idText)}${statusTag}`;
-				let right: string;
-				if (aw.durationMs !== undefined && aw.durationMs >= 0) {
-					right = `${dim("Duration")} ${theme.fg("muted", formatDuration(aw.durationMs) || "0s")}`;
-				} else {
-					const stats: string[] = [];
-					if (aw.toolCount) stats.push(`${aw.toolCount} tool${aw.toolCount === 1 ? "" : "s"}`);
-					if (aw.tokens) stats.push(`${aw.tokens >= 1000 ? `${Math.round(aw.tokens / 1000)}k` : aw.tokens} tokens`);
-					right = dim(stats.join(" · ") || "live");
-				}
-				const head: string[] = [splitLineRender(left, right, w, 1, visibleWidth, clipToWidth), ""];
+				// Título 1:1 com o droid ($H, 08a §4a): `Active Worker  #N  <featureId>  …  Duration <d|->`.
+				// SEM tag `● live`/spinner (dead code no droid); Duration TICA ao vivo (anchor + ticker).
+				const durMs = liveDurationMs(aw);
+				const durText = durMs !== undefined ? formatDuration(durMs) || "0s" : "-";
+				const right = `${dim("Duration")} ${theme.fg("muted", durText)}`;
+				const idText = truncate(featureId, Math.max(8, w - 20 - (9 + durText.length) - 4));
+				const left = `${accentB("Active Worker")}  ${theme.fg("muted", `#${aw.number}`)}  ${dim(idText)}`;
+				// 2ª linha da banda: o modelo EFETIVO do worker ("opus-4.8 (XHigh)", gravado no step_started).
+				// Herda a sessão (subagent live / run antigo sem o campo) → label vazio → linha em branco.
+				const mdlLabel = activeWorkerModelLabel(aw);
+				const head: string[] = [splitLineRender(left, right, w, 1, visibleWidth, clipToWidth), mdlLabel ? clipToWidth(`  ${theme.fg("muted", mdlLabel)}`, w) : ""];
 				if (sA <= 0) return head.slice(0, workerRows);
 				// Caminho NATIVO — a transcript REAL, o análogo do tcT/dG0 do 08a: headless → o jsonl da sessão
 				// do worker (runs/<id>/sessions via pi 0.80.3 parseSessionEntries); in-session subagent
@@ -369,8 +358,10 @@ export function showFeatureControl(ctx: ExtensionContext, featureId: string, opt
 				else if (aw.source === "live" && aw.agentId) native = readAgentOutputEntries(ctx.cwd, ctx.sessionManager?.getSessionId?.(), aw.agentId);
 				const entries = native && native.length > 0 ? native : workerEntries(ctx.cwd, featureId, aw);
 				const maxItems = Math.max(1, Math.floor(sA / 2));
+				// Largura interna do preview — o `B = max(40, H − 3)` do dG0 (fullRow clipa o excesso).
+				const cw = Math.max(40, w - 3);
 				const content: string[] = [];
-				for (const e of entries.slice(-maxItems)) content.push(...renderEntry(e, w));
+				for (const e of entries.slice(-maxItems)) content.push(...renderEntry(e, cw));
 				if (entries.length === 0) {
 					// Sem transcript ao vivo (o `.output` do @tintinweb ainda não existe — 1º frame — e sem
 					// buffer de activity): mostra um sinal HONESTO de que o worker está trabalhando
@@ -469,6 +460,9 @@ export function showFeatureControl(ctx: ExtensionContext, featureId: string, opt
 					const durMs = live ? undefined : wk?.durationMs;
 					const info: string[] = [`${dim("Session")} ${theme.fg("text", shortId(sid))}`, `${dim("Task")} ${theme.fg("text", sessionTaskId ?? wk?.taskId ?? "—")}`, `${dim("Status")} ${theme.fg(status === "running" ? "success" : "muted", String(status))}`];
 					if (durMs !== undefined) info.push(`${dim("Duration")} ${theme.fg("muted", formatDuration(durMs) || "0s")}`);
+					// Modelo EFETIVO da sessão (do step_started via WorkerRow) — omitido quando herda/desconhecido.
+					const sessMdl = activeWorkerModelLabel(wk ?? null);
+					if (sessMdl) info.push(`${dim("Model")} ${theme.fg("muted", sessMdl)}`);
 					const entries = sessionEntries();
 					const flat: string[] = [];
 					for (const e of entries) flat.push(...renderEntryDense(e, w, density));
@@ -563,10 +557,10 @@ export function showFeatureControl(ctx: ExtensionContext, featureId: string, opt
 				tui.requestRender();
 			};
 			const watcher: Watcher = watchRun(ctx.cwd, featureId, refresh);
-			// Tick de re-render enquanto há workers AO VIVO (subagents) — os stats (tools/tokens)
-			// mudam em memória, não em disco, então o watcher de fs não os pega.
+			// Tick de re-render enquanto há worker ativo: subagents AO VIVO (stats em memória) E a
+			// Duration do título (recomputada de Date.now() − anchor a cada frame — o interval de 1s do droid).
 			const ticker = setInterval(() => {
-				if (listLiveAgents().length > 0) tui.requestRender();
+				if (listLiveAgents().length > 0 || model?.workers.some((x) => x.status === "running")) tui.requestRender();
 			}, 700);
 			const finish = (r: ControlResult): void => {
 				watcher.close();
@@ -617,7 +611,7 @@ export function showFeatureControl(ctx: ExtensionContext, featureId: string, opt
 							}
 							return tui.requestRender();
 						}
-						if (matchesKey(data, "ctrl+t") || matchesKey(data, "ctrl+c")) return finish({ kind: "close" });
+						if (matchesKey(data, "alt+t") || matchesKey(data, "ctrl+c")) return finish({ kind: "close" });
 						const esc = matchesKey(data, "escape") || matchesKey(data, "q");
 						const tab = matchesKey(data, "tab");
 						const nextView = (): ControlView => TAB_VIEWS[(TAB_VIEWS.indexOf(view as ControlView) + 1) % TAB_VIEWS.length] ?? "main";

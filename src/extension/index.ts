@@ -11,8 +11,9 @@
  *   /harness status    → mostra a fase atual
  *   /harness exit      → sai do modo
  *
- * ponytail: ensureProfile/converge/setup ainda são stubs (Fatias 1-3). O que está
- * vivo aqui é a camada de UX, com smoke test ao vivo pendente pro recolor do input.
+ * ensureProfile/converge/setup estão vivos (Fatias 1-3 fechadas): profile gate READ-ONLY
+ * (absent/ok/drift), converge via gray-area-policy → contract FROZEN → plan, runner
+ * determinístico + ship gate. Esta camada é chrome + dispatch; a lógica mora em skills/runner.
  */
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -34,9 +35,10 @@ import { registerRunFeatureTool } from "../run-tool.ts";
 import { activeRunIds, clearWorkerClient, isRunActive, pauseAllRuns, pauseRun, registerRun, registerWorkerClient, steerWorker, unregisterRun } from "../run-registry.ts";
 import { registerLessonsStoreTool } from "../lessons-store-tool.ts";
 import { registerDeliveryStoreTool } from "../delivery-store-tool.ts";
+import { registerDismissHandoffItemsTool } from "../dismiss-tool.ts";
 import { buildConvergeDispatch } from "../converge-dispatch.ts";
 import { buildResumeDispatch, buildRunDispatch } from "../run-dispatch.ts";
-import { defaultModelRef, loadModelConfig, modelOptions, readPiSettings, saveModelConfig, skippedGateSkills, summarizeConfig } from "../model-config.ts";
+import { defaultModelRef, loadModelConfig, modelOptions, readPiSettings, resolveChoice, roleForStep, saveModelConfig, skippedGateSkills, summarizeConfig } from "../model-config.ts";
 import { featureProgress, readPlan } from "../plan.ts";
 import { appendProgress } from "../handoff.ts";
 import { computeFingerprint } from "../fingerprint.ts";
@@ -96,7 +98,11 @@ function registryModels(ctx: ExtensionContext): Array<{ ref: string; label: stri
 async function openModelConfig(ctx: ExtensionContext): Promise<void> {
 	const cfg = loadModelConfig();
 	const settings = readPiSettings();
-	const fallback = defaultModelRef(settings);
+	// Fallback do role "inherit" = o modelo que o child REALMENTE herda no spawn = o modelo da SESSÃO
+	// viva (o mesmo `opts.model` passado ao runner/describeStepModel); só cai no default do settings
+	// quando a sessão não expõe um id. Assim o "inherit→X" do painel casa com o que os workers rodam.
+	const sessionModel = (ctx as { model?: { id?: string } }).model?.id;
+	const fallback = sessionModel ?? defaultModelRef(settings);
 	const reg = registryModels(ctx);
 	const labels: Record<string, string> = {};
 	for (const m of reg) labels[m.ref] = m.label;
@@ -203,6 +209,9 @@ export default function registerHarnessExtension(pi: ExtensionAPI): void {
 	registerLessonsStoreTool(pi);
 	// store_delivery — record do passo de entrega (PR + Linear + CI + merge) → aba Delivery do cockpit.
 	registerDeliveryStoreTool(pi);
+	// dismiss_handoff_items — o orchestrator registra discoveredIssues que decidiu NÃO acionar (com
+	// justificativa) → dismissed.json + log; o run report os filtra (não ressurgem).
+	registerDismissHandoffItemsTool(pi);
 	// run_feature — o start_mission_run analog: o orchestrator (chat) entrega a execução ao
 	// FeatureRunner (workers/validators = sessões `pi --mode rpc`; model config enforced; BLOCKING).
 	registerRunFeatureTool(pi);
@@ -274,7 +283,7 @@ export default function registerHarnessExtension(pi: ExtensionAPI): void {
 		ctx.ui.notify(`pi-harness: live remediation — tools: ${toolBadge(t, ["todo", "Agent"])}`);
 	};
 
-	// Feature Control (overlay Ctrl+T): loop que reabre o overlay após o config de modelos.
+	// Feature Control (overlay Alt+T): loop que reabre o overlay após o config de modelos.
 	// `resume` (teclas R · Shift+R · r em Workers) fecha o overlay e dispara o orchestrator no chat
 	// (que chama run_feature com o modo escolhido) — paridade com a tecla R do Mission Control.
 	const openControl = async (ctx: ExtensionContext, featureId: string): Promise<void> => {
@@ -372,7 +381,7 @@ export default function registerHarnessExtension(pi: ExtensionAPI): void {
 		ctx.ui.notify(`pi-harness: executing "${featureId}" — orchestrator in chat → run_feature (runner-driven workers) → ship gate. tools: ${toolBadge(t, ["todo", "run_feature", "Agent", "advisor"])}`);
 		if (ctx.hasUI) {
 			strip.start(ctx, featureId);
-			// cap. 09: dropa o cartão vivo no transcript (1x por run/sessão). Ctrl+T = cockpit.
+			// cap. 09: dropa o cartão vivo no transcript (1x por run/sessão). Alt+T = cockpit.
 			if (!cardSent.has(featureId)) {
 				cardSent.add(featureId);
 				sendRunCard(pi, featureId);
@@ -437,7 +446,10 @@ export default function registerHarnessExtension(pi: ExtensionAPI): void {
 			await openModelConfig(ctx);
 		},
 	});
-	// Feature Control — o dashboard ao vivo (Mission Control rebrandeado). Comando + atalho Ctrl+T.
+	// Feature Control — o dashboard ao vivo (Mission Control rebrandeado). Comando + atalho Alt+T.
+	// NOTA: Ctrl+T é RESERVADO pelo Pi (app.thinking.toggle) e bloqueia extensões; Ctrl+B/E/F/… são
+	// bindings do editor TUI (hijack quebraria a edição). Alt+T é livre, seguro no terminal e mantém
+	// o mnemônico "T". O comando /harness control é sempre o fallback quando o atalho não registra.
 	pi.registerCommand("harness-control", {
 		description: "Open Feature Control: live dashboard (progress, tasks, coverage, workers, handoffs) for a run.",
 		handler: async (_args: string, ctx: ExtensionCommandContext): Promise<void> => {
@@ -445,7 +457,7 @@ export default function registerHarnessExtension(pi: ExtensionAPI): void {
 		},
 	});
 	try {
-		pi.registerShortcut("ctrl+t", {
+		pi.registerShortcut("alt+t", {
 			description: "pi-harness: Feature Control",
 			handler: async (ctx: ExtensionContext): Promise<void> => {
 				await openControlEntry(ctx);
@@ -542,7 +554,7 @@ export default function registerHarnessExtension(pi: ExtensionAPI): void {
 				// Registra no run-registry → P (pause) e S (steer) do Feature Control valem aqui também.
 				let controller: AbortController;
 				try {
-					controller = registerRun(fid);
+					controller = registerRun(fid, ctx.cwd); // cwd → disk lock: bloqueia TUI×headless no mesmo repo
 				} catch {
 					ctx.ui.notify(`pi-harness: a run for "${fid}" is already active.`, "warning");
 					return;
@@ -558,7 +570,7 @@ export default function registerHarnessExtension(pi: ExtensionAPI): void {
 						signal: controller.signal,
 					});
 				} finally {
-					unregisterRun(fid);
+					unregisterRun(fid, ctx.cwd);
 					clearWorkerClient(fid);
 				}
 				ctx.ui.notify(
@@ -617,7 +629,7 @@ export default function registerHarnessExtension(pi: ExtensionAPI): void {
 					const { makeRpcSpawn } = await import("../rpc-worker.ts");
 					const { runLoop } = await import("../feature-runner.ts");
 					const { completionGate, loadOrBuildFeatureRun, writeFeatureRun } = await import("../plan.ts");
-					const { appendProgress } = await import("../handoff.ts");
+					const { appendProgress, handoffOutcome } = await import("../handoff.ts");
 					// Resume graceful×hard: continua o feature-run persistido (re-attacha worker) ou reclama órfão.
 					const rp = loadOrBuildFeatureRun(ctx.cwd, fid);
 					if (!rp) {
@@ -639,7 +651,7 @@ export default function registerHarnessExtension(pi: ExtensionAPI): void {
 					// Registra no run-registry → P (pause) e S (steer) do Feature Control valem aqui também.
 					let controller: AbortController;
 					try {
-						controller = registerRun(fid);
+						controller = registerRun(fid, ctx.cwd); // cwd → disk lock: bloqueia TUI×headless no mesmo repo
 					} catch {
 						ctx.ui.notify(`pi-harness: a run for "${fid}" is already active.`, "warning");
 						return;
@@ -657,12 +669,19 @@ export default function registerHarnessExtension(pi: ExtensionAPI): void {
 								// End-of-run gate (droid parity): só completa com TODAS as assertions `passed`.
 								// Bypass quando o qa-validator (quem flipa status.json) foi pulado.
 								completionGate: skippedGateSkills(cfg).has("harness-qa-validator") ? undefined : () => completionGate(ctx.cwd, fid),
+								// Grava o modelo EFETIVO por step no step_started (source-of-truth do que rodou).
+								describeStepModel: (step) => resolveChoice(cfg, roleForStep(step), model),
+								// Reconciliação pós-HARD-kill: não re-roda step cuja última sessão já gravou success em disco.
+								reconcileCompleted: (step) => {
+									const wsid = step.workerSessionIds?.at(-1);
+									return !!wsid && handoffOutcome(ctx.cwd, fid, step.id, wsid).success;
+								},
 							},
 							controller.signal,
 							{ resume, heartbeatMs: 180000 },
 						);
 					} finally {
-						unregisterRun(fid);
+						unregisterRun(fid, ctx.cwd);
 						clearWorkerClient(fid);
 					}
 					ctx.ui.notify(`pi-harness: headless run ${run.status}${run.pauseReason ? ` (${run.pauseReason})` : ""}.`);

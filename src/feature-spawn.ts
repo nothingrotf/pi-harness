@@ -133,6 +133,28 @@ export function isUsageLimitEvent(obj: unknown): boolean {
 	return /\b402\b|payment required|usage limit|insufficient_quota|exceeded.{0,40}quota|quota.{0,40}exceed|no active subscription/.test(blob);
 }
 
+/**
+ * Heurística pura (testável) p/ um evento de MORTE do worker no stream: erro fatal de conexão /
+ * child (process exit, wire desconectado). Conservadora — só eventos estruturalmente de ERRO cujo
+ * type/razão menciona morte de processo/conexão, NUNCA por substring solta (um tool result que
+ * cite "disconnected" não pode disparar). Usada em conjunto com a rejeição do `prompt` (wire quebrado).
+ */
+export function isWorkerCrashEvent(obj: unknown): boolean {
+	if (!obj || typeof obj !== "object") return false;
+	const o = obj as Record<string, unknown>;
+	const type = typeof o.type === "string" ? o.type.toLowerCase() : "";
+	// `extension_error` é um erro de EXTENSÃO dentro do child (ex.: um tool lançou, "git exited
+	// with code 128") — o child está VIVO. Nunca é sinal de morte do processo/wire.
+	if (type === "extension_error") return false;
+	// 1º gate: type estruturalmente de erro/saída (não casa por payload solto).
+	if (!/error|failed|fatal|exit|disconnect|closed|terminated|crash/.test(type)) return false;
+	// 2º gate: menciona morte de PROCESSO/conexão (não um erro de aplicação qualquer). Padrões
+	// ESTREITOS: nada de `\bexited\b` solto — "git exited with code 128" num erro de tool não é
+	// morte do worker; só morte explícita de processo/conexão conta.
+	const blob = JSON.stringify(o).toLowerCase();
+	return /process\s*exit|processexit|child\s*(process\s*)?(died|exited|killed)|connection\s*(closed|lost|reset)|wire\s*(closed|broken)|econnreset|epipe|socket\s*hang\s*up|server\s*(closed|disconnected)|session\s*(closed|terminated)/.test(blob);
+}
+
 /** Escreve o system prompt num ficheiro temporário (lido pelo `--append-system-prompt`). Exportado p/ o rpc-worker. */
 export function writePromptFile(prompt: string): { file: string; dir: string } {
 	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-harness-feature-"));

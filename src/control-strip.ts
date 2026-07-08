@@ -3,7 +3,7 @@
  * `ctx.ui.setStatus("harness-progress", …)`, NUNCA um widget aboveEditor nem o editor. A
  * statusline (pi-fusiontui lê getExtensionStatuses(); o core também) compõe junto do modo
  * ("◆ run" + "████▒▒ 6/12 · T2"). Atualiza ao vivo via watchRun. A barra rica vive no overlay
- * Feature Control (Ctrl+T); aqui é só o resumo de uma linha. Compatibilidade > chrome próprio.
+ * Feature Control (Alt+T); aqui é só o resumo de uma linha. Compatibilidade > chrome próprio.
  */
 import type { ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 import { type ControlModel, readControlModel, type StripParts, stripParts } from "./control-model.ts";

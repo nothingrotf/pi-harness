@@ -98,6 +98,19 @@ export interface SpawnOutcome {
 	usageLimit?: boolean;
 	/** watchdog matou o child por inatividade → morte do worker, requeue (doc 07: session_inactivity). */
 	inactivity?: boolean;
+	/**
+	 * O child morreu/o wire quebrou no meio do turno (prompt rejeitado, evento de erro fatal) SEM
+	 * agent_end — falha rápida + requeue, em vez de esperar o watchdog de inatividade (droid:
+	 * ProcessExitError → failAndRequeue). Distinto de `inactivity` (que é silêncio, não morte).
+	 */
+	crashed?: boolean;
+	/**
+	 * O worker GRAVOU um handoff (EndFeatureRun) nesta tentativa — distingue uma falha REPORTADA
+	 * (worker terminou e decidiu failure/partial → orchestrator_turn) de um wedge MECÂNICO do
+	 * re-attach (transcript corrupto, sem handoff → degrade a restart fresh). Sem esta distinção,
+	 * o degrade engolia falhas genuínas de workers resumidos até estourar o budget.
+	 */
+	reported?: boolean;
 }
 
 export interface SpawnCtx {
@@ -134,6 +147,20 @@ export interface FeatureRunLoopDeps {
 	 * orchestrator decide fix tasks / re-validar). undefined → completa direto (testes/compat).
 	 */
 	completionGate?: () => { ok: boolean; failing: string[] };
+	/**
+	 * Resolve o modelo+effort EFETIVO de um step (role override > fallback da sessão) — injetado
+	 * pelo caller que tem o HarnessModelConfig. Gravado no `step_started` (source-of-truth do que
+	 * REALMENTE rodou, correto mesmo se o config global mudar no meio do run). undefined → não loga.
+	 */
+	describeStepModel?: (step: FeatureStep) => { model?: string; thinking?: string };
+	/**
+	 * Reconciliação pós-HARD-kill (droid: completion é FATO em disco, nunca promessa em memória):
+	 * `true` se a ÚLTIMA sessão do step já gravou um handoff `successState:"success"` — então o
+	 * orphan cleanup marca o step `completed` em vez de re-rodar (um impl step de horas de trabalho
+	 * não é re-executado só porque o processo morreu ANTES do runner avançar). Injetado pelo caller
+	 * (lê handoffs/ com o wsid exato). undefined → comportamento antigo (requeue todo in_progress).
+	 */
+	reconcileCompleted?: (step: FeatureStep) => boolean;
 }
 
 /** Opções do runLoop. `resume` = continuar um run persistido (não reclama órfãos; re-attacha in_progress). */
@@ -180,9 +207,34 @@ export function nextPending(run: FeatureRun): FeatureStep | undefined {
 	return run.steps.find((s) => s.status === "pending");
 }
 
-/** Recuperação de crash: steps in_progress órfãos voltam a pending. */
-export function cleanupOrphan(run: FeatureRun): void {
-	for (const s of run.steps) if (s.status === "in_progress") s.status = "pending";
+/**
+ * Recuperação de crash (HARD kill): steps in_progress órfãos voltam a pending PARA re-rodar —
+ * EXCETO quando `reconcileCompleted` confirma que a última sessão do step já gravou um handoff de
+ * sucesso em disco (aí marca `completed`, sem re-executar). Emite `step_reconciled`/`step_orphan_
+ * requeued` na trilha (droid: orphan cleanup deixa rasto de auditoria — um re-run pós-crash não
+ * pode ser indistinguível de um first run no log).
+ */
+export function cleanupOrphan(
+	run: FeatureRun,
+	opts: { reconcileCompleted?: (step: FeatureStep) => boolean; log?: (ev: string, extra?: Record<string, unknown>) => void } = {},
+): void {
+	for (const s of run.steps) {
+		if (s.status !== "in_progress") continue;
+		const workerSessionId = s.workerSessionIds?.at(-1);
+		// Só steps de TASK reconciliam (é onde "horas de trabalho" se aplica). Ship-gates re-rodam:
+		// eles reportam SEMPRE returnToOrchestrator:true (guidance triage, lessons) — reconciliá-los
+		// como completed engoliria o turno do orchestrator que o caminho normal garante.
+		if (s.kind === "task" && opts.reconcileCompleted?.(s)) {
+			s.status = "completed";
+			opts.log?.("step_reconciled", { id: s.id, kind: s.kind, reason: "handoff_success_on_disk", workerSessionId });
+			// Impl/fix step reconciliado: cada task que ele cobre também conta como concluída (paridade
+			// com o caminho de sucesso normal — a TUI por-task e o completion gate ficam coerentes).
+			if (s.tasks?.length) for (const t of s.tasks) opts.log?.("task_completed", { taskId: t.id });
+			continue;
+		}
+		s.status = "pending";
+		opts.log?.("step_orphan_requeued", { id: s.id, kind: s.kind, reason: "orphan_cleanup", workerSessionId });
+	}
 }
 
 /**
@@ -260,7 +312,7 @@ export async function runLoop(cwd: string, run: FeatureRun, deps: FeatureRunLoop
 	const heartbeatMs = opts.heartbeatMs ?? deps.heartbeatMs;
 	// Fresh start → reclama órfãos (recuperação de HARD kill: in_progress → pending, re-roda do zero).
 	// Resume → preserva o in_progress (re-attacha a sessão do worker = "continue where you left off").
-	if (!opts.resume) cleanupOrphan(run);
+	if (!opts.resume) cleanupOrphan(run, { reconcileCompleted: deps.reconcileCompleted, log: deps.log });
 	run.status = "running";
 	run.pauseReason = undefined; // limpa razão stale (um usage_limit antigo não pode contaminar o registo do próximo pause/complete)
 	run.turnReason = undefined;
@@ -326,7 +378,8 @@ export async function runLoop(cwd: string, run: FeatureRun, deps: FeatureRunLoop
 			step.attempts++;
 			const wsid = nextWorkerSessionId(step, genId);
 			touch(run, deps);
-			deps.log?.("step_started", { id: step.id, kind: step.kind, skillName: step.skillName, attempt: step.attempts, workerSessionId: wsid });
+			const mdl = deps.describeStepModel?.(step);
+			deps.log?.("step_started", { id: step.id, kind: step.kind, skillName: step.skillName, attempt: step.attempts, workerSessionId: wsid, ...(mdl?.model ? { model: mdl.model } : {}), ...(mdl?.thinking ? { thinking: mdl.thinking } : {}) });
 		}
 
 		const workerSessionId = step.workerSessionIds.at(-1) ?? nextWorkerSessionId(step, genId);
@@ -376,6 +429,14 @@ export async function runLoop(cwd: string, run: FeatureRun, deps: FeatureRunLoop
 			touch(run, deps);
 			continue;
 		}
+		if (res.crashed) {
+			// Morte do child (droid: ProcessExitError → failAndRequeue): requeue rápido (sem esperar o
+			// watchdog), tentativa contada, o budget guard pega crash-loop. Razão distinta de inactivity.
+			step.status = "pending";
+			deps.log?.("step_failed", { id: step.id, kind: step.kind, reason: "worker_crashed" });
+			touch(run, deps);
+			continue;
+		}
 
 		// Conclusão vs controlo são sinais ORTOGONAIS: successState decide se o step COMPLETOU;
 		// returnToOrchestrator decide só QUEM recebe o controlo a seguir. Ship gates reportam SEMPRE
@@ -398,9 +459,19 @@ export async function runLoop(cwd: string, run: FeatureRun, deps: FeatureRunLoop
 				touch(run, deps);
 				break;
 			}
+		} else if (reattach && !res.reported) {
+			// RESUME falhou MECANICAMENTE (re-attach sem handoff nenhum: transcript corrupto/sessão
+			// insustentável): NÃO wedge no orchestrator — degrada a um restart FRESH (nova sessão, nova
+			// tentativa; o budget guard limita), espelhando o `resumeWorker` do droid ("resume can never
+			// wedge", doc 07 §6). Falha REPORTADA (handoff failure/partial gravado) NÃO entra aqui — um
+			// worker resumido que terminou e decidiu failure vai pro orchestrator como qualquer falha.
+			step.status = "pending";
+			deps.log?.("step_resume_degraded", { id: step.id, kind: step.kind, reason: "reattach_failed" });
+			touch(run, deps);
+			continue;
 		} else {
-			// Falha real (successState failure/partial ou exit != 0): step volta a pending (próxima
-			// tentativa = worker NOVO, do zero) e o run devolve controle ao orchestrator (fix tasks + resume).
+			// Falha real (successState failure/partial ou exit != 0) numa tentativa FRESH: step volta a
+			// pending (próxima tentativa = worker NOVO, do zero) e o run devolve controle ao orchestrator.
 			step.status = "pending";
 			run.status = "orchestrator_turn";
 			run.turnReason = "step_returned";

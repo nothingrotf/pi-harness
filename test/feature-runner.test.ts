@@ -42,6 +42,22 @@ test("planFeatureRun: N tasks viram UM impl step (1 worker por feature), sem gat
 	assert.equal(run.gateInjected, false);
 });
 
+test("runLoop: describeStepModel grava model+thinking EFETIVOS no step_started (source-of-truth)", async () => {
+	const run = planFeatureRun("feat-x", tasks("T1"), NOW);
+	const started: Record<string, unknown>[] = [];
+	// spawn all-success → impl completa, ship gate injeta e roda (emite step_started de gate).
+	await runLoop("/repo", run, deps(spawnFrom({}), {
+		log: (ev, extra) => { if (ev === "step_started") started.push(extra ?? {}); },
+		// worker role resolve pra opus/xhigh; validator (ship-gate) herda (sem model) → não loga campo.
+		describeStepModel: (step) => (step.kind === "task" ? { model: "anthropic/claude-opus-4", thinking: "xhigh" } : {}),
+	}));
+	const impl = started.find((s) => s.id === IMPL_STEP_ID);
+	assert.equal(impl?.model, "anthropic/claude-opus-4");
+	assert.equal(impl?.thinking, "xhigh");
+	const gate = started.find((s) => s.kind === "ship-gate");
+	assert.ok(gate && !("model" in gate), "role que herda (sem model resolvido) NÃO grava o campo");
+});
+
 test("runLoop: UM worker entrega todas as tasks, injeta ship gate 1x, completa", async () => {
 	const run = planFeatureRun("feat-x", tasks("T1", "T2"), NOW);
 	const order: string[] = [];
@@ -240,11 +256,75 @@ test("runLoop: heartbeat toca durante um spawn longo", async () => {
 	assert.equal(run.status, "completed");
 });
 
-test("cleanupOrphan: in_progress órfão volta a pending", () => {
+test("cleanupOrphan: in_progress órfão volta a pending (+ log de auditoria)", () => {
 	const run: FeatureRun = planFeatureRun("feat-x", tasks("T1"), NOW);
 	run.steps[0].status = "in_progress";
-	cleanupOrphan(run);
+	const evs: string[] = [];
+	cleanupOrphan(run, { log: (ev) => evs.push(ev) });
 	assert.equal(run.steps[0].status, "pending");
+	assert.ok(evs.includes("step_orphan_requeued"), "requeue deixa rasto no log");
+});
+
+test("cleanupOrphan: reconcileCompleted marca completed (não re-roda step com success em disco)", () => {
+	const run: FeatureRun = planFeatureRun("feat-x", tasks("T1", "T2"), NOW);
+	run.steps[0].status = "in_progress";
+	run.steps[0].workerSessionIds = ["ws_1"];
+	const evs: { ev: string; extra?: Record<string, unknown> }[] = [];
+	// a última sessão (ws_1) do impl step já tem success em disco → reconcilia pra completed
+	cleanupOrphan(run, { reconcileCompleted: (s) => s.workerSessionIds?.at(-1) === "ws_1", log: (ev, extra) => evs.push({ ev, extra }) });
+	assert.equal(run.steps[0].status, "completed", "HARD kill pós-success NÃO re-roda");
+	assert.ok(evs.some((e) => e.ev === "step_reconciled"), "reconciliação logada");
+	assert.deepEqual(evs.filter((e) => e.ev === "task_completed").map((e) => e.extra?.taskId), ["T1", "T2"], "tasks cobertas viram completed");
+});
+
+test("runLoop: crashed → requeue rápido (step_failed worker_crashed), NÃO orchestrator_turn", async () => {
+	const run = planFeatureRun("feat-x", tasks("T1"), NOW);
+	let n = 0;
+	const evs: string[] = [];
+	// 1ª tentativa crasha; 2ª completa — o crash requeue sem devolver ao orchestrator.
+	await runLoop("/repo", run, deps(async () => (++n === 1 ? { code: 1, crashed: true } : { code: 0, success: true, returnToOrchestrator: true }), { log: (ev) => evs.push(ev) }));
+	assert.ok(evs.includes("step_failed"), "crash é step_failed");
+	assert.equal(run.status, "orchestrator_turn", "2ª tentativa (success+return) devolve controle");
+	assert.equal(n, 2, "crash re-tentou automaticamente sem parar no orchestrator");
+});
+
+test("cleanupOrphan: ship-gate NÃO reconcilia (re-roda — preserva o orchestrator turn do gate)", () => {
+	const run: FeatureRun = planFeatureRun("feat-x", tasks("T1"), NOW);
+	injectShipGate(run);
+	const gate = run.steps.find((s) => s.kind === "ship-gate") as FeatureRun["steps"][0];
+	gate.status = "in_progress";
+	gate.workerSessionIds = ["ws_g"];
+	cleanupOrphan(run, { reconcileCompleted: () => true }); // reconciler diz "success em disco"…
+	assert.equal(gate.status, "pending", "…mas ship-gate requeue mesmo assim (returnToOrchestrator não pode ser engolido)");
+});
+
+test("runLoop: falha REPORTADA num resume (handoff em disco) vai pro orchestrator, NÃO degrada", async () => {
+	const run = planFeatureRun("feat-x", tasks("T1"), NOW);
+	run.steps[0].status = "in_progress";
+	run.steps[0].workerSessionIds = ["ws_old"];
+	const evs: string[] = [];
+	// worker resumido TERMINOU e reportou failure via EndFeatureRun (reported:true)
+	await runLoop("/repo", run, deps(async () => ({ code: 0, success: false, returnToOrchestrator: true, reported: true }), { log: (ev) => evs.push(ev) }), undefined, { resume: true });
+	assert.equal(run.status, "orchestrator_turn", "falha reportada → orchestrator (não re-roda às cegas)");
+	assert.ok(!evs.includes("step_resume_degraded"), "degrade só pra wedge MECÂNICO (sem handoff)");
+});
+
+test("runLoop: resume falho degrada a restart FRESH (step_resume_degraded), não wedge", async () => {
+	// step in_progress (paused/resume) cuja 1ª reattach falha (sem handoff) → requeue fresh, retenta.
+	const run = planFeatureRun("feat-x", tasks("T1"), NOW);
+	run.steps[0].status = "in_progress";
+	run.steps[0].workerSessionIds = ["ws_old"];
+	const evs: string[] = [];
+	const seen: boolean[] = [];
+	let n = 0;
+	await runLoop("/repo", run, deps(async (_s, c) => {
+		seen.push(!!c.resume);
+		return ++n === 1 ? { code: 1, success: false } : { code: 0, success: true, returnToOrchestrator: true };
+	}, { log: (ev) => evs.push(ev) }), undefined, { resume: true });
+	assert.equal(seen[0], true, "1ª é um reattach (resume)");
+	assert.equal(seen[1], false, "2ª é uma sessão FRESH (não resume)");
+	assert.ok(evs.includes("step_resume_degraded"), "resume falho degrada em vez de wedge");
+	assert.equal(run.status, "orchestrator_turn");
 });
 
 test("injectShipGate: idempotente", () => {

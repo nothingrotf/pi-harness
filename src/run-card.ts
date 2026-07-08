@@ -2,13 +2,14 @@
  * Run card in-chat (cap. 09 — "Running a mission: the in-chat runtime UX") rebrandeado.
  * PURO, pi-free, testável (test/run-card.test.ts). Projeta o ControlModel num cartão compacto
  * e AUTO-ATUALIZÁVEL que vive no transcript (como o tool-card `start_mission_run` do Droid):
- * Preparing → live State/Progress/Current Task/Worker/Tasks → Done. Ctrl+T abre o Feature
+ * Preparing → live State/Progress/Current Task/Worker/Tasks → Done. Alt+T abre o Feature
  * Control full-screen (opt-in, nunca auto-navega).
  *
  * A view (registerMessageRenderer) lê um snapshot vivo deste cartão e re-renderiza a cada
  * ciclo do TUI — então o cartão "tica" no chat sem reenviar a mensagem.
  */
 import { type ControlModel, type ProgressBar, progressBar, stateLabel, taskIcon } from "./control-model.ts";
+import { activeWorkerModelLabel } from "./control-worker.ts";
 import type { LiveAgent } from "./live-agents.ts";
 
 export type RunPhase = "preparing" | "ready" | "running" | "paused" | "returning" | "completed";
@@ -59,7 +60,7 @@ export interface RunCard {
 	tasks: string;
 	/** últimas atividades do worker vivo (o "Worker Activity" do doc 09/10). */
 	activity: string[];
-	/** mostra o hint "ctrl+t to enter Feature Control" (só quando o run está vivo). */
+	/** mostra o hint "alt+t to enter Feature Control" (só quando o run está vivo). */
 	showHint: boolean;
 }
 
@@ -67,7 +68,9 @@ function workerValue(model: ControlModel): string {
 	const running = model.workers.find((w) => w.status === "running");
 	if (!running) return "—";
 	const sid = running.workerSessionId === "—" ? "—" : running.workerSessionId.slice(0, 8);
-	return `${sid} · #${running.taskId} · running`;
+	// Modelo EFETIVO do worker (gravado no step_started) — omitido quando herda a sessão/desconhecido.
+	const mdl = activeWorkerModelLabel(running);
+	return `${sid} · #${running.taskId} · running${mdl ? ` · ${mdl}` : ""}`;
 }
 
 /** Worker row a partir dos subagents AO VIVO (sem handoff em disco). null se não há live. */
@@ -131,6 +134,6 @@ export function runCardPlainLines(card: RunCard): string[] {
 		lines.push("  Worker Activity:");
 		for (const a of card.activity) lines.push(`    ${a}`);
 	}
-	if (card.showHint) lines.push("  ctrl+t to enter Feature Control");
+	if (card.showHint) lines.push("  alt+t to enter Feature Control");
 	return lines;
 }
