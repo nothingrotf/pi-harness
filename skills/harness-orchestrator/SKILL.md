@@ -96,17 +96,23 @@ Follow the `harness-setup` skill (Worker System section) to design your worker s
 - Determining what types of workers this repo needs
 - Creating skills that define each worker type's procedure
 The worker types are **profile-level** (stable across features, cached in `.harness/profile/skills/`), not re-authored per feature. Update them when a feature reveals a gap.
-#### How Workers Execute (one worker per FEATURE, not per task)
-The granularity is the **feature**, mirroring the reference: **one worker session delivers the whole
-plan**, not one worker per task. Per-task spawning was the anti-pattern — it lost context between
-tasks (separate sessions), repeated the worker-base startup (~a dozen files + init + services) on
-every task, and multiplied tokens and wall-clock. The task decomposition is the worker's *internal*
-checklist, not a spawn boundary.
-When the implementation worker session starts:
-1. The worker owns the **whole feature** in one session (one implementation step).
+#### How Workers Execute (one worker per BATCH — the whole feature when it fits one budget)
+The granularity is **task-budgeted batches** (doc 05): the plan is split into batches of ~7 tasks
+(env `HARNESS_TASK_BUDGET`, budget-driven — NOT milestones/phases), one worker session per batch,
+run sequentially. A **small/medium feature (≤ budget) is a single batch = one worker for the whole
+feature** (byte-identical to before). A **large feature splits into K batches**, each a fresh worker
+session with a clean context window — this fixes the compaction that degraded huge single-session
+features, while amortizing the worker-base startup over ~7 tasks (not per task). Per-task spawning
+was the opposite anti-pattern — it lost context between tasks and repeated startup N times. The task
+decomposition is the worker's *internal* checklist; the batch boundary (a phase-free, budget-driven
+cut that never splits a `cohesion` cluster) is the only spawn boundary. You never hand-group tasks
+into batches — the runner does it from the budget; your only levers are the optional per-task
+`cohesion`/`batchBreakBefore` fields (see harness-feature-converge Phase 5).
+When each implementation worker session starts:
+1. The worker owns its **batch** in one session (the whole feature when K=1; one implementation step per batch).
 2. The worker invokes `harness-worker-base` **once** for setup (read feature.md, the repo's AGENTS.md + harness.md, run init, baseline tests).
-3. The worker then **loops with the `next_task` tool** — the harness hands it each task in order and records the boundaries (task_started/task_completed) deterministically: for each task it invokes the skill you specified, implements + verifies it, and **commits** the repo change with the task id in the message (`next_task` won't advance until a commit lands).
-4. Ultimately the worker returns **one** structured handoff for the feature (with `commitId`/`repoPath` for the repo changes).
+3. The worker then **loops with the `next_task` tool** — the harness hands it each task **of its batch** in order and records the boundaries (task_started/task_completed) deterministically: for each task it invokes the skill you specified, implements + verifies it, and **commits** the repo change with the task id in the message (`next_task` won't advance until a commit lands). A batch worker only receives its own batch's tasks and stops at its batch boundary; earlier batches are already committed.
+4. Ultimately each batch worker returns **one** structured handoff for its batch (with `commitId`/`repoPath`); a K-batch feature yields K sequential handoffs (compact checkpoints), then the ship gate.
 This means skills YOU create only define the per-task work procedure and handoff fields - not the boilerplate, and not the sequencing across tasks (the worker owns that).
 Once you've designed the worker skills (profile), proceed to create feature artifacts.
 ### 3. Creating Feature Artifacts

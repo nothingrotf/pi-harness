@@ -29,6 +29,39 @@ test("validatePlan: cobertura ok (cada assertion em exatamente uma task)", () =>
 	assert.deepEqual(validatePlan(plan()), { ok: true, issues: [] });
 });
 
+test("buildFeatureRun: thread de cohesion → batching respeita o cluster (doc 05 phase 6)", () => {
+	const dir = tmp();
+	const p = plan({
+		assertions: Array.from({ length: 10 }, (_, i) => `A${i + 1}`),
+		tasks: Array.from({ length: 10 }, (_, i) => ({
+			id: `T${i + 1}`,
+			description: `d${i + 1}`,
+			skillName: "backend-worker",
+			fulfills: [`A${i + 1}`],
+			...(i >= 2 && i <= 6 ? { cohesion: "core" } : {}), // T3..T7 = cluster coeso
+		})),
+	});
+	const res = storePlan(dir, p);
+	assert.ok(res.ok, "plan válido");
+	assert.equal(readPlan(dir, "feat-x")?.tasks[2].cohesion, "core", "cohesion persistiu no plan.json");
+
+	const prev = process.env.HARNESS_TASK_BUDGET;
+	process.env.HARNESS_TASK_BUDGET = "4"; // budget pequeno p/ forçar batches determinísticos
+	try {
+		const run = buildFeatureRun(dir, "feat-x");
+		const clusterStep = run?.steps.find((s) => s.tasks?.some((t) => t.id === "T3"));
+		assert.ok(clusterStep, "achou o batch do cluster");
+		for (const id of ["T3", "T4", "T5", "T6", "T7"]) {
+			assert.ok(clusterStep?.tasks?.some((t) => t.id === id), `${id} no MESMO batch (cohesion não rachada)`);
+		}
+		assert.equal(clusterStep?.tasks?.find((t) => t.id === "T3")?.cohesion, "core", "cohesion carregou pro step.tasks");
+		assert.ok((run?.steps.filter((s) => s.kind === "task").length ?? 0) >= 2, "feature grande rachou em ≥2 batches");
+	} finally {
+		if (prev === undefined) delete process.env.HARNESS_TASK_BUDGET;
+		else process.env.HARNESS_TASK_BUDGET = prev;
+	}
+});
+
 test("validatePlan: pega órfã, duplicata e assertion desconhecida", () => {
 	const orphan = validatePlan(plan({ tasks: [{ id: "T1", description: "x", skillName: "w", fulfills: ["A1"] }] }));
 	assert.equal(orphan.ok, false);

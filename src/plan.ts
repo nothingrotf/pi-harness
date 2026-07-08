@@ -23,6 +23,12 @@ export interface Task {
 	fulfills: string[];
 	preconditions?: string[];
 	expectedBehavior?: string[];
+	/** Trilho de coesão do batching (doc 05 §4): tasks consecutivas com a MESMA tag não-vazia não
+	 * são rachadas entre batches. O budget dirige o TAMANHO do batch; a coesão só restringe ONDE o
+	 * corte cai. Opcional — ausente = corte livre por budget. */
+	cohesion?: string;
+	/** Força uma emenda de batch ANTES desta task (fronteira dura; doc 05 §4). Opcional. */
+	batchBreakBefore?: boolean;
 }
 
 export interface Plan {
@@ -228,7 +234,7 @@ export function buildFeatureRun(cwd: string, featureId: string, now?: () => stri
 	if (!plan) return null;
 	return planFeatureRun(
 		featureId,
-		plan.tasks.map((t) => ({ id: t.id, skillName: t.skillName, description: t.description, fulfills: t.fulfills, preconditions: t.preconditions, expectedBehavior: t.expectedBehavior })),
+		plan.tasks.map((t) => ({ id: t.id, skillName: t.skillName, description: t.description, fulfills: t.fulfills, preconditions: t.preconditions, expectedBehavior: t.expectedBehavior, cohesion: t.cohesion, batchBreakBefore: t.batchBreakBefore })),
 		now,
 	);
 }

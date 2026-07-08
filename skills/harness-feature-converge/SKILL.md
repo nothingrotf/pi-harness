@@ -221,9 +221,28 @@ Tasks execute in array order — the topmost pending runs next. Each task:
 | `preconditions` | what must be true before starting |
 | `expectedBehavior` | what success looks like |
 | `fulfills` | contract assertion IDs this task COMPLETES |
+| `cohesion` | *(optional)* batching cohesion tag — see below |
+| `batchBreakBefore` | *(optional)* force a batch seam before this task — see below |
 
 (Tasks carry no `status` field — assertion status lives per-ID in `status.json`, written by
 `store_plan`; do not add a task-level `status`.)
+
+**Batching (doc 05) — you do NOT group tasks into batches; the runner does, by CONTEXT BUDGET.**
+A large feature is split into task-budgeted batches (~7 tasks), one fresh worker session per batch
+(no compaction), executed sequentially. **Budget drives the batch SIZE** — you never author
+"milestones" or phases. Your ONLY batching levers are two optional per-task fields that constrain
+*where* a cut may land, so the budget cut doesn't sever a tightly-coupled cluster:
+- **`cohesion: "<tag>"`** — give consecutive tasks that MUST stay in one worker's head the same
+  non-empty tag (e.g. `"auth-core"`, `"migration-seq"`); the batcher never splits a same-tag run.
+  Use sparingly — only for genuine in-head coupling, not for logical grouping. A single cohesion
+  cluster that alone exceeds ~1.5× the budget (~10+ tasks) is a decomposition smell — split it into
+  real sub-tasks instead.
+- **`batchBreakBefore: true`** — force a seam before a task at a hard dependency/domain frontier
+  (rare). A change in `skillName` (worker type) is already treated as a preferred seam automatically;
+  you don't mark those.
+
+Most tasks need NEITHER field — order foundational-first and let the budget cut. Only add a lever
+when a budget cut would land in the middle of a cluster that must be built with shared context.
 
 **`fulfills` semantics ("completes", not "contributes to"):** only the leaf task that makes
 an assertion fully testable claims it; each assertion ID appears in **exactly one** task's

@@ -19,6 +19,8 @@ const TaskSchema = Type.Object({
 	fulfills: Type.Array(Type.String(), { description: "Contract assertion IDs this task COMPLETES (empty for foundational tasks)." }),
 	preconditions: Type.Optional(Type.Array(Type.String())),
 	expectedBehavior: Type.Optional(Type.Array(Type.String())),
+	cohesion: Type.Optional(Type.String({ description: "Batching cohesion tag (doc 05): consecutive tasks with the SAME non-empty tag are never split across batches. Budget drives batch SIZE; cohesion only constrains WHERE the cut lands. Omit for free budget-driven cuts." })),
+	batchBreakBefore: Type.Optional(Type.Boolean({ description: "Force a batch seam BEFORE this task (hard boundary; doc 05). Rare — use at a genuine dependency/domain frontier." })),
 });
 
 const PARAMS = Type.Object({
