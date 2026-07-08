@@ -31,6 +31,8 @@
  * real (test/feature-runner.test.ts). A integração real de spawn vive à parte.
  */
 
+import { batchBudget, batchTasks } from "./batch.ts";
+
 /** Per-step attempt budget (referência: 5). */
 export const STEP_ATTEMPT_BUDGET = 5;
 
@@ -39,8 +41,19 @@ export type FeatureRunStatus = "running" | "paused" | "orchestrator_turn" | "com
 export type StepStatus = "pending" | "in_progress" | "completed" | "cancelled";
 export type StepKind = "task" | "ship-gate";
 
-/** Id estável do step de implementação único (carrega todas as tasks do plan.json). */
+/** Id estável do step de implementação. K=1 (T ≤ budget) → este id exato (byte-idêntico ao
+ * pré-batching). K>1 → os batches viram `implement-1..K` (ver `batchStepId`). */
 export const IMPL_STEP_ID = "implement";
+
+/** Id do step do batch `idx` (0-based) numa feature de `total` batches. total===1 → IMPL_STEP_ID. */
+export function batchStepId(idx: number, total: number): string {
+	return total <= 1 ? IMPL_STEP_ID : `${IMPL_STEP_ID}-${idx + 1}`;
+}
+
+/** true se `id` é um step de implementação/batch (o único "implement" ou um "implement-N"). */
+export function isImplStepId(id: string): boolean {
+	return id === IMPL_STEP_ID || /^implement-\d+$/.test(id);
+}
 
 /** Uma task do plan.json carregada DENTRO de um step de implementação (a lista interna do worker). */
 export interface PlanTaskRef {
@@ -243,28 +256,28 @@ export function cleanupOrphan(
 }
 
 /**
- * Plano de execução de uma feature: UM step de implementação (id "implement") carregando TODAS
- * as tasks do plan.json — a lista de tasks INTERNA do worker único —, sem o ship gate ainda.
- * (Antes: N task-steps = N workers. Agora: 1 worker por feature, paridade com a referência.)
+ * Plano de execução de uma feature: K steps de implementação (BATCHES por budget de contexto,
+ * doc 05) carregando cada um a sua FATIA ordenada das tasks do plan.json — sem o ship gate ainda.
+ *
+ * K=1 (T ≤ budget, sem emenda dura) → UM step id "implement" = **byte-idêntico** ao pré-batching
+ * (1 worker por feature). K>1 → `implement-1..K`, executados sequencialmente por workers frescos
+ * (janela limpa por batch → sem compaction). O corte é dirigido por budget + coesão (`batchTasks`).
+ *
+ * `budget` default = env `HARNESS_TASK_BUDGET` (7; 0 desliga → um batch legado). Param p/ testes.
  */
-export function planFeatureRun(featureId: string, tasks: PlanTaskRef[], now: () => string = defaultNow): FeatureRun {
+export function planFeatureRun(featureId: string, tasks: PlanTaskRef[], now: () => string = defaultNow, budget: number = batchBudget()): FeatureRun {
 	const ts = now();
-	const fulfills = [...new Set(tasks.flatMap((t) => t.fulfills ?? []))];
-	const steps: FeatureStep[] =
-		tasks.length === 0
-			? []
-			: [
-					{
-						id: IMPL_STEP_ID,
-						kind: "task" as const,
-						skillName: tasks[0].skillName,
-						tasks: tasks.map((t) => ({ ...t })),
-						fulfills,
-						status: "pending" as const,
-						attempts: 0,
-						workerSessionIds: [],
-					},
-				];
+	const batches = batchTasks(tasks, budget);
+	const steps: FeatureStep[] = batches.map((slice, idx) => ({
+		id: batchStepId(idx, batches.length),
+		kind: "task" as const,
+		skillName: slice[0].skillName,
+		tasks: slice.map((t) => ({ ...t })),
+		fulfills: [...new Set(slice.flatMap((t) => t.fulfills ?? []))],
+		status: "pending" as const,
+		attempts: 0,
+		workerSessionIds: [],
+	}));
 	return { runId: genRunId(now), featureId, status: "running", steps, gateInjected: false, createdAt: ts, updatedAt: ts };
 }
 

@@ -42,6 +42,40 @@ test("planFeatureRun: N tasks viram UM impl step (1 worker por feature), sem gat
 	assert.equal(run.gateInjected, false);
 });
 
+test("planFeatureRun: T > budget → K batch steps implement-1..K (fatias por budget)", () => {
+	const t = tasks("T1", "T2", "T3", "T4", "T5", "T6", "T7", "T8", "T9", "T10");
+	const run = planFeatureRun("feat-x", t, NOW, 4); // budget 4 → [4,4,2]→fold→[4,6]
+	assert.equal(run.steps.length, 2, "2 batch steps");
+	assert.deepEqual(run.steps.map((s) => s.id), ["implement-1", "implement-2"]);
+	assert.deepEqual(run.steps[0].tasks?.map((x) => x.id), ["T1", "T2", "T3", "T4"]);
+	assert.deepEqual(run.steps[1].tasks?.map((x) => x.id), ["T5", "T6", "T7", "T8", "T9", "T10"]);
+	assert.deepEqual(run.steps[0].fulfills, ["A-T1", "A-T2", "A-T3", "A-T4"], "fulfills escopado ao batch");
+	assert.deepEqual(run.steps[1].fulfills, ["A-T5", "A-T6", "A-T7", "A-T8", "A-T9", "A-T10"]);
+	assert.ok(run.steps.every((s) => s.kind === "task" && s.status === "pending"));
+});
+
+test("planFeatureRun: budget 0 (desligado) → um único impl step legado, mesmo com T grande", () => {
+	const run = planFeatureRun("feat-x", tasks("T1", "T2", "T3", "T4", "T5", "T6", "T7", "T8"), NOW, 0);
+	assert.equal(run.steps.length, 1);
+	assert.equal(run.steps[0].id, IMPL_STEP_ID);
+});
+
+test("runLoop: K batches rodam sequencialmente, DEPOIS o ship gate 1x, e completam", async () => {
+	const t = tasks("T1", "T2", "T3", "T4", "T5", "T6", "T7", "T8", "T9", "T10");
+	const run = planFeatureRun("feat-x", t, NOW, 4); // [implement-1, implement-2]
+	const order: string[] = [];
+	const doneTasks: string[] = [];
+	await runLoop("/repo", run, deps(
+		async (step) => { order.push(step.id); return { code: 0, success: true }; },
+		{ log: (ev, extra) => { if (ev === "task_completed") doneTasks.push(String(extra?.taskId)); } },
+	));
+	assert.equal(run.status, "completed");
+	assert.deepEqual(order, ["implement-1", "implement-2", "ship-gate-code-review", "ship-gate-qa-validator", "ship-gate-deliver"]);
+	// task_completed emitido por sub-task ao completar CADA batch (TUI por-task correta em todos).
+	assert.deepEqual(doneTasks, ["T1", "T2", "T3", "T4", "T5", "T6", "T7", "T8", "T9", "T10"]);
+	assert.equal(run.gateInjected, true);
+});
+
 test("runLoop: describeStepModel grava model+thinking EFETIVOS no step_started (source-of-truth)", async () => {
 	const run = planFeatureRun("feat-x", tasks("T1"), NOW);
 	const started: Record<string, unknown>[] = [];
