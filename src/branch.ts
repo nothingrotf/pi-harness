@@ -161,6 +161,25 @@ export function planBranchAction(input: { name: string; current: string; base: s
 	return branchExists ? { kind: "switch", branch: name, reason: "feature branch exists — switching" } : { kind: "create", branch: name, reason: `cutting from "${base}"` };
 }
 
+/**
+ * true se o `git status --porcelain` tem sujeira FORA de `.harness/` — a sujeira que de fato
+ * bloqueia o branch-per-feature. Arquivos `.harness/` são do PRÓPRIO harness (profile/runs
+ * mutados por sessões anteriores) e não devem vetar o switch: numa run real observada, docs do
+ * profile modificados-e-não-commitados deixaram o run INTEIRO fora da branch da feature
+ * (`branch_ready: skip — working tree dirty` a cada restart). Renames contam os DOIS lados.
+ */
+export function hasNonHarnessDirt(porcelain: string): boolean {
+	for (const line of porcelain.split("\n")) {
+		if (!line.trim()) continue;
+		// porcelain v1: `XY <path>` (3 chars de prefixo); rename: `XY <old> -> <new>`.
+		for (const side of line.slice(3).split(" -> ")) {
+			const p = side.trim().replace(/^"|"$/g, "");
+			if (p && p !== ".harness" && !p.startsWith(".harness/")) return true;
+		}
+	}
+	return false;
+}
+
 /** Heurística simples de tipo a partir do título; cai no default. */
 export function inferType(title: string, fallback: string): string {
 	const t = title.toLowerCase();

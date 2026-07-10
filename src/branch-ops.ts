@@ -8,7 +8,7 @@
  * Aqui só juntamos o estado do git (HEAD, dirty, branch existe) e executamos a ação.
  */
 import { execFileSync } from "node:child_process";
-import { type BranchActionKind, type BranchConfig, featureBranchName, planBranchAction, readBranchConfig } from "./branch.ts";
+import { type BranchActionKind, type BranchConfig, featureBranchName, hasNonHarnessDirt, planBranchAction, readBranchConfig } from "./branch.ts";
 
 /** As ações puras + `error` (falha de git, capturada — nunca-fatal). */
 export type EnsureBranchKind = BranchActionKind | "error";
@@ -72,7 +72,9 @@ export function ensureFeatureBranch(cwd: string, featureId: string, cfg: BranchC
 	if (current === undefined) return { kind: "error", branch: name, reason: "not a git repo / git unavailable", base: cfg.base, mutated: false };
 	// Base efetiva (detecta a default do repo quando a configurada não existe — main×master).
 	const base = resolveBase(cwd, cfg.base);
-	const dirty = (gitRead(cwd, ["status", "--porcelain"]) ?? "").length > 0;
+	// "Dirty" ignora sujeira `.harness/`-only (harness-owned; carregada limpa pelo switch) —
+	// senão um profile doc mutado por sessão anterior veta o branch-per-feature da run inteira.
+	const dirty = hasNonHarnessDirt(gitRead(cwd, ["status", "--porcelain"]) ?? "");
 	const branchExists = gitRead(cwd, ["rev-parse", "--verify", "--quiet", `refs/heads/${name}`]) !== undefined;
 
 	const action = planBranchAction({ name, current, base, dirty, branchExists, enabled: true });

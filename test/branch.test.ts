@@ -1,6 +1,18 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { deriveBranchName, inferType, normalizeBranchConfig, planBranchAction, sanitizeRef, slugify } from "../src/branch.ts";
+import { deriveBranchName, hasNonHarnessDirt, inferType, normalizeBranchConfig, planBranchAction, sanitizeRef, slugify } from "../src/branch.ts";
+
+test("hasNonHarnessDirt: sujeira .harness/-only N\u00c3O bloqueia; sujeira real bloqueia", () => {
+	assert.equal(hasNonHarnessDirt(""), false);
+	assert.equal(hasNonHarnessDirt(" M .harness/profile/architecture.md\n?? .harness/runs/f1/plan.json"), false, "harness-owned \u2192 n\u00e3o \u00e9 dirty");
+	assert.equal(hasNonHarnessDirt(" M src/app.ts"), true);
+	assert.equal(hasNonHarnessDirt(" M .harness/profile/harness.md\n M src/app.ts"), true, "mistura \u2192 dirty (o lado real conta)");
+	assert.equal(hasNonHarnessDirt("?? novo-arquivo.txt"), true, "untracked fora de .harness \u2192 dirty");
+	assert.equal(hasNonHarnessDirt('?? ".harness/runs/f\u00e9 1/x.json"'), false, "path com aspas (chars especiais) \u2192 desembrulhado");
+	assert.equal(hasNonHarnessDirt("R  .harness/profile/a.md -> src/roubado.md"), true, "rename: os DOIS lados contam");
+	assert.equal(hasNonHarnessDirt("R  .harness/a.md -> .harness/b.md"), false);
+	assert.equal(hasNonHarnessDirt(" M .harnessX/file.ts"), true, "prefixo parecido n\u00e3o passa (exige .harness/)");
+});
 
 test("slugify: minúsculo, sem acento, kebab, corta no limite de palavra", () => {
 	assert.equal(slugify("Habilitação F1→F2: status, convocação"), "habilitacao-f1-f2-status-convocacao");
