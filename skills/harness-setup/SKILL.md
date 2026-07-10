@@ -110,13 +110,24 @@ collide with the repo's own). Include:
   humans/LLM; `delivery.json` is the source of truth the code parses). Schema:
   ```json
   { "branch": { "enabled": true, "template": "{type}/{key}-{slug}", "defaultType": "feat",
-                "base": "<confirmed-base>", "maxSlugLen": 40 } }
+                "base": "<confirmed-base>", "maxSlugLen": 40 },
+    "commitGate": { "enabled": true, "command": "<fast repo-wide gate, e.g. the typecheck command>",
+                    "timeoutSec": 300 } }
   ```
   Placeholders: `{type}` (feat/fix/chore, inferred from the feature), `{key}` (the Linear/Jira
   issue, e.g. `adm-84`, dropped cleanly when absent), `{slug}` (kebab of the feature title). Match
   `template` to the repo's real convention. Set `enabled:false` to keep committing on the current
   branch (opt-out). At the first `/harness run`, the harness creates/switches to that branch
-  **only when on the base with a clean tree** (otherwise it respects the current branch).
+  **only when on the base with a clean tree** (`.harness/`-only dirt is ignored — harness-owned);
+  otherwise it respects the current branch.
+
+  **`commitGate` (strongly recommended)** — the deterministic per-task-boundary check: `next_task`
+  runs this command before marking a worker's task complete; **red → the task is re-handed with
+  the failure tail instead of advancing** (prevents a batch from committing a non-compiling tree
+  that every later worker inherits). Pick the **fastest command that proves the tree is sane** —
+  usually the repo-wide typecheck, NOT the full test suite (it runs at every task boundary).
+  Verify it in Phase 7 like every other command, and it must be **green at setup time** — a
+  baseline-red gate would deadlock workers. Omit the key to opt out.
 
 ## Phase 6 — Worker System → skills/<worker-type>/
 

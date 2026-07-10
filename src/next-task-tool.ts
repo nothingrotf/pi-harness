@@ -6,6 +6,7 @@
  */
 import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { readCommitGateConfig, runCommitGate } from "./commit-gate.ts";
 import { appendProgress } from "./handoff.ts";
 import { readFeatureRun, readPlan } from "./plan.ts";
 import { batchUniverse, clearNextTaskState, completedTaskIds, gitHead, gitIsAncestor, planNextTask, readNextTaskState, readProgressEvents, writeNextTaskState } from "./next-task.ts";
@@ -20,7 +21,7 @@ export function registerNextTaskTool(pi: ExtensionAPI): void {
 			name: "next_task",
 			label: "Next Task",
 			description:
-				"Pull your next task when delivering a feature in one worker session. Returns the next task's spec (id, skillName, description, preconditions, expectedBehavior, fulfills). The harness records task boundaries deterministically: it marks the previous task done ONLY after you committed (git HEAD advanced) — you cannot advance without committing. Call it again after each commit; when it reports all tasks are done, call EndFeatureRun once.",
+				"Pull your next task when delivering a feature in one worker session. Returns the next task's spec (id, skillName, description, preconditions, expectedBehavior, fulfills). The harness records task boundaries deterministically: it marks the previous task done ONLY after you committed (git HEAD advanced) AND, when the profile configures a commit gate (delivery.json commitGate), that gate command passes — you cannot advance a red tree. Call it again after each commit; when it reports all tasks are done, call EndFeatureRun once.",
 			parameters: PARAMS,
 			async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
 				const { featureId } = params as { featureId: string };
@@ -34,7 +35,35 @@ export function registerNextTaskTool(pi: ExtensionAPI): void {
 				const head = gitHead(ctx.cwd);
 				const d = planNextTask(taskIds, completed, state, head, (a, b) => gitIsAncestor(ctx.cwd, a, b));
 
-				if (d.completePrev) appendProgress(ctx.cwd, featureId, "task_completed", { taskId: d.completePrev });
+				// Commit-gate (opt-in, delivery.json `commitGate`): o commit da task ativa só a COMPLETA se a
+				// árvore passar o gate rápido do repo. Vermelho → re-entrega a MESMA task com o tail do erro
+				// (o incidente que isto previne: batch commitou árvore não-compilável e o run inteiro herdou).
+				if (d.completePrev) {
+					const gate = readCommitGateConfig(ctx.cwd);
+					if (gate) {
+						const g = runCommitGate(ctx.cwd, gate);
+						appendProgress(ctx.cwd, featureId, g.ok ? "commit_gate_passed" : "commit_gate_failed", { taskId: d.completePrev, command: gate.command, ...(g.timedOut ? { timedOut: true } : {}) });
+						if (!g.ok) {
+							// NÃO completa nem avança; estado intocado (activeTaskId/head originais) — o fix
+							// exige um commit NOVO, que a checagem de ancestralidade aceita naturalmente.
+							const active = plan.tasks.find((t) => t.id === d.completePrev);
+							const spec = active ? JSON.stringify({ id: active.id, description: active.description, skillName: active.skillName, fulfills: active.fulfills ?? [], preconditions: active.preconditions ?? [], expectedBehavior: active.expectedBehavior ?? [] }, null, 2) : "";
+							const why = g.timedOut ? `timed out after ${gate.timeoutSec}s` : "failed";
+							const text = [
+								`✗ Your commit for ${d.completePrev} landed, but the commit gate ${why}: \`${gate.command}\`. The tree must be GREEN at every task boundary — the harness will NOT advance you on a red tree.`,
+								`Fix the failure and add a FRESH commit ([${d.completePrev}] fix: <summary>), then call next_task again.`,
+								`If the failure is pre-existing and NOT caused by your work (check harness.md "Known Pre-Existing Issues"), do not burn attempts: call EndFeatureRun (successState: "partial", returnToOrchestrator: true) naming the exact failure as the blocker.`,
+								"",
+								"Gate output (tail):",
+								"```",
+								g.output,
+								"```",
+							].join("\n");
+							return { content: [{ type: "text", text: spec ? `${text}\n\n${spec}` : text }], details: { action: "resend", taskId: d.completePrev, gateFailed: true } };
+						}
+					}
+					appendProgress(ctx.cwd, featureId, "task_completed", { taskId: d.completePrev });
+				}
 
 				if (d.action === "done") {
 					clearNextTaskState(ctx.cwd, featureId);

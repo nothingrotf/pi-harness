@@ -125,7 +125,11 @@ list, the `next_task` tool is the source of truth. Loop until it says you're don
    (that git check is how the harness marks the task done deterministically, without trusting
    the message or you to self-report). The gate requires a **NEW commit on top** of the recorded
    HEAD (ancestry-checked): `git commit --amend` or a rebase moves HEAD but does NOT advance the
-   task — always add a fresh commit.
+   task — always add a fresh commit. **If the profile configures a commit gate** (`delivery.json`
+   `commitGate`), `next_task` also runs that fast repo gate at the boundary: a commit on a red
+   tree does NOT complete the task — you get the same task back with the gate's failure output.
+   Fix it and add a fresh commit; if the failure is pre-existing and not yours, EndFeatureRun
+   (`partial`, `returnToOrchestrator: true`) naming it instead of burning attempts.
 5. **Call `next_task` again** for the following task.
 
 **Resume / re-run safety (critical).** If you were restarted (a fresh attempt after a failure, or a
