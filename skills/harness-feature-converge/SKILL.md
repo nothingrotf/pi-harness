@@ -252,6 +252,21 @@ when a budget cut would land in the middle of a cluster that must be built with 
 an assertion fully testable claims it; each assertion ID appears in **exactly one** task's
 `fulfills`. Foundational tasks may have empty `fulfills`.
 
+**Surface-coverage check (blast radius — REQUIRED before `store_plan`):** enumerate every
+app/package/consumer that consumes the contracts/APIs/schemas/types this feature CHANGES — read
+the app list from `architecture.md` + `services.yaml`, and when the consumer set isn't obvious,
+spawn the `integration-scanner` subagent on the changed surface. **Do not stop at the primary
+surface**: admin/back-office UIs, background workers, CLIs, generated API clients and sibling
+apps are the classic misses. Every consumer ends in exactly one of two states:
+- **covered** — a task in the plan owns migrating/adapting it, or
+- **excluded** — `feature.md` scope lists it as explicitly OUT with a reason (and, if it will
+  break, a gray-area row records that accepted breakage).
+
+A consumer in NEITHER state is the scope hole that costs the most downstream: the repo-wide gate
+goes red on a surface no task owns, every later worker inherits the failure as "pre-existing",
+and the ship gate bounces the feature back as blocking findings. When this check adds surfaces,
+re-size (Phase 0 safety valve) and add tasks/assertions before freezing the plan.
+
 **Coverage check (REQUIRED before running):** every assertion ID in `contract.md` is claimed
 by exactly one task — no orphans, no duplicates. **Author the tasks directly** (you have the most
 complete understanding; for large contracts audit coverage with a subagent first), then call
@@ -273,6 +288,8 @@ gate per the `harness-orchestrator` procedure.
 - `contract.md` BEFORE `plan.json` (feature-level TDD); black-box, behavior-based.
 - Freeze the contract once converged; edits only via the orchestrator's mid-feature procedure.
 - Coverage invariant (every assertion claimed exactly once) before running.
+- Surface-coverage invariant: every consumer of a changed contract/API/schema is either owned by
+  a task or explicitly excluded in `feature.md` — no consumer left in an unmarked state.
 - Capture every requirement. Run the **gray-area policy** (Phase 1): dimensions sweep with the
   mandatory `N/A because` escape; risk-tier each gray area (LOW → PUSH + `[assumido]` silently from
   evidence, HIGH → `ask_user_question` → `[confirmado]`); HOW-not-WHETHER scope guardrail; zero
