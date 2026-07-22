@@ -15,6 +15,7 @@ import {
 	modelConfigPath,
 	modelOptions,
 	normalizeModelConfig,
+	orchestratorModelNudge,
 	skippedGateSkills,
 	type PiSettingsView,
 	piSettingsPath,
@@ -35,8 +36,8 @@ test("defaultModelConfig: 3 roles, todos herdam (vazios)", () => {
 	assert.deepEqual(c.roles, { orchestrator: {}, worker: {}, validator: {} });
 });
 
-test("isEffort: aceita os 6 níveis do --thinking, rejeita o resto", () => {
-	for (const e of ["off", "minimal", "low", "medium", "high", "xhigh"]) assert.ok(isEffort(e), e);
+test("isEffort: aceita os 7 níveis do --thinking, rejeita o resto", () => {
+	for (const e of ["off", "minimal", "low", "medium", "high", "xhigh", "max"]) assert.ok(isEffort(e), e);
 	for (const x of ["", "extreme", "HIGH", 3, null, undefined]) assert.ok(!isEffort(x as unknown), String(x));
 });
 
@@ -139,6 +140,7 @@ test("resolveChoice: override do role > fallback; thinking 'off' passa; undefine
 
 test("effortLabel/modelLabel: capitaliza effort; usa label do registry senão o id", () => {
 	assert.equal(effortLabel("xhigh"), "XHigh");
+	assert.equal(effortLabel("max"), "Max");
 	assert.equal(effortLabel("off"), "Off");
 	assert.equal(effortLabel(undefined), "inherit");
 	assert.equal(modelLabel("anthropic/claude-opus-4-8", { labels: { "anthropic/claude-opus-4-8": "Claude Opus 4.8" } }), "Claude Opus 4.8");
@@ -160,4 +162,29 @@ test("summarizeConfig: uma linha por role, display combinado", () => {
 	assert.match(s, /orchestrator: Claude Opus 4.8 \(XHigh\)/);
 	assert.match(s, /worker: inherit→Claude Opus 4.8 \(inherit\)/);
 	assert.match(s, /validator: inherit→Claude Opus 4.8 \(High\)/);
+});
+
+test("orchestratorModelNudge: avisa quando o modelo da sessão diverge do role configurado", () => {
+	const cfg: HarnessModelConfig = { version: 1, roles: { orchestrator: { model: "anthropic/claude-opus-4-8" }, worker: {}, validator: {} }, gates: { skipScrutiny: false, skipUserTesting: false, skipDelivery: false } };
+	const msg = orchestratorModelNudge({ provider: "openai", id: "gpt-5.6-luna" }, cfg);
+	assert.ok(msg?.includes('configured as "anthropic/claude-opus-4-8"'));
+	assert.ok(msg?.includes("openai/gpt-5.6-luna"));
+	assert.ok(msg?.includes("headless converge"));
+});
+
+test("orchestratorModelNudge: silencioso quando coincide (ref completa, id puro, sufixo /id)", () => {
+	const cfg: HarnessModelConfig = { version: 1, roles: { orchestrator: { model: "anthropic/claude-opus-4-8" }, worker: {}, validator: {} }, gates: { skipScrutiny: false, skipUserTesting: false, skipDelivery: false } };
+	assert.equal(orchestratorModelNudge({ provider: "anthropic", id: "claude-opus-4-8" }, cfg), null);
+	assert.equal(orchestratorModelNudge({ id: "claude-opus-4-8" }, cfg), null, "sem provider → match por sufixo /id");
+	const bareCfg: HarnessModelConfig = { version: 1, roles: { orchestrator: { model: "claude-opus-4-8" }, worker: {}, validator: {} }, gates: { skipScrutiny: false, skipUserTesting: false, skipDelivery: false } };
+	assert.equal(orchestratorModelNudge({ provider: "anthropic", id: "claude-opus-4-8" }, bareCfg), null, "config sem provider → match por id");
+});
+
+test("orchestratorModelNudge: silencioso sem override configurado ou sem modelo de sessão", () => {
+	const noOverride: HarnessModelConfig = { version: 1, roles: { orchestrator: {}, worker: {}, validator: {} }, gates: { skipScrutiny: false, skipUserTesting: false, skipDelivery: false } };
+	assert.equal(orchestratorModelNudge({ provider: "openai", id: "gpt-5.6-luna" }, noOverride), null);
+	const cfg: HarnessModelConfig = { version: 1, roles: { orchestrator: { model: "anthropic/claude-opus-4-8" }, worker: {}, validator: {} }, gates: { skipScrutiny: false, skipUserTesting: false, skipDelivery: false } };
+	assert.equal(orchestratorModelNudge(undefined, cfg), null);
+	assert.equal(orchestratorModelNudge({}, cfg), null);
+	assert.equal(orchestratorModelNudge({ id: "x" }, undefined), null);
 });

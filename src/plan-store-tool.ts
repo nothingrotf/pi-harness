@@ -51,7 +51,10 @@ export function registerPlanStoreTool(pi: ExtensionAPI): void {
 				}
 				return {
 					content: [{ type: "text", text: `✓ plan.json + status.json written — ${res.plan.tasks.length} tasks, ${res.plan.assertions.length} assertions (coverage OK).` }],
-					details: { tasks: res.plan.tasks.length, assertions: res.plan.assertions.length },
+					// featureId nos details: o extension usa-o pra sincronizar o ponteiro de feature ativa
+					// (.session.json + mode em memória) com a feature recém-convergida — senão o ponteiro
+					// só-comando ficava stale quando o orchestrator converge via tool (não via /harness "...").
+					details: { featureId: plan.featureId, tasks: res.plan.tasks.length, assertions: res.plan.assertions.length },
 				};
 			},
 		}),

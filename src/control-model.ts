@@ -69,10 +69,26 @@ export function deriveRunState(input: {
 	status: PlanStatus | null;
 	handoffs?: PersistedHandoff[];
 	progressRaw?: ProgressRaw[];
+	/** O worker está VIVO? (readControlModel checa o pid do run.lock.) undefined = desconhecido. */
+	workerAlive?: boolean;
 }): RunState {
-	if (input.run) return input.run.status; // feature-run.json (headless) é autoritativo
 	const vals = input.status ? Object.values(input.status.assertions) : [];
-	if (vals.length > 0 && vals.every((v) => v === "passed")) return "completed";
+	const allPassed = vals.length > 0 && vals.every((v) => v === "passed");
+	if (input.run) {
+		// feature-run.json é autoritativo, MAS corrige estados que ficavam PRESOS:
+		//   (1) worker VIVO a correr → "running" (o ship gate/deliver pode ainda estar a decorrer).
+		//   (2) acceptance CUMPRIDA (todas as assertions do contrato passed) e não pausado de propósito
+		//       → "completed". O step de deliver/merge pode ficar 'pending'/'in_progress' (o motor NÃO
+		//       resolve quando o merge é feito POR FORA do merge-gate) — o CONTRATO passado é o sinal de
+		//       "done", não o step. Corrige o "8/8 tudo passed mas preso em Orch. Turn".
+		//   (3) "running" preso sem worker vivo (pid do run.lock morto) → "paused": o "● Running"
+		//       fantasma que sobra após um crash/kill do worker.
+		if (input.run.status === "running" && input.workerAlive === true) return "running";
+		if (allPassed && input.run.status !== "paused") return "completed";
+		if (input.run.status === "running" && input.workerAlive === false) return "paused";
+		return input.run.status;
+	}
+	if (allPassed) return "completed";
 	const handoffs = input.handoffs ?? [];
 	const ev = new Set((input.progressRaw ?? []).map((e) => String(e.event)));
 	const bounced = handoffs.some((h) => h.returnToOrchestrator || h.successState === "failure") || ev.has("task_returned") || ev.has("task_failed") || ev.has("step_returned") || ev.has("step_error");
@@ -505,14 +521,14 @@ export interface WorkerRow {
 /**
  * Modelo+effort EFETIVO por ROLE (task→worker, ship-gate→validator), extraído dos `step_started`
  * gravados pelo runner (source-of-truth do que rodou). Como o config é per-role, todo step do
- * mesmo kind compartilha o modelo — indexamos por kind. Primeiro visto vence (estável no run).
+ * mesmo kind compartilha o modelo — indexamos por kind. ÚLTIMO visto vence: o config per-role
+ * pode mudar no meio do run (ex.: worker sonnet → opus) e o Active Worker deve refletir o atual.
  */
 export function modelByKind(progressRaw: ProgressRaw[]): Map<string, { model?: string; thinking?: string }> {
 	const m = new Map<string, { model?: string; thinking?: string }>();
 	for (const e of progressRaw) {
 		if (str(e.event) !== "step_started") continue;
 		const kind = str(e.kind) || "task";
-		if (m.has(kind)) continue;
 		const model = str(e.model) || undefined;
 		const thinking = str(e.thinking) || undefined;
 		if (model || thinking) m.set(kind, { model, thinking });
@@ -800,6 +816,8 @@ export interface ControlInputs {
 	plan: Plan | null;
 	status: PlanStatus | null;
 	run: FeatureRun | null;
+	/** O worker está VIVO? (pid do run.lock) — corrige o "running" fantasma pós-crash. */
+	workerAlive?: boolean;
 	handoffs: PersistedHandoff[];
 	progressRaw: ProgressRaw[];
 	/** passos de ship gate a contar na barra (2 − skips); default 2. readControlModel lê do config. */
@@ -912,6 +930,34 @@ function configGateSteps(): number {
 	}
 }
 
+/**
+ * O worker do run está VIVO? Só devolve um sinal DEFINITIVO quando há um run.lock com pid: `true`
+ * (pid vivo) ou `false` (pid morto — o "● Running" fantasma pós-crash, ex.: o worker foi morto sem
+ * libertar o lock). `undefined` = sem lock / lock ilegível → sinal incerto, o caller NÃO faz
+ * downgrade (o runner adquire o lock ao iniciar e liberta-o ao sair limpo, então "sem lock" não
+ * prova morte; evita degradar fixtures/estados sem lock).
+ */
+function workerAliveOnDisk(cwd: string, featureId: string): boolean | undefined {
+	let raw: string;
+	try {
+		raw = fs.readFileSync(path.join(cwd, ".harness", "runs", featureId, "run.lock"), "utf8");
+	} catch {
+		return undefined; // sem run.lock → incerto (não prova que morreu)
+	}
+	try {
+		const pid = (JSON.parse(raw) as { pid?: number }).pid;
+		if (typeof pid !== "number") return undefined;
+		try {
+			process.kill(pid, 0);
+			return true;
+		} catch {
+			return false; // pid morto → stale "running"
+		}
+	} catch {
+		return undefined; // lock corrompido → incerto
+	}
+}
+
 export function readControlModel(cwd: string, featureId: string, now?: number): ControlModel | null {
 	const plan = readPlan(cwd, featureId);
 	if (!plan) return null;
@@ -920,6 +966,7 @@ export function readControlModel(cwd: string, featureId: string, now?: number): 
 		plan,
 		status: readStatus(cwd, featureId),
 		run: readFeatureRun(cwd, featureId),
+		workerAlive: workerAliveOnDisk(cwd, featureId),
 		handoffs: readHandoffs(cwd, featureId),
 		progressRaw: readProgressLog(cwd, featureId),
 		gateSteps: configGateSteps(),

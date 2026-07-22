@@ -70,3 +70,43 @@ export function clearMode(cwd: string): void {
 		// já ausente
 	}
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Auto-heal do ponteiro: um run.lock com pid VIVO é a feature que está DE FACTO a correr — fonte
+// de verdade FORTE (> ponteiro só-comando, que congela na 1ª feature num fluxo multi-feature).
+// Puro de IO (lê .harness/runs/<id>/run.lock), `pidAlive` injetável p/ teste.
+
+/** Pid gravado no run.lock de uma feature (null se ausente/ilegível/sem pid). */
+export function readRunLockPid(cwd: string, featureId: string): number | null {
+	try {
+		const lock = JSON.parse(fs.readFileSync(path.join(cwd, ".harness", "runs", featureId, "run.lock"), "utf8")) as { pid?: number };
+		return typeof lock.pid === "number" ? lock.pid : null;
+	} catch {
+		return null;
+	}
+}
+
+function defaultPidAlive(pid: number): boolean {
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * A feature que está DE FACTO a correr entre `featureIds`: o primeiro run.lock com pid VIVO,
+ * preferindo `prefer` quando ele próprio está vivo (não troca à toa quando o ponteiro já bate).
+ * null quando nenhum lock vivo — o caller mantém então o ponteiro persistido.
+ */
+export function liveLockedFeature(cwd: string, featureIds: string[], opts: { prefer?: string; pidAlive?: (pid: number) => boolean } = {}): string | null {
+	const alive = opts.pidAlive ?? defaultPidAlive;
+	const live = featureIds.filter((id) => {
+		const pid = readRunLockPid(cwd, id);
+		return pid !== null && alive(pid);
+	});
+	if (live.length === 0) return null;
+	if (opts.prefer && live.includes(opts.prefer)) return opts.prefer;
+	return live[0];
+}

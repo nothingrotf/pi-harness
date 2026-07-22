@@ -64,7 +64,7 @@ import { type Paint, deliveryPanelLines } from "./delivery.ts";
 
 /** O caller (extensão) lida com `models` (reabre depois do config) e `resume` (dispara o runner
  * via orchestrator — os 3 modos do start_mission_run: continue · restart · sessão específica). */
-export type ControlResult = { kind: "models" } | { kind: "close" } | { kind: "resume"; restartFeature?: boolean; resumeWorkerSessionId?: string };
+export type ControlResult = { kind: "models" } | { kind: "close" } | { kind: "switch" } | { kind: "resume"; restartFeature?: boolean; resumeWorkerSessionId?: string };
 
 const TAB_VIEWS: ControlView[] = ["main", "tasks", "workers", "coverage", "delivery"];
 
@@ -640,7 +640,8 @@ export function showFeatureControl(ctx: ExtensionContext, featureId: string, opt
 									steerMode = true;
 									steerBuffer = "";
 								} else notice = "no live worker to steer";
-							} else return;
+							} else if (matchesKey(data, "b")) return finish({ kind: "switch" });
+							else return;
 							return tui.requestRender();
 						}
 						if (view === "delivery") {

@@ -164,15 +164,15 @@ test("buildWorkerRows: #n por ordem de início + duração (start=task_started �
 	assert.equal(byTask.T2.durationMs, 6 * 60_000, "T2: 00:06→00:12 = 6min");
 });
 
-test("modelByKind: extrai model+thinking por kind do step_started (per-role, primeiro vence)", () => {
+test("modelByKind: extrai model+thinking por kind do step_started (per-role, último vence)", () => {
 	const m = modelByKind([
 		{ event: "run_started" },
 		{ event: "step_started", id: "implement", kind: "task", model: "anthropic/claude-opus-4", thinking: "xhigh" },
-		{ event: "step_started", id: "implement", kind: "task", model: "anthropic/claude-sonnet-4" }, // 2º ignorado
+		{ event: "step_started", id: "FIX1", kind: "task", model: "anthropic/claude-sonnet-4" }, // config mudou mid-run → vence
 		{ event: "step_started", id: "harness-code-review", kind: "ship-gate", model: "anthropic/claude-haiku-4" },
 		{ event: "step_started", id: "x", kind: "task" }, // sem model → não sobrescreve
 	]);
-	assert.deepEqual(m.get("task"), { model: "anthropic/claude-opus-4", thinking: "xhigh" });
+	assert.deepEqual(m.get("task"), { model: "anthropic/claude-sonnet-4", thinking: undefined });
 	assert.deepEqual(m.get("ship-gate"), { model: "anthropic/claude-haiku-4", thinking: undefined });
 });
 
@@ -260,6 +260,28 @@ test("deriveRunState: caminho NATIVO (sem feature-run.json) deriva dos sinais em
 	assert.equal(deriveRunState({ run: null, status: passed, handoffs: [ok] }), "completed");
 	// feature-run.json (headless) é autoritativo, ignora os outros sinais
 	assert.equal(deriveRunState({ run: run([], { status: "paused" }), status: passed }), "paused");
+});
+
+test("deriveRunState: feature-run.json — 'done' = todas as assertions passed (não o step de deliver) + 'running' fantasma", () => {
+	const passed: PlanStatus = { featureId: "feat-x", assertions: { A1: "passed", A2: "passed" } };
+	const partial: PlanStatus = { featureId: "feat-x", assertions: { A1: "passed", A2: "pending" } };
+	const step = (id: string, status: FeatureRun["steps"][number]["status"]): FeatureRun["steps"][number] => ({ id, kind: "task", skillName: "w", status, attempts: 1, workerSessionIds: [] });
+
+	// Merge feito POR FORA → o step de deliver fica preso ('pending'), mas TODAS as assertions
+	// passaram: o contrato é o sinal de done → completed (não fica preso em orchestrator_turn).
+	const deliverStuck = run([step("implement", "completed"), step("ship-gate-deliver", "pending")], { status: "orchestrator_turn" });
+	assert.equal(deriveRunState({ run: deliverStuck, status: passed }), "completed");
+	// sem TODAS passed, orchestrator_turn continua orchestrator_turn (respeita o status gravado).
+	assert.equal(deriveRunState({ run: deliverStuck, status: partial }), "orchestrator_turn");
+	// pausado de propósito + tudo passed → continua paused (não vira completed à força).
+	assert.equal(deriveRunState({ run: run([], { status: "paused" }), status: passed }), "paused");
+
+	// status "running" mas worker MORTO (workerAlive:false) → paused (não o '● Running' fantasma);
+	// vivo → running; incerto (sem lock → undefined) → não faz downgrade.
+	const stale = run([step("implement", "in_progress")], { status: "running" });
+	assert.equal(deriveRunState({ run: stale, status: partial, workerAlive: false }), "paused");
+	assert.equal(deriveRunState({ run: stale, status: partial, workerAlive: true }), "running");
+	assert.equal(deriveRunState({ run: stale, status: partial }), "running");
 });
 
 test("buildControlModel: plan stored mas run não começou → state ready (não unknown)", () => {

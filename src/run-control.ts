@@ -13,6 +13,7 @@
 import type { FeatureRun, PlanTaskRef } from "./feature-runner.ts";
 import { insertFixTask } from "./feature-runner.ts";
 import { dismissalRef, type PersistedHandoff } from "./handoff.ts";
+import { type SessionUsage, usageReportLines } from "./usage.ts";
 
 export interface ResumeModeOpts {
 	/** requeue: re-roda o step in_progress do zero com um worker novo (droid: restartFeature). */
@@ -77,7 +78,7 @@ const STEP_ICON: Record<string, string> = { completed: "✓", in_progress: "●"
  * Report do run pro orchestrator (o retorno do tool): status + steps + handoffs relevantes +
  * a próxima ação recomendada por status. `handoffs` = o handoff mais recente por step (quando há).
  */
-export function buildRunReport(run: FeatureRun, handoffs: Map<string, PersistedHandoff>, extra: { note?: string; insertedFixTasks?: string[]; dismissed?: ReadonlySet<string> } = {}): string {
+export function buildRunReport(run: FeatureRun, handoffs: Map<string, PersistedHandoff>, extra: { note?: string; insertedFixTasks?: string[]; dismissed?: ReadonlySet<string>; usage?: import("./usage.ts").FeatureUsage; leadUsage?: SessionUsage | null } = {}): string {
 	const dismissed = extra.dismissed ?? new Set<string>();
 	const lines: string[] = [];
 	lines.push(`Feature run "${run.featureId}": status=${run.status}${run.pauseReason ? ` (${run.pauseReason})` : ""}`);
@@ -110,6 +111,11 @@ export function buildRunReport(run: FeatureRun, handoffs: Map<string, PersistedH
 			}
 			if (dismissedHere > 0) lines.push(`    (${dismissedHere} issue(s) previously dismissed — hidden)`);
 		}
+	}
+	// Usage/custo post-hoc (src/usage.ts): líder vivo (cumulativo) + sessões dos children.
+	if (extra.usage) {
+		const usageLines = usageReportLines(extra.usage, extra.leadUsage);
+		if (usageLines.length > 0) lines.push("", ...usageLines);
 	}
 	lines.push("", nextActionFor(run));
 	return lines.join("\n");

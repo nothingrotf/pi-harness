@@ -31,15 +31,16 @@ test("controlMidPos: ~50%, clampado pra caber as duas colunas", () => {
 	assert.ok(controlMidPos(200) <= 200 - 18);
 });
 
-test("footerItems(main): F/W/C/D/O/Models/Tab/Alt+T, formato KEY LABEL", () => {
+test("footerItems(main): F/W/C/D/O/B/Models/Tab/Alt+T, formato KEY LABEL", () => {
 	const f = footerItems("main");
 	assert.deepEqual(
 		f.map((i) => i.key),
-		["F", "W", "C", "D", "O", "M", "Tab", "Alt+T"],
+		["F", "W", "C", "D", "O", "B", "M", "Tab", "Alt+T"],
 	);
 	assert.equal(f[0].label, "Tasks");
 	assert.equal(f.find((i) => i.key === "D")?.label, "Delivery");
 	assert.equal(f.find((i) => i.key === "O")?.label, "Run Dir", "O = abrir o dir do run (o Mission Dir do Droid)");
+	assert.equal(f.find((i) => i.key === "B")?.label, "Runs", "B = abrir o picker de runs (trocar de feature)");
 	assert.equal(f.at(-1)?.label, "Close");
 });
 

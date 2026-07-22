@@ -6,7 +6,7 @@
  * `pi --mode rpc` (rpc-worker.ts, o caminho ÚNICO de implementação: run_feature no TUI e o
  * runner headless) e orchestrator (converge headless via `pi --print`). Cada role pode fixar um
  * `model` ("provider/id") e um `thinking`/effort; `undefined` = HERDA o modelo do parent/sessão.
- * Ambos os spawns aceitam `--model` e `--thinking` (off|minimal|low|medium|high|xhigh).
+ * Ambos os spawns aceitam `--model` e `--thinking` (off|minimal|low|medium|high|xhigh|max).
  *
  * NÃO governa o orchestrator VIVO em sessão (o chat usa o modelo da sessão Pi) nem os subagents
  * de ANÁLISE in-session (@tintinweb/pi-subagents). Escopo: os spawns que o harness controla —
@@ -25,7 +25,7 @@ export const HARNESS_ROLES = ["orchestrator", "worker", "validator"] as const;
 export type HarnessRole = (typeof HARNESS_ROLES)[number];
 
 /** Níveis aceitos pelo `--thinking` do `pi --print` (inclui "off"). */
-export const EFFORTS = ["off", "minimal", "low", "medium", "high", "xhigh"] as const;
+export const EFFORTS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 export type Effort = (typeof EFFORTS)[number];
 
 export const MODEL_CONFIG_VERSION = 1 as const;
@@ -145,7 +145,7 @@ export function saveModelConfig(cfg: HarnessModelConfig, opts: PathOpts = {}): v
 export interface PiSettingsView {
 	defaultModel?: string; // id (ex.: "claude-opus-4-8")
 	defaultProvider?: string; // ex.: "anthropic"
-	defaultThinkingLevel?: string; // off|minimal|…|xhigh
+	defaultThinkingLevel?: string; // off|minimal|…|xhigh|max
 	enabledModels?: string[]; // ["provider/id", …]
 }
 
@@ -203,10 +203,26 @@ export function resolveChoice(cfg: HarnessModelConfig | undefined, role: Harness
 	return { model: c.model ?? fallbackModel, thinking: c.thinking };
 }
 
+/**
+ * Nudge do orchestrator VIVO (docs/06 §2 confound #1): o role `orchestrator` do config só
+ * governa o converge HEADLESS — no TUI, quem orquestra é a SESSÃO DO CHAT, com o modelo dela.
+ * Se o usuário configurou um modelo de orchestrator e a sessão usa outro, o trabalho de maior
+ * julgamento (contrato, gray-areas, análise de handoffs) roda no modelo errado — silenciosamente.
+ * Devolve a mensagem de aviso, ou null quando: sem override configurado, sessão desconhecida,
+ * ou já coincidem (compara "provider/id" e aceita match por id puro).
+ */
+export function orchestratorModelNudge(session: { provider?: string; id?: string } | undefined, cfg: HarnessModelConfig | undefined): string | null {
+	const configured = cfg?.roles?.orchestrator?.model;
+	if (!configured || !session?.id) return null;
+	const sessionRef = session.provider ? `${session.provider}/${session.id}` : session.id;
+	if (configured === sessionRef || configured === session.id || configured.endsWith(`/${session.id}`)) return null;
+	return `pi-harness: orchestrator model is configured as "${configured}" but this chat session (the LIVE orchestrator) runs "${sessionRef}" — the role config only governs headless converge. Switch the session model (/model) if you want "${configured}" doing the judgment work.`;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Display amigável (model + effort combinados): "Claude Opus 4.8 (XHigh)".
 
-export const EFFORT_LABELS: Record<Effort, string> = { off: "Off", minimal: "Minimal", low: "Low", medium: "Medium", high: "High", xhigh: "XHigh" };
+export const EFFORT_LABELS: Record<Effort, string> = { off: "Off", minimal: "Minimal", low: "Low", medium: "Medium", high: "High", xhigh: "XHigh", max: "Max" };
 
 /** Rótulo do effort (capitalizado); `undefined` → "inherit". */
 export function effortLabel(e?: Effort): string {

@@ -32,8 +32,10 @@ Your bootstrap message contains the **full ordered task list** for this feature 
 - `expectedBehavior` — what success looks like
 - `fulfills` — contract assertion IDs (if present)
 
-**Each task's `fulfills` lists contract assertions that must be true after that task.** Read them
-in `contract.md` before starting — together they define "done" for the feature. Before finishing,
+**Each task's `fulfills` lists contract assertions that must be true after that task.** The spec
+`next_task` hands you already includes each assertion's full text (`contractAssertions`) — treat
+those as binding constraints for the task (they define "done"); `contract.md` remains the canonical
+source if you need surrounding context. Before finishing,
 ensure every assertion across all your tasks would pass; if one can't be fulfilled in scope, flag
 it in your handoff (don't silently drop it).
 
@@ -113,7 +115,8 @@ The harness hands you tasks **one at a time** and records progress **by machine*
 list, the `next_task` tool is the source of truth. Loop until it says you're done:
 
 1. **Pull the next task:** call `next_task({ featureId })`. It returns the task spec (id, skillName,
-   description, preconditions, expectedBehavior, fulfills) and records it as started. When it reports
+   description, preconditions, expectedBehavior, fulfills + the resolved `contractAssertions` text)
+   and records it as started. When it reports
    **all tasks are done**, stop the loop and go to Phase 3 (one `EndFeatureRun`).
 2. **Invoke the task's `skillName` skill** and follow its Work Procedure. **If the skill doesn't
    exist**, do not proceed — EndFeatureRun with `returnToOrchestrator: true` explaining which skill

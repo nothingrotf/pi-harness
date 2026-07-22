@@ -7,6 +7,7 @@
 import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { readCommitGateConfig, runCommitGate } from "./commit-gate.ts";
+import { buildTaskSpec, readContractAssertions } from "./contract.ts";
 import { appendProgress } from "./handoff.ts";
 import { readFeatureRun, readPlan } from "./plan.ts";
 import { batchUniverse, clearNextTaskState, completedTaskIds, gitHead, gitIsAncestor, planNextTask, readNextTaskState, readProgressEvents, writeNextTaskState } from "./next-task.ts";
@@ -30,6 +31,9 @@ export function registerNextTaskTool(pi: ExtensionAPI): void {
 				// Escopa o universo à fatia do batch em execução (doc 05 §5.1): o step in_progress do
 				// feature-run.json carrega as tasks DESTE batch. Fallback (K=1/sem run) = plano inteiro.
 				const { taskIds, batchId } = batchUniverse(readFeatureRun(ctx.cwd, featureId), plan.tasks.map((t) => t.id));
+				// Brief autocontido (contract OQ1): resolve fulfills → texto das assertions no spec.
+				// Contract é FROZEN — leitura por chamada é barata e sempre consistente.
+				const contractAssertions = readContractAssertions(ctx.cwd, featureId);
 				const completed = completedTaskIds(readProgressEvents(ctx.cwd, featureId));
 				const state = readNextTaskState(ctx.cwd, featureId);
 				const head = gitHead(ctx.cwd);
@@ -47,7 +51,7 @@ export function registerNextTaskTool(pi: ExtensionAPI): void {
 							// NÃO completa nem avança; estado intocado (activeTaskId/head originais) — o fix
 							// exige um commit NOVO, que a checagem de ancestralidade aceita naturalmente.
 							const active = plan.tasks.find((t) => t.id === d.completePrev);
-							const spec = active ? JSON.stringify({ id: active.id, description: active.description, skillName: active.skillName, fulfills: active.fulfills ?? [], preconditions: active.preconditions ?? [], expectedBehavior: active.expectedBehavior ?? [] }, null, 2) : "";
+							const spec = active ? JSON.stringify(buildTaskSpec(active, contractAssertions), null, 2) : "";
 							const why = g.timedOut ? `timed out after ${gate.timeoutSec}s` : "failed";
 							const text = [
 								`✗ Your commit for ${d.completePrev} landed, but the commit gate ${why}: \`${gate.command}\`. The tree must be GREEN at every task boundary — the harness will NOT advance you on a red tree.`,
@@ -72,7 +76,7 @@ export function registerNextTaskTool(pi: ExtensionAPI): void {
 
 				const task = plan.tasks.find((t) => t.id === d.taskId);
 				if (!task) return { content: [{ type: "text", text: `Task ${d.taskId} not found in plan.` }], details: { error: "no_task" } };
-				const spec = { id: task.id, description: task.description, skillName: task.skillName, fulfills: task.fulfills ?? [], preconditions: task.preconditions ?? [], expectedBehavior: task.expectedBehavior ?? [] };
+				const spec = buildTaskSpec(task, contractAssertions);
 				const specJson = JSON.stringify(spec, null, 2);
 
 				if (d.action === "resend") {

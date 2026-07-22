@@ -50,6 +50,13 @@ export function showRunsPicker(ctx: ExtensionContext, runs: RunSummary[], opts: 
 			if (keep) {
 				const idx = items.findIndex((i) => i.value === keep);
 				if (idx >= 0) list.setSelectedIndex(idx);
+			} else {
+				// Pré-seleção segura: o run atual (●) se marcado, senão o PRIMEIRO run (mais recente) —
+				// NUNCA a linha "+ New feature" (um Enter distraído não pode disparar uma convergência nova).
+				const curIdx = items.findIndex((i) => i.value !== NEW && byId(i.value)?.current);
+				const firstRun = items.findIndex((i) => i.value !== NEW);
+				const idx = curIdx >= 0 ? curIdx : firstRun;
+				if (idx > 0) list.setSelectedIndex(idx);
 			}
 			list.onSelect = (it) => {
 				if (it.value === NEW) return done({ kind: "new" });

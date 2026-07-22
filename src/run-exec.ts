@@ -16,6 +16,7 @@ import { completionGate, ensureAssertions, loadOrBuildFeatureRun, readPlan, writ
 import { applyResumeMode, buildRunReport, insertFixTasks, type ResumeModeOpts } from "./run-control.ts";
 import { clearWorkerClient, registerRun, registerWorkerClient, unregisterRun } from "./run-registry.ts";
 import { makeRpcSpawn } from "./rpc-worker.ts";
+import { featureUsageFromRun, sessionUsageFromFile } from "./usage.ts";
 
 const HEARTBEAT_MS = 180000; // doc 07: FTi
 
@@ -24,6 +25,9 @@ export interface ExecuteRunOpts extends ResumeModeOpts {
 	fixTasks?: { id: string; skillName: string; description?: string; fulfills?: string[]; preconditions?: string[]; expectedBehavior?: string[] }[];
 	/** modelo do parent (fallback dos roles) — opcional. */
 	model?: string;
+	/** session file do orchestrator VIVO (ctx.sessionManager.getSessionFile()) — inclui o custo
+	 * cumulativo do líder no run report (docs/06 §2 confound #1). Opcional (headless não tem). */
+	orchestratorSessionFile?: string;
 }
 
 export type ExecuteRunResult = { ok: true; run: FeatureRun; report: string } | { ok: false; error: "already_running" | "no_plan" | "no_run"; message: string };
@@ -84,7 +88,7 @@ export async function executeFeatureRun(cwd: string, featureId: string, opts: Ex
 			const h = latestHandoff(cwd, featureId, s.id);
 			if (h) handoffs.set(s.id, h);
 		}
-		return { ok: true, run: final, report: buildRunReport(final, handoffs, { note: mode.note, insertedFixTasks: inserted, dismissed: dismissedRefs(cwd, featureId) }) };
+		return { ok: true, run: final, report: buildRunReport(final, handoffs, { note: mode.note, insertedFixTasks: inserted, dismissed: dismissedRefs(cwd, featureId), usage: featureUsageFromRun(cwd, final), leadUsage: sessionUsageFromFile(opts.orchestratorSessionFile) }) };
 	} finally {
 		unregisterRun(featureId, cwd);
 		clearWorkerClient(featureId);

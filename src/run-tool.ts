@@ -19,6 +19,7 @@
  */
 import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { saveMode } from "./mode-store.ts";
 import { executeFeatureRun } from "./run-exec.ts";
 
 const FixTask = Type.Object({
@@ -52,7 +53,19 @@ export function registerRunFeatureTool(pi: ExtensionAPI): void {
 					resumeWorkerSessionId?: string;
 					fixTasks?: { id: string; skillName: string; description?: string; fulfills?: string[]; preconditions?: string[]; expectedBehavior?: string[] }[];
 				};
-				const res = await executeFeatureRun(ctx.cwd, featureId, { restartFeature, resumeWorkerSessionId, fixTasks });
+				// Sincroniza o ponteiro de feature ativa (.session.json) com a feature que ESTÁ a correr:
+				// sem isto, num fluxo multi-feature o ponteiro só-comando congelava na 1ª feature — o cockpit
+				// (Alt+T) e o resume pós-/reload abriam a feature errada. Best-effort (saveMode nunca lança).
+				saveMode(ctx.cwd, { active: true, featureId, phase: "run" });
+				// leadUsage: o session file DESTA sessão (o orchestrator vivo) entra no report (docs/06 §2).
+				const orchestratorSessionFile = (() => {
+					try {
+						return ctx.sessionManager?.getSessionFile?.();
+					} catch {
+						return undefined;
+					}
+				})();
+				const res = await executeFeatureRun(ctx.cwd, featureId, { restartFeature, resumeWorkerSessionId, fixTasks, orchestratorSessionFile });
 				if (!res.ok) return { content: [{ type: "text", text: res.message }], details: { error: res.error } };
 				return { content: [{ type: "text", text: res.report }], details: { status: res.run.status, pauseReason: res.run.pauseReason } };
 			},

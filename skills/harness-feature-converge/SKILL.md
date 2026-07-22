@@ -219,7 +219,7 @@ Tasks execute in array order — the topmost pending runs next. Each task:
 | `description` | what to build (clear, specific) |
 | `skillName` | which **profile** worker skill handles it (must exist in `.harness/profile/skills/`) |
 | `preconditions` | what must be true before starting |
-| `expectedBehavior` | what success looks like |
+| `expectedBehavior` | what success looks like — **inline hard constraints here** (see below) |
 | `fulfills` | contract assertion IDs this task COMPLETES |
 | `cohesion` | *(optional)* batching cohesion tag — see below |
 | `batchBreakBefore` | *(optional)* force a batch seam before this task — see below |
@@ -227,6 +227,15 @@ Tasks execute in array order — the topmost pending runs next. Each task:
 
 (Tasks carry no `status` field — assertion status lives per-ID in `status.json`, written by
 `store_plan`; do not add a task-level `status`.)
+
+**Hard constraints travel IN the task, not by reference.** The harness automatically resolves each
+task's `fulfills` to the full assertion text and injects it into the spec `next_task` hands the
+worker — so behavior captured in the contract arrives verbatim. But hard NON-functional constraints
+that the assertions don't spell out (complexity bounds like "O(1) in pointer length: NO full token
+scan", size/latency limits, security invariants, "never call X from Y") MUST be written into that
+task's `expectedBehavior` explicitly. A constraint the worker has to go hunting for is a constraint
+that gets forgotten mid-implementation; a constraint in the brief survives. Never rely on the
+worker re-deriving a constraint from `feature.md` prose.
 
 **Batching (doc 05) — you do NOT group tasks into batches; the runner does, by CONTEXT BUDGET.**
 A large feature is split into task-budgeted batches (~7 tasks), one fresh worker session per batch
@@ -237,7 +246,10 @@ A large feature is split into task-budgeted batches (~7 tasks), one fresh worker
   non-empty tag (e.g. `"auth-core"`, `"migration-seq"`); the batcher never splits a same-tag run.
   Use sparingly — only for genuine in-head coupling, not for logical grouping. A single cohesion
   cluster that alone exceeds ~1.5× the budget (~10+ tasks) is a decomposition smell — split it into
-  real sub-tasks instead.
+  real sub-tasks instead. **Serial-debugging/diagnosis chains are the mandatory case**: when
+  consecutive tasks form one root-cause hunt (reproduce → isolate → fix → regression-test), the
+  accumulated context IS the work — always give the chain a shared `cohesion` tag so a budget cut
+  never severs it into separate sessions.
 - **`batchBreakBefore: true`** — force a seam before a task at a hard dependency/domain frontier
   (rare). A change in `skillName` (worker type) is already treated as a preferred seam automatically;
   you don't mark those.
