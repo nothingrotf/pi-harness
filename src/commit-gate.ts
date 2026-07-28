@@ -18,6 +18,7 @@
 import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import { deliveryConfigPath } from "./branch.ts";
+import { detectZeroTests, isTestCommand } from "./gate-output.ts";
 
 export interface CommitGateConfig {
 	/** liga/desliga sem apagar a config (default true quando `command` existe). */
@@ -65,6 +66,8 @@ export interface CommitGateResult {
 	/** tail combinado de stdout+stderr (pro worker ver O QUE quebrou sem re-rodar). */
 	output: string;
 	timedOut: boolean;
+	/** exit 0 mas NENHUM teste coletado — gate quebrado, tratado como vermelho (ver gate-output.ts). */
+	zeroTests?: boolean;
 }
 
 /** Roda o gate (bash -c, com timeout). Nunca lança — falha de exec = gate vermelho com a razão. */
@@ -77,6 +80,19 @@ export function runCommitGate(cwd: string, cfg: CommitGateConfig): CommitGateRes
 			timeout: cfg.timeoutSec * 1000,
 			maxBuffer: 16 * 1024 * 1024,
 		});
+		// Exit 0 não basta: um comando de teste que coletou zero specs também sai 0. Verde vazio é
+		// pior que vermelho — aprova código que nenhum teste tocou.
+		if (isTestCommand(cfg.command)) {
+			const z = detectZeroTests(out);
+			if (z.zero) {
+				return {
+					ok: false,
+					zeroTests: true,
+					timedOut: false,
+					output: tail(`${out}\n\n[harness] The gate command exited 0 but collected ZERO tests ("${z.evidence}"). That is a BROKEN gate command, not a passing suite — fix the command in .harness/profile/services.yaml (a misplaced flag or filter is the usual cause), then re-run.`),
+				};
+			}
+		}
 		return { ok: true, output: tail(out), timedOut: false };
 	} catch (e) {
 		const err = e as { stdout?: string; stderr?: string; signal?: string; killed?: boolean; message?: string };

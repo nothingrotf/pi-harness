@@ -19,13 +19,42 @@ axis reviewers over the whole diff. Keep it that way.
 - **repo root** (cwd): implementation code
 
 ## 0) Programmatic gate (deterministic, once — not LLM)
-Run the programmatic validators from `.harness/profile/services.yaml` over the integrated result:
-`commands.test`, `commands.typecheck`, `commands.lint`. **Do NOT pipe through `| tail`/`| head`**
-(masks exit codes). Each task already ran these at handoff; this single integrated run catches
-**cross-task breakage** (task A green + task B green, A+B red). Attempt only trivial fixes
-(auto-fix lint, obvious type/snapshot). If still failing → `EndFeatureRun` `successState:
-"failure"` + `returnToOrchestrator: true` with the failing commands in `verification.commandsRun`
-and the issue in `discoveredIssues`. **Do not launch the review axes on a red gate.**
+
+**0.a Preflight — never run the gate into a broken environment.** A red gate aborts this whole step
+before the axes launch, so a red caused by a missing service costs the entire review. Before running
+anything:
+- Read the run's `ports_preflight` event (`progress_log.jsonl`, written at run start) — it lists
+  every port `services.yaml` declares, whether something is listening, and the owning process.
+- For each service the gate needs: not listening → **start it** per `services.yaml` and wait for its
+  `healthcheck`. Listening but owned by a **foreign** process (another project's container — compare
+  against the service's `notes`/`healthcheck` container name) → that is a **blocking environment
+  issue, not a red gate**: `EndFeatureRun` `successState: "failure"`, `returnToOrchestrator: true`,
+  naming the port, the expected owner and the actual owner in `discoveredIssues`. Never report it as
+  a code failure — in real runs a foreign MinIO on :9000 answered HTTP 403 instead of refusing the
+  connection, and the suite failure named no port at all.
+- Record what you started in `verification.commandsRun` so the qa-validator knows the state.
+
+**0.b Run the gate.** Run the programmatic validators from `.harness/profile/services.yaml` over the
+integrated result: `commands.test`, `commands.typecheck`, `commands.lint`. **Do NOT pipe through
+`| tail`/`| head`** (masks exit codes). Each task already ran these at handoff; this single
+integrated run catches **cross-task breakage** (task A green + task B green, A+B red).
+
+**0.c Green is not enough — confirm the suite actually RAN.** Read the test output and find the
+collected/passed count. A runner that collected **zero** tests exits 0 and is indistinguishable from
+a clean pass: `No test files found`, `Test Files no tests`, `collected 0 items`, `Tests: 0`. That is
+a **broken gate command**, and it happened six times across the real runs — `bunx vp test --project
+X run` puts `run` after `--project`, which vp reads as a name filter, collects nothing and reports
+green. Treat zero collection exactly like a red gate, and say so: the fix is `services.yaml`, not
+the code. Also treat a **suspiciously small** count (orders of magnitude below the repo's usual)
+as a broken selection worth one sentence of verification.
+
+**0.d Suppressed failures.** A failure matching `dismissed.json` or `harness.md` §"Known
+Pre-Existing Issues" goes in `suppressed` (§0.5) and does NOT make the gate red.
+
+Attempt only trivial fixes (auto-fix lint, obvious type/snapshot). If still failing →
+`EndFeatureRun` `successState: "failure"` + `returnToOrchestrator: true` with the failing commands
+in `verification.commandsRun` and the issue in `discoveredIssues`. **Do not launch the review axes
+on a red gate.**
 
 ## 0.5) Prior-run check (re-run scoping — do NOT re-review the whole diff every round)
 Read `.harness/runs/<feature-id>/validation/harness-code-review/synthesis.json` if it exists (a

@@ -71,6 +71,13 @@ conflicts; note off-limits ports/dirs.
 - `commands`: `install`, `build`, `test`, `typecheck`, `lint` — the exact, **verified** commands (Phase 7 proves them).
 - `services`: each with `start`, `stop`, `healthcheck`, `port`, `depends_on`.
 - **If a service uses a port, hardcode that port in `start`/`stop`/`healthcheck` AND in `port`.**
+  The `port:` field is machine-read: the harness logs a `ports_preflight` event at every run start
+  naming who holds each declared port, which is how a foreign container squatting your port becomes
+  visible in minute one instead of as an inscrutable red gate hours later. A service without `port:`
+  is invisible to that check. One port per service, never shared between two entries.
+- **Prefer ports unlikely to collide.** Other projects live on this machine and the collisions were
+  real (`:9000` MinIO, `:5434`/`:6380` postgres/redis). If a default port is already contended,
+  remap this repo's service and say so in `notes`.
 - **Resource-aware test command:** check machine resources, then set parallelism (e.g. `max(1, floor(cpus/2))` conservative, `cpus-1` capable).
 
 `.harness/profile/init.sh` = idempotent env setup run at the start of **every** worker
@@ -162,6 +169,15 @@ available headroom**, capped at **5** — with explicit per-surface reasoning (h
 validator instance costs vs machine headroom). Record it in `library/user-testing.md`
 `## Validation Concurrency`. **Do not trust a `services.yaml` command until it has actually
 run green here.**
+
+**Every test command must PROVE it collects tests — green is not proof.** Run each `test*` command
+and read the collected/passed count out of the output. A command that collects **zero** tests exits
+0 and is indistinguishable from a clean pass, so it silently turns the whole ship gate into a
+rubber stamp. This is not hypothetical: `bunx vp test --project X run` shipped in a real
+`services.yaml` — vp parses the trailing `run` as a name filter, collects nothing, exits 0 — and
+six gates approved code no test had touched. Record the observed count as a comment next to each
+command (`# 318 tests`) so drift is visible on the next refresh, and re-verify on every refresh.
+Same rule for per-project commands: each one must select a non-empty, DIFFERENT set.
 
 ## Phase 8 — library/
 

@@ -410,6 +410,22 @@ export default function registerHarnessExtension(pi: ExtensionAPI): void {
 		} catch (e) {
 			ctx.ui.notify(`pi-harness: branch step skipped (${(e as Error).message}).`, "warning");
 		}
+		// Preflight de portas: registra QUEM ocupa cada porta declarada ANTES de qualquer gate rodar.
+		// Sem isto uma porta tomada por outro projeto vira um vermelho enigmático horas depois
+		// (ver preflight.ts). Só observa — nunca inicia/para nada. Nunca-fatal.
+		try {
+			const { duplicatePorts, preflightPorts, preflightSummary } = await import("../preflight.ts");
+			const statuses = preflightPorts(ctx.cwd);
+			if (statuses.length > 0) {
+				const dupes = duplicatePorts(statuses);
+				appendProgress(ctx.cwd, featureId, "ports_preflight", { ports: statuses, ...(dupes.length ? { duplicates: dupes } : {}) });
+				const summary = preflightSummary(statuses);
+				if (dupes.length) ctx.ui.notify(`pi-harness: services.yaml declares port ${dupes.join(", ")} for more than one service — fix the manifest.`, "warning");
+				else if (summary) ctx.ui.notify(`pi-harness: ${summary}`);
+			}
+		} catch {
+			// non-fatal
+		}
 		// Marca o início do run no disco (deriveRunState → "running" a partir do disco).
 		appendProgress(ctx.cwd, featureId, "run_started", {});
 		// Nudge (docs/06 §2): o orchestrator VIVO é esta sessão — avisa se o modelo dela diverge do role.
@@ -693,6 +709,14 @@ export default function registerHarnessExtension(pi: ExtensionAPI): void {
 						const { ensureFeatureBranch } = await import("../branch-ops.ts");
 						const br = ensureFeatureBranch(ctx.cwd, fid);
 						appendProgress(ctx.cwd, fid, "branch_ready", { branch: br.branch, action: br.kind, reason: br.reason });
+					} catch {
+						// non-fatal
+					}
+					try {
+						const { duplicatePorts, preflightPorts } = await import("../preflight.ts");
+						const statuses = preflightPorts(ctx.cwd);
+						const dupes = duplicatePorts(statuses);
+						if (statuses.length > 0) appendProgress(ctx.cwd, fid, "ports_preflight", { ports: statuses, ...(dupes.length ? { duplicates: dupes } : {}) });
 					} catch {
 						// non-fatal
 					}

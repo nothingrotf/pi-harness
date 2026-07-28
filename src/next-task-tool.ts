@@ -46,13 +46,15 @@ export function registerNextTaskTool(pi: ExtensionAPI): void {
 					const gate = readCommitGateConfig(ctx.cwd);
 					if (gate) {
 						const g = runCommitGate(ctx.cwd, gate);
-						appendProgress(ctx.cwd, featureId, g.ok ? "commit_gate_passed" : "commit_gate_failed", { taskId: d.completePrev, command: gate.command, ...(g.timedOut ? { timedOut: true } : {}) });
+						appendProgress(ctx.cwd, featureId, g.ok ? "commit_gate_passed" : "commit_gate_failed", { taskId: d.completePrev, command: gate.command, ...(g.timedOut ? { timedOut: true } : {}), ...(g.zeroTests ? { zeroTests: true } : {}) });
+						// Verde vazio é falha de MANIFESTO, não de código — evento próprio pro cockpit.
+						if (g.zeroTests) appendProgress(ctx.cwd, featureId, "commit_gate_zero_tests", { taskId: d.completePrev, command: gate.command });
 						if (!g.ok) {
 							// NÃO completa nem avança; estado intocado (activeTaskId/head originais) — o fix
 							// exige um commit NOVO, que a checagem de ancestralidade aceita naturalmente.
 							const active = plan.tasks.find((t) => t.id === d.completePrev);
 							const spec = active ? JSON.stringify(buildTaskSpec(active, contractAssertions), null, 2) : "";
-							const why = g.timedOut ? `timed out after ${gate.timeoutSec}s` : "failed";
+							const why = g.timedOut ? `timed out after ${gate.timeoutSec}s` : g.zeroTests ? "exited 0 but collected ZERO tests" : "failed";
 							const text = [
 								`✗ Your commit for ${d.completePrev} landed, but the commit gate ${why}: \`${gate.command}\`. The tree must be GREEN at every task boundary — the harness will NOT advance you on a red tree.`,
 								`Fix the failure and add a FRESH commit ([${d.completePrev}] fix: <summary>), then call next_task again.`,

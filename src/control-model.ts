@@ -681,6 +681,20 @@ export function progressSegments(e: ProgressRaw): ProgressSegment[] {
 			return e.message ? [SEG("run started", "muted"), SEG(`: ${str(e.message)}`, "dim")] : [SEG("run started", "muted")];
 		case "branch_ready":
 			return e.branch ? [SEG("branch ready", "muted"), SEG(`: ${str(e.branch)}`, "accent")] : [SEG("branch ready", "muted")];
+		case "ports_preflight": {
+			const ports = Array.isArray(e.ports) ? (e.ports as { listening?: boolean }[]) : [];
+			const busy = ports.filter((p) => p.listening).length;
+			const dupes = Array.isArray(e.duplicates) ? e.duplicates.length : 0;
+			return [
+				SEG("ports ", "muted"),
+				SEG(`${busy}/${ports.length} in use`, busy > 0 ? "accent" : "dim"),
+				...(dupes > 0 ? [SEG(` · ${dupes} duplicated in services.yaml`, "error")] : []),
+			];
+		}
+		case "gate_round_cap":
+			return [SEG("ship-gate round cap", "warning"), SEG(`: ${str(e.rounds)}/${str(e.cap)} — orchestrator must decide`, "muted")];
+		case "commit_gate_zero_tests":
+			return [SEG("commit gate", "error"), SEG(": command collected ZERO tests", "muted")];
 		case "step_started":
 			return [SEG(id, "accent"), SEG(" started", "muted"), ...(e.attempt ? [SEG(` (attempt ${str(e.attempt)})`, "dim")] : [])];
 		case "task_started":

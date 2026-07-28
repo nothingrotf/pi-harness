@@ -67,3 +67,24 @@ test("runCommitGate: timeout → fail com timedOut (nunca pendura o worker)", ()
 	assert.equal(r.ok, false);
 	assert.equal(r.timedOut, true);
 });
+
+test("runCommitGate: exit 0 com ZERO testes coletados → VERMELHO (regressão: 6 gates aprovaram código que nenhum teste tocou)", () => {
+	const r = runCommitGate(process.cwd(), { enabled: true, command: "bun test --project ghost || echo No test files found", timeoutSec: 20 });
+	assert.equal(r.ok, false, "verde vazio é gate quebrado, não suíte limpa");
+	assert.equal(r.zeroTests, true);
+	assert.equal(r.timedOut, false);
+	assert.match(r.output, /collected ZERO tests/);
+	assert.match(r.output, /services\.yaml/, "aponta o manifesto, não o código");
+});
+
+test("runCommitGate: sentinela NÃO se aplica a comando que não é de teste (typecheck com a frase no output)", () => {
+	const r = runCommitGate(process.cwd(), { enabled: true, command: "echo 'no tests found in this typecheck output'; exit 0", timeoutSec: 10 });
+	assert.equal(r.ok, true, "bun typecheck que imprima a frase não pode virar vermelho");
+	assert.equal(r.zeroTests, undefined);
+});
+
+test("runCommitGate: suíte de teste REAL que rodou continua verde", () => {
+	const r = runCommitGate(process.cwd(), { enabled: true, command: "echo running test suite; echo Tests: 318 passed, 318 total", timeoutSec: 10 });
+	assert.equal(r.ok, true, "contagem real não pode virar vermelho");
+	assert.equal(r.zeroTests, undefined);
+});

@@ -100,6 +100,14 @@ and `library/` doesn't cover it, do an online lookup before implementing.
 Start needed services from `services.yaml` (`depends_on` first; wait for healthcheck). If
 any fails → return to orchestrator immediately.
 
+**Check the port before blaming the service.** The run logged a `ports_preflight` event at start
+(`progress_log.jsonl`): every declared port, whether it is listening, and the owning process. A
+service that will not come up because **another project already holds its port** is an environment
+blocker — return to the orchestrator naming the port, the expected owner and the actual one. Do not
+work around it, and never `stop`/`kill` the foreign holder (that is another project's stack; see
+§CRITICAL: Never Kill User Processes). In the real runs this exact case wasted hours because a
+foreign MinIO on :9000 answered 403 instead of refusing, so the failure never mentioned a port.
+
 ## Shared derivations (binding — read before you write a line)
 `feature.md` §`## Shared derivations` lists the values this feature computes that **more than one
 task touches**, and the single function/module that OWNS each. The rule is one line: **call the
@@ -165,6 +173,14 @@ and what remains.
 ### 3.1 Final Validation
 Run the verification step(s) from your task skill's Work Procedure (the gate from
 `services.yaml`). Fix failures your work introduced. Don't hand off with broken verification.
+
+**Read the test count, not just the exit code.** A runner that collected ZERO tests exits 0 and
+looks identical to a clean pass (`No test files found`, `Test Files no tests`, `collected 0 items`,
+`Tests: 0`). If your command collected nothing, the command is broken — not your code. Six real
+gates were approved this way (`bunx vp test --project X run` — `run` after `--project` is parsed as
+a name filter). Fix the command in `services.yaml` (§3.3 is additive-only, but a WRONG command is a
+correction, not an addition), state it in your handoff, and re-run before you hand off. A count far
+below the repo's usual deserves the same one-line check.
 **Tests you wrote must follow the `harness-generate-tests` skill**: thin/orchestration code is covered by
 the harness-qa-validator E2E surface (no internal-mock unit test), fat/business-rule code gets focused
 per-rule behavior tests that derive from the `contract.md` assertions (never from the
