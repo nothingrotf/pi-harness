@@ -67,6 +67,12 @@ archive)
 
 	cp -R "$run" "$dest"
 	cp "$MODELS_JSON" "$dest/models.snapshot.json"
+	# O profile pós-run é OUTPUT da run (lessons + guidance updates do gate) — preserva no arquivo
+	# e descarta do working tree ANTES do switch: harness.md/LESSONS.md são tracked, e mudança
+	# tracked não-commitada aborta o checkout (falha real: archive parou no meio, branch já
+	# renomeada, reset nunca rodou).
+	cp -R .harness/profile "$dest/profile.after"
+	git checkout -- .harness/ 2>/dev/null || true
 
 	if [ "$cur" != "$base_branch" ]; then
 		git branch -m "$cur" "${cur}--${label}"
