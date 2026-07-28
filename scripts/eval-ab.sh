@@ -80,13 +80,18 @@ archive)
 	rm -f "$run/feature-run.json" "$run/feature-run.json.bak" "$run/progress_log.jsonl" \
 		"$run/next-task.json" "$run/dismissed.json" "$run/worker-transcripts.jsonl"
 	rm -rf "$run/handoffs" "$run/sessions" "$run/validation" "$run/evidence"
-	python3 - "$run/status.json" <<-'EOF'
-	import json, sys
-	p = sys.argv[1]
-	d = json.load(open(p))
-	d["assertions"] = {k: "pending" for k in d["assertions"]}
-	json.dump(d, open(p, "w"), indent=2)
-	print(f"status.json: {len(d['assertions'])} assertions -> pending")
+	python3 - "$run" <<-'EOF'
+	import json, re, sys
+	run = sys.argv[1]
+	plan = json.load(open(f"{run}/plan.json"))
+	contract = set(re.findall(r"### (VAL-[A-Z0-9-]+):", open(f"{run}/contract.md").read()))
+	n_fix = sum(1 for t in plan["tasks"] if t["id"].upper().startswith("FIX"))
+	plan["tasks"] = [t for t in plan["tasks"] if not t["id"].upper().startswith("FIX")]
+	plan["assertions"] = [a for a in plan["assertions"] if a in contract]
+	json.dump(plan, open(f"{run}/plan.json", "w"), indent=2)
+	status = {"featureId": plan["featureId"], "assertions": {a: "pending" for a in plan["assertions"]}}
+	json.dump(status, open(f"{run}/status.json", "w"), indent=2)
+	print(f"plan.json: {n_fix} FIX task(s) da run anterior removidas (contaminacao); {len(plan['assertions'])} assertions -> pending")
 	EOF
 	rm -rf .harness/profile
 	cp -R "$ev/profile.baseline" .harness/profile
