@@ -217,7 +217,53 @@ Erros de tool: 504 de 21.935 (2,3%), incl. 36 falhas de schema no `edit`
 | 8 | Preflight de portas no run-start (`ports_preflight`) | feito | `4898144` |
 | 10 | Sentinela de coleta vazia (falso verde) no commit gate + skills | feito | `4898144` |
 | 5 | Dieta de leitura (worker não lê plan.json/contract.md; diff escrito 1x) | feito | `9b5737b` |
-| 6 | Re-costura por contexto — **MODO SOMBRA** (mede em toda fronteira de task, nunca corta; `HARNESS_CONTEXT_RESEAM` default 200k). Corte real só após eval de 3-5 features comparando frequência/posição dos would-cut vs fix-ratio, rounds e 1º-QA. O corte real deverá respeitar clusters `cohesion` ("never split a phase", tlc-spec-driven). | sombra | `9b5737b` |
+| 6 | Re-costura por contexto — **MODO SOMBRA** (mede, nunca corta; `HARNESS_CONTEXT_RESEAM` default 200k) | sombra | `9b5737b` |
+| 11 | **Fold da cauda empilhava em batch já estourado** — a causa raiz do contexto gigante | feito | `c5f944a` |
+| 12 | Loop do fato externo não-verificável (worker → review → brief) | feito | `912926e` |
+
+## 9. A/B de model-config (sotaq, feature PR C) — o que a sombra revelou
+
+Mesma feature, mesmo contrato congelado (21 assertions), mesmo commit base, plano idêntico.
+Protocolo e ferramentas: `scripts/eval-ab.sh` + `scripts/run-metrics.py`.
+
+| | baseline (opus/medium) | sonnet-5/high |
+|---|---|---|
+| contrato | 21/21 | 21/21 |
+| custo | **$43,28** | $52,39 |
+| tokens | **60,7M** | 175,7M |
+| turnos | **500** | 879 |
+| wall clock | **2,76h** | 3,55h |
+| pico de contexto | 301k | 570k |
+
+O modelo mais barato por token custou **mais** na run: 75% mais turnos e 3x mais tokens
+(quase tudo `cacheRead` de sessão longa). Confound registrado: o braço B rodou `thinking: high`,
+não `medium` — modelo E esforço mudaram juntos.
+
+**A descoberta que importava não era sobre modelos.** A série da sombra mostrou crescimento
+monotônico numa ÚNICA sessão, nas duas runs:
+
+```
+opus    60k 87k 113k 116k 161k 168k 181k 263k 276k 293k 301k | 34k 58k …
+sonnet  61k 108k 140k 152k 225k 245k 270k 452k 466k 555k 570k | 51k 103k …
+```
+
+Mediana do resto da feature: ~90k. A causa era o batcher, não o modelo: `foldShortTail` recebia
+`_budget` e nunca usava — fundia a cauda de 1-2 tasks no batch anterior mesmo quando esse batch
+já estava acima do budget. Plano de 10 tasks, budget 7, peso 11 → **um batch só, 157% do budget**.
+
+Depois do fix (`c5f944a`), o mesmo plano roda em 2 batches (T1-T8, T9-T10):
+
+| braço | pico antes | pico depois | fronteiras >200k antes → depois |
+|---|---|---|---|
+| opus | 301k | 263k | 4 → 1 |
+| sonnet | 570k | 452k | 7 → 4 |
+
+**Decisão sobre a costura:** continua em sombra. O fix do batcher resolveu a causa dominante mas
+não zera o problema — o sonnet ainda cruzaria 200k quatro vezes dentro de um batch de 8 tasks
+legítimo. Isso sugere que o budget útil é **dependente de modelo** (um modelo mais verboso enche a
+janela com menos tasks), o que a contagem de tasks não captura. Próximo passo honesto: rodar a
+próxima feature real com o batcher corrigido e medir de novo antes de escolher entre baixar o
+`HARNESS_TASK_BUDGET`, torná-lo por-role, ou ligar o corte.
 
 Nada disto foi exercitado numa feature real ainda — só 499 testes unitários + verificação
 dos parsers contra os artefatos reais de sotaq e hibou. A próxima validação honesta é uma
