@@ -124,6 +124,12 @@ arm)
 	git rev-parse --verify "$base_sha^{commit}" >/dev/null 2>&1 || die "commit base $base_sha nao existe mais"
 	git show-ref --verify --quiet "refs/heads/$branch" && die "branch \"$branch\" ja existe"
 
+	# Troca de branch ANTES de tocar no profile: .harness/profile e' TRACKED, e restaurar o baseline
+	# por cima da branch atual cria diff que aborta o checkout (falha real observada aqui).
+	# No commit base, o profile committado JA E' o baseline.
+	git checkout -- .harness/ 2>/dev/null || true
+	git switch -c "$branch" "$base_sha"
+
 	# Reidrata os artefatos CONGELADOS do braco de origem (mesmo contrato, mesmo plano).
 	mkdir -p "$run"
 	for f in plan.json contract.md feature.md; do cp "$ev/$src/$f" "$run/$f"; done
@@ -140,7 +146,6 @@ arm)
 	print(f"plan reidratado: {len(plan['tasks'])} tasks ({n_fix} FIX descartadas), {len(plan['assertions'])} assertions pending")
 	EOF
 	rm -rf .harness/profile && cp -R "$ev/profile.baseline" .harness/profile
-	git switch -c "$branch" "$base_sha"
 	set_skip_delivery true
 	echo "braco pronto: branch \"$branch\" em ${base_sha:0:8} (mesma base dos outros bracos)"
 	echo "AGORA: ajuste ~/.pi/agent/pi-harness/models.json e rode /harness run \"$fid\""
