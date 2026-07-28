@@ -697,8 +697,15 @@ export function progressSegments(e: ProgressRaw): ProgressSegment[] {
 			const kt = Math.round(Number(e.contextTokens ?? 0) / 1000);
 			return [SEG("context ", "muted"), SEG(`${kt}k tok/turn`, kt >= 150 ? "warning" : "dim")];
 		}
-		case "context_reseam_shadow":
-			return [SEG("reseam shadow", "warning"), SEG(`: ${Math.round(Number(e.contextTokens ?? 0) / 1000)}k ≥ ${Math.round(Number(e.threshold ?? 0) / 1000)}k — would cut here`, "muted")];
+		case "context_reseam_cut":
+			return [
+				SEG("✂ batch closed", "warning"),
+				SEG(`: ${Math.round(Number(e.contextTokens ?? 0) / 1000)}k ≥ ${Math.round(Number(e.threshold ?? 0) / 1000)}k — ${Array.isArray(e.remaining) ? e.remaining.length : "?"} task(s) to a fresh worker`, "muted"),
+			];
+		case "batch_continued":
+			return [SEG("continuation ", "muted"), SEG(String(e.id ?? ""), "accent"), SEG(` ← ${Array.isArray(e.tasks) ? e.tasks.join(", ") : ""}`, "dim")];
+		case "batch_no_progress":
+			return [SEG("batch closed with NO task delivered", "error"), SEG(`: ${String(e.id ?? "")}`, "muted")];
 		case "commit_gate_zero_tests":
 			return [SEG("commit gate", "error"), SEG(": command collected ZERO tests", "muted")];
 		case "step_started":

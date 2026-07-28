@@ -37,7 +37,7 @@ export function batchBudget(env: NodeJS.ProcessEnv = process.env): number {
 }
 
 /** Corte PROIBIDO entre a→b: mesma tag de coesão não-vazia (não racha um cluster coeso). */
-function cutForbidden(a: PlanTaskRef, b: PlanTaskRef): boolean {
+export function cutForbidden(a: PlanTaskRef, b: PlanTaskRef): boolean {
 	return !!a.cohesion && a.cohesion === b.cohesion;
 }
 

@@ -488,3 +488,45 @@ test("runLoop: completionGate ok:true (ou ausente) → completed", async () => {
 	const f2 = await runLoop("/x", r2, { spawn: async () => ({ code: 0, success: true }) });
 	assert.equal(f2.status, "completed", "sem gate injetado → compat (completa)");
 });
+
+test("batch cortado cedo: tasks restantes viram step de continuação e NÃO são marcadas como feitas", async () => {
+	const run = planFeatureRun("feat-x", tasks("T1", "T2", "T3", "T4", "T5", "T6"), NOW);
+	const done: string[] = [];
+	const events: string[] = [];
+	// o worker entregou T1–T3 e a re-costura fechou o batch (só T1–T3 no progress log)
+	await runLoop("/repo", run, deps(spawnFrom({}), {
+		completedTasks: () => new Set(["T1", "T2", "T3"]),
+		log: (ev, extra) => { events.push(ev); if (ev === "task_completed") done.push(String(extra?.taskId)); },
+	}));
+	const cont = run.steps.find((s) => s.id === `${IMPL_STEP_ID}-cont`);
+	assert.ok(cont, "abriu o step de continuação");
+	assert.deepEqual(cont?.tasks?.map((t) => t.id), ["T4", "T5", "T6"], "carrega exatamente o que faltou");
+	assert.deepEqual(cont?.fulfills, ["A-T4", "A-T5", "A-T6"], "fulfills escopado ao que resta");
+	assert.equal(cont?.status !== "pending" || cont?.attempts === 0, true);
+	assert.ok(events.includes("batch_continued"));
+	assert.ok(!done.includes("T4"), "task não entregue NUNCA é marcada como concluída");
+	assert.ok(run.steps.indexOf(cont as FeatureRun["steps"][0]) === run.steps.findIndex((s) => s.id === IMPL_STEP_ID) + 1, "entra logo após o batch de origem");
+});
+
+test("batch completo: sem completedTasks (ou tudo feito) marca todas e NÃO cria continuação", async () => {
+	const run = planFeatureRun("feat-x", tasks("T1", "T2"), NOW);
+	const done: string[] = [];
+	await runLoop("/repo", run, deps(spawnFrom({}), {
+		completedTasks: () => new Set(["T1", "T2"]),
+		log: (ev, extra) => { if (ev === "task_completed") done.push(String(extra?.taskId)); },
+	}));
+	assert.deepEqual(done, ["T1", "T2"]);
+	assert.equal(run.steps.some((s) => s.id.includes("-cont")), false);
+	assert.equal(run.status, "completed");
+});
+
+test("continuação exige PROGRESSO: worker que não entregou nada não gera step infinito", async () => {
+	const run = planFeatureRun("feat-x", tasks("T1", "T2", "T3"), NOW);
+	const events: string[] = [];
+	await runLoop("/repo", run, deps(spawnFrom({}), {
+		completedTasks: () => new Set<string>(), // zero entregue
+		log: (ev) => events.push(ev),
+	}));
+	assert.equal(run.steps.filter((s) => s.id.includes("-cont")).length, 0, "nenhuma continuação");
+	assert.ok(!events.includes("batch_continued"));
+});

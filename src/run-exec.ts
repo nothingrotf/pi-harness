@@ -11,6 +11,7 @@
  */
 import { type FeatureRun, runLoop } from "./feature-runner.ts";
 import { appendProgress, dismissedRefs, handoffOutcome, latestHandoff, type PersistedHandoff } from "./handoff.ts";
+import { completedTaskIds, readProgressEvents } from "./next-task.ts";
 import { loadModelConfig, resolveChoice, roleForStep, skippedGateSkills } from "./model-config.ts";
 import { appendFixTasksToPlan, completionGate, ensureAssertions, loadOrBuildFeatureRun, readPlan, writeFeatureRun } from "./plan.ts";
 import { applyGateRoundGrant, applyResumeMode, buildRunReport, insertFixTasks, type ResumeModeOpts } from "./run-control.ts";
@@ -81,6 +82,9 @@ export async function executeFeatureRun(cwd: string, featureId: string, opts: Ex
 				persist: (r) => writeFeatureRun(cwd, r),
 				log: (ev, extra) => appendProgress(cwd, featureId, ev, extra ?? {}),
 				gateSkip: skippedGateSkills(cfg),
+				// Tasks realmente concluídas (progress log). Um batch fechado cedo pela re-costura de
+				// contexto deixa tasks pendentes; sem isto o runner as marcaria como feitas.
+				completedTasks: () => completedTaskIds(readProgressEvents(cwd, featureId)),
 				// End-of-run gate (droid parity): só completa com TODAS as assertions `passed`.
 				// Bypass quando o qa-validator (quem flipa status.json) foi pulado — senão deadlocka.
 				completionGate: skippedGateSkills(cfg).has("harness-qa-validator") ? undefined : () => completionGate(cwd, featureId),

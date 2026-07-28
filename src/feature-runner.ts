@@ -180,6 +180,9 @@ export interface FeatureRunLoopDeps {
 	budget?: number;
 	/** teto de rodadas de re-validação do ship gate (inj-etável p/ teste; default GATE_ROUND_CAP). */
 	roundCap?: number;
+	/** ids de task já concluídos (do progress log). Sem isto o runner assume que um step de task
+	 * concluiu TODAS as suas tasks — falso quando o batch fecha cedo (re-costura por contexto). */
+	completedTasks?: () => Set<string>;
 	/** ship-gate skills a pular (skipScrutiny/skipUserTesting) — de skippedGateSkills(config). */
 	gateSkip?: ReadonlySet<string>;
 	/** gerador de worker session id (injetável p/ teste; default aleatório). */
@@ -343,6 +346,30 @@ export function insertFixTask(run: FeatureRun, task: PlanTaskRef): void {
 			s.attempts = 0;
 		}
 	}
+}
+
+/**
+ * Abre um step de continuação logo após `from`, carregando as tasks que o batch não entregou.
+ * Worker fresco, janela limpa, mesma fatia do plano — o `batchUniverse` do next_task passa a
+ * enxergar só estas tasks. Ids: `<from>-cont`, `-cont2`, … (estáveis e legíveis no cockpit).
+ */
+export function insertContinuationStep(run: FeatureRun, from: FeatureStep, remaining: PlanTaskRef[]): FeatureStep {
+	const taken = new Set(run.steps.map((s) => s.id));
+	let id = `${from.id}-cont`;
+	for (let n = 2; taken.has(id); n++) id = `${from.id}-cont${n}`;
+	const step: FeatureStep = {
+		id,
+		kind: "task",
+		skillName: remaining[0]?.skillName ?? from.skillName,
+		tasks: remaining.map((t) => ({ ...t })),
+		fulfills: remaining.flatMap((t) => t.fulfills ?? []),
+		status: "pending",
+		attempts: 0,
+		workerSessionIds: [],
+		...(from.batchIndex ? { batchIndex: from.batchIndex, batchTotal: from.batchTotal } : {}),
+	};
+	run.steps.splice(run.steps.indexOf(from) + 1, 0, step);
+	return step;
 }
 
 /** Teto de rodadas efetivo (cap + rodadas concedidas explicitamente). */
@@ -522,10 +549,25 @@ export async function runLoop(cwd: string, run: FeatureRun, deps: FeatureRunLoop
 		if (res.code === 0 && res.success === true) {
 			step.status = "completed";
 			deps.log?.("step_completed", { id: step.id, kind: step.kind });
-			// Worker único por feature: ao completar o impl/fix step, marca CADA task que ele cobre como
-			// concluída (task_completed por taskId). Garante que a TUI por-task fica correta no fim mesmo
-			// que o worker não tenha exaurido o loop `next_task` ao vivo; tasks individuais do plan.json viram ✓.
-			if (step.tasks?.length) for (const t of step.tasks) deps.log?.("task_completed", { taskId: t.id });
+			// Um step de task pode fechar com tasks PENDENTES: a re-costura por contexto encerra o batch
+			// numa fronteira e manda o resto pra um worker fresco (next-task-tool: "batch_closed").
+			// Nesse caso abre-se um step de continuação e NADA é marcado por atacado — marcar as
+			// restantes como concluídas apagaria trabalho que ninguém fez.
+			const doneIds = step.kind === "task" ? deps.completedTasks?.() : undefined;
+			const remaining = doneIds && step.tasks?.length ? step.tasks.filter((t) => !doneIds.has(t.id)) : [];
+			if (remaining.length === 0) {
+				// Fechamento normal (ou sem a dep de progresso: comportamento legado): marca cada task do
+				// step — a TUI por-task fica correta mesmo se o worker não exauriu o loop `next_task` ao vivo.
+				if (step.tasks?.length) for (const t of step.tasks) deps.log?.("task_completed", { taskId: t.id });
+			} else if (remaining.length < (step.tasks?.length ?? 0)) {
+				// Batch cortado: houve progresso e sobrou trabalho → worker fresco pro resto.
+				const cont = insertContinuationStep(run, step, remaining);
+				deps.log?.("batch_continued", { from: step.id, id: cont.id, tasks: remaining.map((t) => t.id) });
+			} else {
+				// Zero progresso: NÃO gera continuação (a próxima teria a mesma fatia → steps infinitos) e
+				// NÃO marca nada. O completion gate cobra as assertions pendentes — anomalia, não corte.
+				deps.log?.("batch_no_progress", { id: step.id, tasks: remaining.map((t) => t.id) });
+			}
 			touch(run, deps);
 			if (res.returnToOrchestrator) {
 				// Step concluído MAS o worker/validator pediu o orchestrator (findings, merge gate humano,

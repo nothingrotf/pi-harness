@@ -1,47 +1,78 @@
 /**
- * Re-costura por contexto — hoje em MODO SOMBRA (mede e loga, NUNCA corta).
+ * Re-costura por CONTEXTO — fecha o batch numa fronteira de task quando a sessão do worker já
+ * carrega tokens demais, e deixa o resto pra um worker fresco.
  *
- * O batch de ~7 tasks (doc 05, o sweet spot validado do modelo tlc-spec-driven) mede a fatia em
- * CONTAGEM de tasks, mas o que custa é CONTEXTO: numa run real um batch de 6 tasks — dentro do
- * budget — subiu a 466k tokens/turno (sot-38: 385 turnos, $23,77 numa sessão; 97% da conta total é
- * cacheRead de re-leitura do próprio histórico). O próprio tlc-spec-driven prescreve a válvula:
- * "if a batch's task list would likely push the worker's context beyond the budget, close the
- * batch at an earlier phase boundary" — mas como ESTIMATIVA pré-dispatch. Aqui é a versão MEDIDA:
- * o next_task roda dentro da sessão do worker e lê o tamanho real dela a cada fronteira de task.
+ * Por que medir em vez de contar tasks: o budget de batch (doc 05) é denominado em TASKS, mas o
+ * que custa é CONTEXTO. Medido no mesmo plano de 10 tasks, o contexto por fronteira cresceu ~24k
+ * por task com um modelo e ~51k com outro — 2,1x de diferença na mesma feature. Nenhuma constante
+ * em tasks serve os dois: 7 é folgado pra um e apertado pro outro. O `weight` do plano é a
+ * estimativa do autor; isto é a medição em execução.
  *
- * Fases (decisão do usuário — eval antes de cortar de verdade):
- *   1. SOMBRA (isto): loga `task_context` em toda fronteira + `context_reseam_shadow` quando o
- *      teto é excedido. Zero mudança de execução; os números brutos permitem simular QUALQUER
- *      teto offline.
- *   2. (futuro, após eval) corte real: fecha o batch na fronteira e o runner recostura o resto
- *      num worker fresco — respeitando as MESMAS regras de seam do batcher estático (nunca
- *      dentro de um cluster `cohesion`; "never split a phase").
+ * Por que compensa (simulado sobre o custo real por turno das duas runs, erro do modelo 0,4%):
+ * cortar a 200k levaria a sessão de implementação de $31,47→$15,20 (−52%) num braço e de
+ * $26,49→$21,87 (−18%) no outro. `cacheRead` é 87% do custo da sessão e cresce a cada turno; o
+ * bootstrap re-escrito num worker novo custa ~28k de cacheWrite, ~$0,07. A troca é barata.
+ *
+ * As duas travas que impedem virar "um worker por task" (regime que a prática já reprovou):
+ *   - **piso de tasks** — uma sessão precisa ter entregue RESEAM_MIN_TASKS antes de poder ser
+ *     cortada, senão uma única task pesada (uma delas sozinha somou +182k) fragmentaria o resto;
+ *   - **coesão** — o corte só cai onde o batcher estático já podia cortar (`cutForbidden`), então
+ *     um cluster coeso nunca é rachado.
+ * A emenda é sempre um commit com árvore verde: o worker seguinte herda repo + `git log` + a spec
+ * via `next_task`.
  */
+import { cutForbidden } from "./batch.ts";
+import type { PlanTaskRef } from "./feature-runner.ts";
 
-/** Teto default (tokens de contexto/turno). Modelos atuais são 1M; 200k corta só o patológico —
- * no caso real de referência, 200k e 250k produzem o MESMO corte (só a task que cresceu 138k). */
+/** Teto default de contexto por turno (tokens). */
 export const DEFAULT_RESEAM_THRESHOLD = 200_000;
 
-/** Teto efetivo: env `HARNESS_CONTEXT_RESEAM` (tokens; 0/negativo/inválido → desliga a medição do
- * marcador wouldCut, mantendo o default para simulação). */
+/** Tasks que a sessão precisa ter entregue antes de poder ser cortada. */
+export const RESEAM_MIN_TASKS = 3;
+
+/**
+ * Teto efetivo: env `HARNESS_CONTEXT_RESEAM`. Ausente → default. `0`/inválido → 0 = corte
+ * DESLIGADO (a medição de sombra continua; é o interruptor de reversão).
+ */
 export function reseamThreshold(env: NodeJS.ProcessEnv = process.env): number {
 	const raw = env.HARNESS_CONTEXT_RESEAM;
 	if (raw === undefined || raw === "") return DEFAULT_RESEAM_THRESHOLD;
 	const n = Number(raw);
-	if (!Number.isFinite(n) || n <= 0) return DEFAULT_RESEAM_THRESHOLD;
+	if (!Number.isFinite(n) || n <= 0) return 0;
 	return Math.floor(n);
 }
 
-export interface ReseamMeasurement {
-	/** contexto do último turno da sessão do worker (tokens). */
-	contextTokens: number;
+export interface ReseamInput {
+	/** contexto do último turno da sessão (tokens); null = sem medida. */
+	contextTokens: number | null;
 	threshold: number;
-	/** true = acima do teto — no modo sombra é só o marcador do eval. */
-	wouldCut: boolean;
+	/** tasks DESTE batch já concluídas (o que a sessão entregou). */
+	completedInBatch: number;
+	/** a task recém-concluída (origem do corte) — undefined numa fronteira sem anterior. */
+	prev?: PlanTaskRef;
+	/** a próxima task a entregar (destino) — undefined quando o batch acabou. */
+	next?: PlanTaskRef;
+	minTasks?: number;
 }
 
-/** Decisão pura da sombra. null quando não há medida (sem session file / sem turno com usage). */
-export function measureReseam(contextTokens: number | null, threshold: number): ReseamMeasurement | null {
-	if (contextTokens === null || contextTokens <= 0) return null;
-	return { contextTokens, threshold, wouldCut: contextTokens >= threshold };
+export interface ReseamDecision {
+	/** true = fecha o batch aqui; o resto vai pra um worker fresco. */
+	cut: boolean;
+	contextTokens: number;
+	threshold: number;
+	/** por que NÃO cortou (telemetria/depuração) — ausente quando cortou. */
+	reason?: "below_threshold" | "min_tasks" | "cohesion" | "no_next" | "disabled" | "no_measure";
+}
+
+/** Decisão PURA do corte. Tudo que a impede é explícito e nomeado. */
+export function decideReseam(i: ReseamInput): ReseamDecision {
+	const ctx = i.contextTokens ?? 0;
+	const base = { cut: false as const, contextTokens: ctx, threshold: i.threshold };
+	if (i.threshold <= 0) return { ...base, reason: "disabled" };
+	if (i.contextTokens === null || ctx <= 0) return { ...base, reason: "no_measure" };
+	if (!i.next) return { ...base, reason: "no_next" };
+	if (ctx < i.threshold) return { ...base, reason: "below_threshold" };
+	if (i.completedInBatch < (i.minTasks ?? RESEAM_MIN_TASKS)) return { ...base, reason: "min_tasks" };
+	if (i.prev && cutForbidden(i.prev, i.next)) return { ...base, reason: "cohesion" };
+	return { cut: true, contextTokens: ctx, threshold: i.threshold };
 }

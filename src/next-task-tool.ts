@@ -9,7 +9,7 @@ import { Type } from "typebox";
 import { readCommitGateConfig, runCommitGate } from "./commit-gate.ts";
 import { buildTaskSpec, readContractAssertions } from "./contract.ts";
 import { appendProgress } from "./handoff.ts";
-import { measureReseam, reseamThreshold } from "./reseam.ts";
+import { decideReseam, reseamThreshold } from "./reseam.ts";
 import { lastTurnContext } from "./usage.ts";
 import { readFeatureRun, readPlan } from "./plan.ts";
 import { batchUniverse, clearNextTaskState, completedTaskIds, gitHead, gitIsAncestor, planNextTask, readNextTaskState, readProgressEvents, writeNextTaskState } from "./next-task.ts";
@@ -30,19 +30,16 @@ export function registerNextTaskTool(pi: ExtensionAPI): void {
 				const { featureId } = params as { featureId: string };
 				const plan = readPlan(ctx.cwd, featureId);
 				if (!plan) return { content: [{ type: "text", text: `No plan.json for feature "${featureId}".` }], details: { error: "no_plan" } };
-				// Re-costura SOMBRA: o tool roda DENTRO da sessão do worker — mede o contexto real dela a
-				// cada fronteira e loga (task_context sempre; context_reseam_shadow ao exceder o teto).
-				// Só observa; nunca corta (ver reseam.ts — eval antes do corte real). Nunca-fatal.
-				try {
-					const sessionFile = (ctx as { sessionManager?: { getSessionFile?: () => string | undefined } }).sessionManager?.getSessionFile?.();
-					const m = measureReseam(lastTurnContext(sessionFile), reseamThreshold());
-					if (m) {
-						appendProgress(ctx.cwd, featureId, "task_context", { contextTokens: m.contextTokens });
-						if (m.wouldCut) appendProgress(ctx.cwd, featureId, "context_reseam_shadow", { contextTokens: m.contextTokens, threshold: m.threshold });
+				// Contexto real DESTA sessão (o tool roda dentro do worker). Sempre registrado — é a série
+				// que sustenta o teto. Nunca-fatal: sem medida, o loop segue igual.
+				const contextTokens = (() => {
+					try {
+						return lastTurnContext((ctx as { sessionManager?: { getSessionFile?: () => string | undefined } }).sessionManager?.getSessionFile?.());
+					} catch {
+						return null;
 					}
-				} catch {
-					/* sem medida → sem evento */
-				}
+				})();
+				if (contextTokens) appendProgress(ctx.cwd, featureId, "task_context", { contextTokens });
 				// Escopa o universo à fatia do batch em execução (doc 05 §5.1): o step in_progress do
 				// feature-run.json carrega as tasks DESTE batch. Fallback (K=1/sem run) = plano inteiro.
 				const { taskIds, batchId } = batchUniverse(readFeatureRun(ctx.cwd, featureId), plan.tasks.map((t) => t.id));
@@ -92,6 +89,32 @@ export function registerNextTaskTool(pi: ExtensionAPI): void {
 				}
 
 				const task = plan.tasks.find((t) => t.id === d.taskId);
+
+				// Re-costura por contexto: numa fronteira REAL (a anterior acabou de commitar), se a sessão
+				// já carrega tokens demais, fecha o batch aqui. As tasks restantes ficam pendentes e o runner
+				// abre um step de continuação com um worker fresco. Ver reseam.ts pro custo medido e pras
+				// travas (piso de tasks + coesão) que impedem virar um-worker-por-task.
+				if (d.action === "start" && d.completePrev && task) {
+					const completedNow = new Set([...completed, d.completePrev]);
+					const r = decideReseam({
+						contextTokens,
+						threshold: reseamThreshold(),
+						completedInBatch: taskIds.filter((id) => completedNow.has(id)).length,
+						prev: plan.tasks.find((t) => t.id === d.completePrev),
+						next: task,
+					});
+					if (r.cut) {
+						const remaining = taskIds.filter((id) => !completedNow.has(id));
+						appendProgress(ctx.cwd, featureId, "context_reseam_cut", { contextTokens: r.contextTokens, threshold: r.threshold, batchId, remaining });
+						clearNextTaskState(ctx.cwd, featureId);
+						const text = [
+							`✂ Batch closed early: this session now carries ${Math.round(r.contextTokens / 1000)}k tokens of context per turn (threshold ${Math.round(r.threshold / 1000)}k).`,
+							`Your work is committed and the tree is green — nothing is lost. The remaining ${remaining.length} task(s) (${remaining.join(", ")}) continue in a FRESH worker with a clean window.`,
+							`Call EndFeatureRun ONCE now (taskId="${batchId}", successState "success") and end your turn. Do NOT start ${task.id}.`,
+						].join("\n");
+						return { content: [{ type: "text", text }], details: { action: "batch_closed", batchId, reason: "context_reseam", remaining } };
+					}
+				}
 				if (!task) return { content: [{ type: "text", text: `Task ${d.taskId} not found in plan.` }], details: { error: "no_task" } };
 				const spec = buildTaskSpec(task, contractAssertions);
 				const specJson = JSON.stringify(spec, null, 2);
