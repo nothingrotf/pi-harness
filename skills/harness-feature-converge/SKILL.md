@@ -157,6 +157,21 @@ The formal contract: a finite checklist of **testable behavioral assertions** th
 **Core principle:** validation is **black-box and behavior-based, never derived from
 implementation.** Validators test against behavioral specifications, not against code.
 
+**A fallback can satisfy a black-box assertion while the primary path is dead.** If the feature has
+a fallback (secondary provider, degraded mode, cached answer) AND the primary path cannot be
+exercised for real during the run — no credential, no sandbox, paid API, hardware absent — then
+"the observable outcome happened" proves nothing about the primary. Write **both**:
+- an assertion that pins **which path produced the result** (the provider/marker on the persisted
+  record or the wide event), not just that a result exists; and
+- an explicit **`## Rollout gate`** section naming the one live check a human runs before the
+  feature is switched on, and what it must show.
+
+State the limitation in the contract in the same breath ("provider boundary is mock-verified;
+live behavior unproven"), so nobody reads a green gate as proof of the primary. Observed cost of
+not doing this: a feature passed 21/21 assertions, code review and QA with a primary path that
+plausibly never worked — the fallback answered every assertion, and the whole pipeline was blind
+to it by construction.
+
 Each assertion has:
 - **Stable ID** with area prefix (`VAL-AUTH-001`, `VAL-CHECKOUT-003`, `VAL-CROSS-002`).
 - **Title** — short behavior description.
@@ -277,6 +292,17 @@ Tasks execute in array order — the topmost pending runs next. Each task:
 
 (Tasks carry no `status` field — assertion status lives per-ID in `status.json`, written by
 `store_plan`; do not add a task-level `status`.)
+
+**Factual claims about external services must be sourced — you are the only one who can.** A task
+description that states how a third-party API behaves (which region serves a model, what an
+endpoint accepts, what a field is called) is an instruction the worker will follow literally, and
+**the worker has no web tools** — it cannot check you (`harness-worker-base` §1.6). Neither can the
+review axes. You have `web_search`/`web_fetch`: verify the claim and cite the source in the task,
+or write it as an explicit unknown for the worker to resolve locally ("confirm against the
+installed SDK types before implementing"). Never state an unverified provider fact as a
+requirement. Observed cost: a brief said `location 'global'` for a model that the docs list only
+under regional endpoints; one worker obeyed it and shipped a plausibly-dead path, and the error was
+invisible to every downstream gate.
 
 **Hard constraints travel IN the task, not by reference.** The harness automatically resolves each
 task's `fulfills` to the full assertion text and injects it into the spec `next_task` hands the

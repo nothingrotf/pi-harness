@@ -99,9 +99,32 @@ lesson relevant to your task's area — they're past verification failures disti
 (e.g. "assert the resulting state, not the mock call count"). Only Confirmed; ignore
 Candidate/Quarantined; skip if absent.
 
-### 1.6 Online Research (Conditional)
-If your task involves a technology/SDK/integration where you're unsure of idiomatic usage
-and `library/` doesn't cover it, do an online lookup before implementing.
+### 1.6 External facts you cannot verify (READ THIS BEFORE ASSERTING ANYTHING)
+**You have no web tools.** Your toolset is `read, grep, find, ls, bash, edit, write, next_task,
+EndFeatureRun` — no `web_search`, no `web_fetch`, no subagents. The research role belongs to the
+orchestrator (it has those tools and distills findings into `.harness/profile/library/`).
+
+So when your task depends on a fact about an external service, SDK or API that the repo does not
+already encode — which region serves a model, what a response field is called, whether an endpoint
+accepts a parameter — you have exactly three honest moves:
+1. **Check what is already here:** `library/`, the installed package's own types/protos under
+   `node_modules` (a real precedent: reading the installed proto settled which response field the
+   SDK populates), the repo's existing call sites.
+2. **Fetch it yourself with `bash`** if you know a URL (`curl`) or the answer is in a local
+   artifact. Cite what you fetched.
+3. **Stop and hand the question up** — `EndFeatureRun` with `returnToOrchestrator: true`, naming the
+   exact question. The orchestrator can look it up; you cannot.
+
+**Never write an unverified external fact as if it were established.** Not in code, not in a
+comment, not in an ADR, not in a commit message. If you must proceed on an assumption, mark it as
+one at the point of use (`// ASSUMPTION (unverified): <claim> — <how to verify>`) and surface it in
+your handoff. This is step 5 of the knowledge chain: *flag as uncertain — never present as fact*.
+
+Why this rule is written this way: in a real run a worker authored an ADR asserting a provider's
+regional availability, from training data alone, with no tool able to check it. The reviewers had
+no web tools either, so they cited the ADR back as evidence. Three layers of confidence over zero
+verification, and it took a human who knew the provider to catch it. A sentence marked ASSUMPTION
+would have cost nothing and stopped the whole chain.
 
 ### 1.7 Start Services
 Start needed services from `services.yaml` (`depends_on` first; wait for healthcheck). If

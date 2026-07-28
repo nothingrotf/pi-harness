@@ -43,6 +43,22 @@ If you identify a high risk finding, but the intent of the branch is to introduc
 If you report issues as High priority when they are not in fact high priority / meaningful issues, devs will lose trust in you and stop listening to you over time.
 NEVER misreport the priority / importance of issues. Be extremely thorough in tracing issues end-to-end to gain complete, and total confidence before reporting.
 
+## Unverifiable external claims
+**You have no web tools** (`read, grep, find, ls, bash`). When the diff asserts a fact about an
+external service, SDK or API — which region serves a model, what an endpoint accepts, what a
+response field is named — you generally cannot confirm it, and an ADR or comment in the same diff is
+**not** evidence: it was written by the same author, from the same assumption.
+
+So do not launder it. Either ground it (the installed package's types/protos under `node_modules`,
+an existing call site, a local fixture — `bash` can read those) or report it as
+`unverified external claim` with the exact assertion and what would settle it. Do not upgrade it to
+a blocking defect you cannot demonstrate, and do not accept it as established because it is written
+confidently. A load-bearing external fact with no local grounding is a finding in its own right.
+
+The incident this exists for: an ADR asserted a provider's regional availability from a worker's
+training data; three review axes cited that ADR back as the evidence for a critical finding; it took
+a human who knew the provider to break the loop.
+
 ## Audit worker claims + shared-state observations
 You are given the worker handoffs (and, when present, a transcript skeleton) alongside the diff.
 Cross-check claims ("added tests for X", "handled the error path / validated input Y") against the
