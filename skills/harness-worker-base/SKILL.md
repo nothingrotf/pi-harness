@@ -71,11 +71,18 @@ Never violate the Boundaries in `harness.md`.
 - the repo's own `AGENTS.md` + `.agents/rules/` — code conventions/DoD (governs how code is written).
 - `.harness/profile/library/coding-principles.md` — generic code-quality bias the ship-gate **quality axis** scores against; internalize it before coding to avoid rework (defers to the repo's `AGENTS.md` on conflict).
 - `.harness/profile/harness.md` — operational overlay: **Boundaries you must NEVER violate**, directives, testing guidance. May be updated mid-feature — always check for latest.
-- if your task has `fulfills`, the specific assertions in `.harness/runs/<feature-id>/contract.md`.
 - `.harness/profile/services.yaml` — how to run commands/services.
-- `.harness/runs/<feature-id>/plan.json` — the task list (your task's milestone-free context).
 - `git log --oneline -20` — recent history.
 - `.harness/profile/library/` — distilled repo knowledge.
+
+**Do NOT read `plan.json` or `contract.md`.** The `next_task` tool is your source of truth and
+already delivers both: each call hands you the task's full spec WITH its `fulfills` assertions
+resolved to their complete contract text. Reading those files anyway duplicates thousands of tokens
+into your context that then get re-billed on EVERY subsequent turn — measured across real runs,
+they were the two single largest redundant reads (2.1 MB + 1.7 MB across sessions). Same principle
+as the reference model's rule: load only what the current task needs, never "all specs".
+Exception: the orchestrator explicitly told you to consult a specific contract section — then read
+only that section.
 
 (CRITICAL) `harness.md` Boundaries and `services.yaml` are non-negotiable. Violating
 Boundaries could damage the user's system or other projects.

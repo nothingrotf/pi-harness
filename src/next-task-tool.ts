@@ -9,6 +9,8 @@ import { Type } from "typebox";
 import { readCommitGateConfig, runCommitGate } from "./commit-gate.ts";
 import { buildTaskSpec, readContractAssertions } from "./contract.ts";
 import { appendProgress } from "./handoff.ts";
+import { measureReseam, reseamThreshold } from "./reseam.ts";
+import { lastTurnContext } from "./usage.ts";
 import { readFeatureRun, readPlan } from "./plan.ts";
 import { batchUniverse, clearNextTaskState, completedTaskIds, gitHead, gitIsAncestor, planNextTask, readNextTaskState, readProgressEvents, writeNextTaskState } from "./next-task.ts";
 
@@ -28,6 +30,19 @@ export function registerNextTaskTool(pi: ExtensionAPI): void {
 				const { featureId } = params as { featureId: string };
 				const plan = readPlan(ctx.cwd, featureId);
 				if (!plan) return { content: [{ type: "text", text: `No plan.json for feature "${featureId}".` }], details: { error: "no_plan" } };
+				// Re-costura SOMBRA: o tool roda DENTRO da sessão do worker — mede o contexto real dela a
+				// cada fronteira e loga (task_context sempre; context_reseam_shadow ao exceder o teto).
+				// Só observa; nunca corta (ver reseam.ts — eval antes do corte real). Nunca-fatal.
+				try {
+					const sessionFile = (ctx as { sessionManager?: { getSessionFile?: () => string | undefined } }).sessionManager?.getSessionFile?.();
+					const m = measureReseam(lastTurnContext(sessionFile), reseamThreshold());
+					if (m) {
+						appendProgress(ctx.cwd, featureId, "task_context", { contextTokens: m.contextTokens });
+						if (m.wouldCut) appendProgress(ctx.cwd, featureId, "context_reseam_shadow", { contextTokens: m.contextTokens, threshold: m.threshold });
+					}
+				} catch {
+					/* sem medida → sem evento */
+				}
 				// Escopa o universo à fatia do batch em execução (doc 05 §5.1): o step in_progress do
 				// feature-run.json carrega as tasks DESTE batch. Fallback (K=1/sem run) = plano inteiro.
 				const { taskIds, batchId } = batchUniverse(readFeatureRun(ctx.cwd, featureId), plan.tasks.map((t) => t.id));

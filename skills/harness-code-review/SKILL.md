@@ -86,7 +86,11 @@ burned on already-dismissed flakes.
 ## 1) Gather the feature diff + worker evidence (scope)
 Collect what the reviewers need to judge **claims vs reality**, not just the diff:
 - the diff from the feature's base to HEAD (round 1) or the fix delta (re-run, per §0.5), plus the
-  full contents of the changed files;
+  full contents of the changed files. **Write the diff ONCE to
+  `.harness/runs/<feature-id>/validation/harness-code-review/diff.patch` and hand the axes the
+  PATH, not the content.** Each axis reads the file in its own context; you do not hold the full
+  diff in yours. Re-dumping `git diff` into the orchestrating session is a measured waste — one
+  real gate re-ran it 13 times across 20 sessions, each dump re-billed on every later turn;
 - the **worker handoffs** `.harness/runs/<feature-id>/handoffs/*.json` (what the worker *claims* it
   implemented, tested, and left undone) and, when present, the **worker transcript skeleton**
   (`sessions/*.jsonl` tool/'message' skeleton) — so a reviewer can check a claim ("added tests for

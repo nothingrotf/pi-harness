@@ -53,6 +53,34 @@ export interface SessionUsage extends UsageTotals {
 }
 
 /**
+ * Contexto carregado no ÚLTIMO turno de uma sessão (input+cacheRead+cacheWrite da última mensagem
+ * assistant com usage) — o "tamanho" atual da conversa, o número que a re-costura vigia. Não é
+ * cumulativo: cada turno re-cobra o histórico inteiro, então o último turno JÁ É o total carregado.
+ * Tolerante a linha parcial (ficheiro em escrita). null sem ficheiro/sem turno com usage.
+ */
+export function lastTurnContext(file: string | undefined): number | null {
+	if (!file) return null;
+	let last: number | null = null;
+	try {
+		for (const line of fs.readFileSync(file, "utf8").split("\n")) {
+			const t = line.trim();
+			if (!t) continue;
+			let o: SessionLine;
+			try {
+				o = JSON.parse(t) as SessionLine;
+			} catch {
+				continue;
+			}
+			const u = o.message?.usage;
+			if (o.message?.role === "assistant" && u) last = (u.input ?? 0) + (u.cacheRead ?? 0) + (u.cacheWrite ?? 0);
+		}
+	} catch {
+		return null;
+	}
+	return last;
+}
+
+/**
  * Folda o usage de um transcript de sessão do pi (jsonl; uma entry por linha, mensagem em
  * `.message`). Tolerante: linhas parciais/não-JSON são puladas (o ficheiro pode estar a ser
  * escrito por um worker vivo — leitura read-only, mesmo contrato do session-read).

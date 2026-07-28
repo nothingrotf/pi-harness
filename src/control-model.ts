@@ -693,6 +693,12 @@ export function progressSegments(e: ProgressRaw): ProgressSegment[] {
 		}
 		case "gate_round_cap":
 			return [SEG("ship-gate round cap", "warning"), SEG(`: ${str(e.rounds)}/${str(e.cap)} — orchestrator must decide`, "muted")];
+		case "task_context": {
+			const kt = Math.round(Number(e.contextTokens ?? 0) / 1000);
+			return [SEG("context ", "muted"), SEG(`${kt}k tok/turn`, kt >= 150 ? "warning" : "dim")];
+		}
+		case "context_reseam_shadow":
+			return [SEG("reseam shadow", "warning"), SEG(`: ${Math.round(Number(e.contextTokens ?? 0) / 1000)}k ≥ ${Math.round(Number(e.threshold ?? 0) / 1000)}k — would cut here`, "muted")];
 		case "commit_gate_zero_tests":
 			return [SEG("commit gate", "error"), SEG(": command collected ZERO tests", "muted")];
 		case "step_started":
