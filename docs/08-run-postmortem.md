@@ -202,3 +202,23 @@ Erros de tool: 504 de 21.935 (2,3%), incl. 36 falhas de schema no `edit`
    Jaccard ≥0.6) para recurrence funcionar.
 10. **Validar comandos de teste no setup** — `services.yaml` deve provar que cada comando
     coleta >0 testes (6 falsos verdes por `--project` mal-ordenado).
+
+## 8. Estado da implementação
+
+| # | Ação | Estado | Commit |
+|---|---|---|---|
+| 1 | Cap de rodadas de review (`gateRounds` + `GATE_ROUND_CAP`, `grantGateRound` explícito) | feito | `7f3e12d` |
+| 2 | Piso de severidade + postura por rodada + não-bloqueante nunca vira fix task | feito | `7f3e12d` |
+| 3 | FIX tasks registradas no `plan.json` (`appendFixTasksToPlan`) | feito | `7f3e12d` |
+| 4 | Ledger `litigatedFindings` + `synthesis-r<N>.json` + `reviewedHead` | feito | `7f3e12d` |
+| 9 | Lessons injetadas no worker + dedup por similaridade | feito | `7f3e12d` |
+| — | **Fase de design (shared derivations)** — a causa-raiz, não listada acima | feito | `3cef90d` |
+| 7 | Branch: tree suja não abandona mais a feature na base | feito | `e18a0ef` |
+| 8 | Preflight de portas no run-start (`ports_preflight`) | feito | `4898144` |
+| 10 | Sentinela de coleta vazia (falso verde) no commit gate + skills | feito | `4898144` |
+| 5 | Bootstrap pré-digerido (imposto de contexto — 97% dos tokens) | **aberto** | — |
+| 6 | Sessões mais curtas (`HARNESS_TASK_BUDGET`) | **aberto** | — |
+
+Nada disto foi exercitado numa feature real ainda — só 499 testes unitários + verificação
+dos parsers contra os artefatos reais de sotaq e hibou. A próxima validação honesta é uma
+feature de ponta a ponta observando `gateRounds` segurar.
