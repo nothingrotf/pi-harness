@@ -164,28 +164,39 @@ test("insertFixTask: re-arma ship gates completed (regressão: assertions da fix
 		assert.equal(g.status, "pending", `${g.id} re-armado para re-validar a fix`);
 		assert.equal(g.attempts, 0, `${g.id} ganha ciclo de validação fresco`);
 	}
-	assert.equal(run.gateRounds, 1, "a rodada é contada no run (attempts zera, gateRounds NÃO)");
+	assert.equal(run.gateRounds ?? 0, 0, "re-arme NÃO conta rodada — só um julgamento reprovado conta (runLoop)");
 	const impl = run.steps.find((s) => s.id === IMPL_STEP_ID);
 	assert.equal(impl?.status, "completed", "steps de task concluídos NÃO regridem");
 });
 
-test("gateRounds: acumula por re-arme e nunca zera (o freio que attempts=0 apagava)", () => {
+test("gateRounds: julgamento REPROVADO consome rodada; crash sem handoff só queima attempt (regressão real: 8 attempts / 3 rodadas / gateRounds=0)", async () => {
 	const run = planFeatureRun("feat-x", tasks("T1"), NOW);
-	injectShipGate(run);
-	const gate = run.steps.find((s) => s.id === "ship-gate-code-review") as FeatureRun["steps"][0];
-	for (let i = 1; i <= 4; i++) {
-		for (const s of run.steps) s.status = "completed";
-		insertFixTask(run, { id: `FIX${i}`, skillName: "backend-worker" });
-		assert.equal(run.gateRounds, i, `rodada ${i} contada`);
-		assert.equal(gate.attempts, 0, "attempts continua zerando (retentativa é outra dimensão)");
-	}
-	// Duas fixes empilhadas ANTES de re-validar são UMA rodada — a rodada é a validação, não a fix.
-	insertFixTask(run, { id: "FIX5", skillName: "backend-worker" });
-	assert.equal(run.gateRounds, 4, "gate já pending não re-conta");
-	assert.equal(gateRoundCapReached(run, 4), true, "bateu o teto");
-	assert.equal(gateRoundCapReached(run, 5), false, "abaixo do teto");
+	const events: string[] = [];
+	// rodada 1: gate reprova COM handoff (reported) → conta.
+	await runLoop("/repo", run, deps(spawnFrom({ "ship-gate-code-review": { code: 0, success: false, reported: true } }), { log: (ev) => events.push(ev) }));
+	assert.equal(run.status, "orchestrator_turn");
+	assert.equal(run.gateRounds, 1, "reprovação julgada = 1 rodada");
+	assert.ok(events.includes("gate_round_consumed"));
+
+	// crash de provider (sem handoff): attempt queimado, rodada NÃO.
+	run.status = "running";
+	await runLoop("/repo", run, deps(spawnFrom({ "ship-gate-code-review": { code: 0, success: false, reported: false } })));
+	assert.equal(run.gateRounds, 1, "fizzle sem julgamento não consome rodada");
+
+	// gate passa → não consome; fix re-arma sem contar; próxima reprovação conta.
+	run.status = "running";
+	await runLoop("/repo", run, deps(spawnFrom({})));
+	assert.equal(run.status, "completed");
+	assert.equal(run.gateRounds, 1, "pass não consome rodada");
+	insertFixTask(run, { id: "FIX1", skillName: "backend-worker" });
+	assert.equal(run.gateRounds, 1, "re-arme não conta");
+	run.status = "running";
+	await runLoop("/repo", run, deps(spawnFrom({ "ship-gate-code-review": { code: 0, success: false, reported: true } })));
+	assert.equal(run.gateRounds, 2, "nova reprovação julgada conta");
+
+	assert.equal(gateRoundCapReached(run, 2), true, "bateu o teto");
 	grantGateRound(run);
-	assert.equal(gateRoundCapReached(run, 4), false, "rodada concedida explicitamente destrava");
+	assert.equal(gateRoundCapReached(run, 2), false, "rodada concedida explicitamente destrava");
 });
 
 test("runLoop: teto de rodadas do ship gate → orchestrator_turn (gate_round_cap), não mais uma rodada", async () => {
@@ -193,17 +204,17 @@ test("runLoop: teto de rodadas do ship gate → orchestrator_turn (gate_round_ca
 	await runLoop("/repo", run, deps(spawnFrom({}), { roundCap: 2 }));
 	assert.equal(run.status, "completed");
 
-	// Duas rodadas COMPLETAS de fix→re-validação consomem o teto.
+	// Duas rodadas REPROVADAS consomem o teto (cap 2). FIX0 re-arma o gate completado do pass acima.
+	insertFixTask(run, { id: "FIX0", skillName: "backend-worker" });
 	for (let i = 1; i <= 2; i++) {
-		insertFixTask(run, { id: `FIX${i}`, skillName: "backend-worker" });
 		run.status = "running";
-		await runLoop("/repo", run, deps(spawnFrom({}), { roundCap: 2 }));
+		await runLoop("/repo", run, deps(spawnFrom({ "ship-gate-code-review": { code: 0, success: false, reported: true } }), { roundCap: 2 }));
+		assert.equal(run.gateRounds, i);
 	}
-	assert.equal(run.gateRounds, 2);
 
 	const events: string[] = [];
 	const ran: string[] = [];
-	insertFixTask(run, { id: "FIX3", skillName: "backend-worker" });
+	insertFixTask(run, { id: "FIX1", skillName: "backend-worker" });
 	run.status = "running";
 	await runLoop(
 		"/repo",
@@ -211,7 +222,7 @@ test("runLoop: teto de rodadas do ship gate → orchestrator_turn (gate_round_ca
 		deps(
 			async (s) => {
 				ran.push(s.id);
-				return { code: 0, success: true };
+				return { code: 0, success: true, reported: true };
 			},
 			{ roundCap: 2, log: (ev) => events.push(ev) },
 		),
@@ -219,7 +230,7 @@ test("runLoop: teto de rodadas do ship gate → orchestrator_turn (gate_round_ca
 	assert.equal(run.status, "orchestrator_turn");
 	assert.equal(run.turnReason, "gate_round_cap");
 	assert.ok(events.includes("gate_round_cap"), "evento registado na trilha");
-	assert.deepEqual(ran, ["FIX3"], "a fix corre; o gate NÃO re-roda uma 3ª vez sozinho");
+	assert.deepEqual(ran, ["FIX1"], "a fix corre; o gate NÃO re-roda uma 3ª vez sozinho");
 
 	// (b) o orchestrator concede explicitamente mais uma rodada → destrava.
 	run.status = "running";

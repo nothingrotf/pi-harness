@@ -332,18 +332,17 @@ export function insertFixTask(run: FeatureRun, task: PlanTaskRef): void {
 	else run.steps.splice(gateIdx, 0, step);
 	// RE-ARMA os ship gates já concluídos: uma fix task muda o código DEPOIS da validação — gates
 	// completed têm de re-validar (senão as assertions da fix nunca viram `passed` → completion
-	// gate deadlock). Attempts resetam (novo ciclo, budget fresco); `gateRounds` incrementa UMA vez
-	// por re-arme e NUNCA zera — é o freio do loop de review (GATE_ROUND_CAP). Fixes empilhadas
-	// antes de re-validar contam como UMA rodada: a rodada é a validação, não a fix.
-	let rearmed = false;
+	// gate deadlock). Attempts resetam (novo ciclo, budget fresco). `gateRounds` NÃO conta aqui:
+	// a rodada é contada quando o gate DEVOLVE um julgamento reprovado (runLoop) — contar no
+	// re-arme só via o caminho gate-PASSOU-e-fix-re-armou e deixava o caminho dominante (gate
+	// REPROVA → fixes → re-validação do mesmo step pending) sem freio nenhum: numa run real o
+	// gate somou 8 attempts / 3 rodadas reais com gateRounds parado em 0.
 	for (const s of run.steps) {
 		if (s.kind === "ship-gate" && s.status === "completed") {
 			s.status = "pending";
 			s.attempts = 0;
-			rearmed = true;
 		}
 	}
-	if (rearmed) run.gateRounds = (run.gateRounds ?? 0) + 1;
 }
 
 /** Teto de rodadas efetivo (cap + rodadas concedidas explicitamente). */
@@ -550,6 +549,13 @@ export async function runLoop(cwd: string, run: FeatureRun, deps: FeatureRunLoop
 		} else {
 			// Falha real (successState failure/partial ou exit != 0) numa tentativa FRESH: step volta a
 			// pending (próxima tentativa = worker NOVO, do zero) e o run devolve controle ao orchestrator.
+			// Um ship gate que REPROVOU com handoff persistido (res.reported) consumiu uma RODADA de
+			// review — é este o contador do GATE_ROUND_CAP. Crash/fizzle sem handoff (provider caíu no
+			// meio) queima só attempt, nunca rodada: o julgamento não aconteceu.
+			if (step.kind === "ship-gate" && res.reported) {
+				run.gateRounds = (run.gateRounds ?? 0) + 1;
+				deps.log?.("gate_round_consumed", { id: step.id, rounds: run.gateRounds, cap: gateRoundBudget(run, roundCap) });
+			}
 			step.status = "pending";
 			run.status = "orchestrator_turn";
 			run.turnReason = "step_returned";
