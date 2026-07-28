@@ -6,11 +6,16 @@
 #   archive -> arquiva a run recem-terminada com um rotulo, renomeia a branch,
 #              volta pro commit base, reseta o run dir e RESTAURA o profile
 #              (lessons da run A nao podem vazar pra run B)
+#   arm     -> monta um braco NOVO a partir do commit base gravado, reidratando
+#              plan/contract/feature de um braco ja arquivado. Necessario quando a
+#              base branch ja andou (a feature anterior foi mergeada): sem isto o
+#              braco novo partiria de um commit diferente e nao seria comparavel.
 #   finish  -> desliga skipDelivery (pra entregar a branch vencedora)
 #
 # Uso:
 #   eval-ab.sh prep    <repo> <featureId>
 #   eval-ab.sh archive <repo> <featureId> <label>
+#   eval-ab.sh arm     <repo> <featureId> <sourceLabel> <branchName>
 #   eval-ab.sh finish
 #
 # Compare depois:  python3 run-metrics.py --compare .harness/runs/.evals/<fid>/<A> .harness/runs/.evals/<fid>/<B>
@@ -104,6 +109,41 @@ archive)
 	echo "profile restaurado do baseline (lessons de \"$label\" nao vazam pra proxima run)"
 	echo "arquivado em $dest"
 	echo "AGORA: edite ~/.pi/agent/pi-harness/models.json (config da proxima run) e rode /harness run \"$fid\""
+	;;
+arm)
+	repo="${1:?repo}"; fid="${2:?featureId}"; src="${3:?sourceLabel}"; branch="${4:?branchName}"
+	cd "$repo"
+	run=".harness/runs/$fid"; ev=".harness/runs/.evals/$fid"
+	[ -f "$ev/base.json" ] || die "rode prep primeiro (falta $ev/base.json)"
+	[ -d "$ev/$src" ] || die "braco \"$src\" nao existe em $ev"
+	[ -f "$run/feature-run.json" ] && die "$fid tem uma run em curso — arquive antes"
+	if git status --porcelain | grep -qv '^.. \.harness/'; then
+		die "working tree tem mudancas fora de .harness/ — commit/stash antes"
+	fi
+	base_sha=$(python3 -c "import json;print(json.load(open('$ev/base.json'))['baseSha'])")
+	git rev-parse --verify "$base_sha^{commit}" >/dev/null 2>&1 || die "commit base $base_sha nao existe mais"
+	git show-ref --verify --quiet "refs/heads/$branch" && die "branch \"$branch\" ja existe"
+
+	# Reidrata os artefatos CONGELADOS do braco de origem (mesmo contrato, mesmo plano).
+	mkdir -p "$run"
+	for f in plan.json contract.md feature.md; do cp "$ev/$src/$f" "$run/$f"; done
+	python3 - "$run" <<-'EOF'
+	import json, re, sys
+	run = sys.argv[1]
+	plan = json.load(open(f"{run}/plan.json"))
+	contract = set(re.findall(r"### (VAL-[A-Z0-9-]+):", open(f"{run}/contract.md").read()))
+	n_fix = sum(1 for t in plan["tasks"] if t["id"].upper().startswith("FIX"))
+	plan["tasks"] = [t for t in plan["tasks"] if not t["id"].upper().startswith("FIX")]
+	plan["assertions"] = [a for a in plan["assertions"] if a in contract]
+	json.dump(plan, open(f"{run}/plan.json", "w"), indent=2)
+	json.dump({"featureId": plan["featureId"], "assertions": {a: "pending" for a in plan["assertions"]}}, open(f"{run}/status.json", "w"), indent=2)
+	print(f"plan reidratado: {len(plan['tasks'])} tasks ({n_fix} FIX descartadas), {len(plan['assertions'])} assertions pending")
+	EOF
+	rm -rf .harness/profile && cp -R "$ev/profile.baseline" .harness/profile
+	git switch -c "$branch" "$base_sha"
+	set_skip_delivery true
+	echo "braco pronto: branch \"$branch\" em ${base_sha:0:8} (mesma base dos outros bracos)"
+	echo "AGORA: ajuste ~/.pi/agent/pi-harness/models.json e rode /harness run \"$fid\""
 	;;
 finish)
 	set_skip_delivery false
