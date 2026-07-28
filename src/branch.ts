@@ -149,16 +149,24 @@ export interface BranchAction {
 
 /**
  * Decide a ação de branch no início do run, CONSERVADORA (decisão do usuário): só cria/troca
- * quando está na base com tree limpo; senão RESPEITA a branch atual (assume intencional) e não
- * mexe. Nunca move/descarta trabalho. Pura — o caller junta o estado do git e executa.
+ * quando está na base; senão RESPEITA a branch atual (assume intencional) e não mexe. Nunca
+ * move/descarta trabalho. Pura — o caller junta o estado do git e executa.
+ *
+ * A sujeira do tree só veta o **switch** (branch existente, onde o checkout pode conflitar). Pro
+ * **create**, `git switch -c` LEVA as mudanças junto — é exatamente o que se quer, e vetar era
+ * puro custo: nas runs reais 19 dos 29 skips foram "working tree dirty", e cada um deixou a
+ * feature INTEIRA commitada na base branch. O sintoma só aparecia horas depois, no deliver:
+ * "HEAD is master, which is also the configured PR base; opening a base-to-base PR is impossible"
+ * (41 menções em handoffs), com um worker tendo de carvar os commits à mão.
  */
 export function planBranchAction(input: { name: string; current: string; base: string; dirty: boolean; branchExists: boolean; enabled: boolean }): BranchAction {
 	const { name, current, base, dirty, branchExists, enabled } = input;
 	if (!enabled) return { kind: "skip", branch: name, reason: "branch-per-feature disabled (delivery.json)" };
 	if (current === name) return { kind: "noop", branch: name, reason: "already on the feature branch" };
 	if (current !== base) return { kind: "skip", branch: name, reason: `on "${current}" (not base "${base}") — respecting the current branch` };
-	if (dirty) return { kind: "skip", branch: name, reason: "working tree dirty — not switching (commit/stash first)" };
-	return branchExists ? { kind: "switch", branch: name, reason: "feature branch exists — switching" } : { kind: "create", branch: name, reason: `cutting from "${base}"` };
+	if (!branchExists) return { kind: "create", branch: name, reason: `cutting from "${base}"${dirty ? " (carrying the working tree along)" : ""}` };
+	if (dirty) return { kind: "skip", branch: name, reason: `working tree dirty and "${name}" already exists — not switching (commit/stash first)` };
+	return { kind: "switch", branch: name, reason: "feature branch exists — switching" };
 }
 
 /**

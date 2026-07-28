@@ -64,16 +64,32 @@ test("ensureFeatureBranch: em 'master' limpo com base default 'main' → CRIA a 
 	}
 });
 
-test("ensureFeatureBranch: árvore suja → skip (conservador, não move trabalho)", () => {
+test("ensureFeatureBranch: árvore suja + branch nova → cria e LEVA a tree junto (nunca deixa a feature na base)", () => {
 	const dir = makeRepo("master");
 	try {
 		fs.writeFileSync(path.join(dir, "dirty.txt"), "wip");
 		const r = ensureFeatureBranch(dir, "add login", cfg());
-		assert.equal(r.kind, "skip");
-		assert.match(r.reason, /dirty/);
-		// continua em master
+		assert.equal(r.kind, "create");
 		const now = execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: dir, encoding: "utf8" }).trim();
-		assert.equal(now, "master");
+		assert.equal(now, r.branch, "saiu de master");
+		assert.equal(fs.readFileSync(path.join(dir, "dirty.txt"), "utf8"), "wip", "o trabalho em curso veio junto, intacto");
+	} finally {
+		fs.rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("ensureFeatureBranch: árvore suja + branch JÁ existente → skip (checkout pode conflitar)", () => {
+	const dir = makeRepo("master");
+	try {
+		const first = ensureFeatureBranch(dir, "add login", cfg());
+		git(dir, "switch", "master");
+		assert.equal(first.kind, "create");
+		fs.writeFileSync(path.join(dir, "dirty.txt"), "wip");
+		const r = ensureFeatureBranch(dir, "add login", cfg());
+		assert.equal(r.kind, "skip");
+		assert.match(r.reason, /already exists/);
+		const now = execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: dir, encoding: "utf8" }).trim();
+		assert.equal(now, "master", "não mexe");
 	} finally {
 		fs.rmSync(dir, { recursive: true, force: true });
 	}

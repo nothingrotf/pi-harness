@@ -60,10 +60,20 @@ test("planBranchAction: conservador — cria só na base+limpo; senão respeita 
 	const onOther = planBranchAction({ ...base, current: "next", dirty: false, branchExists: false });
 	assert.equal(onOther.kind, "skip");
 	assert.match(onOther.reason, /respecting the current branch/);
-	// na base porém suja → skip
-	assert.equal(planBranchAction({ ...base, current: "develop", dirty: true, branchExists: false }).kind, "skip");
 	// desligado → skip
 	assert.equal(planBranchAction({ ...base, current: "develop", dirty: false, branchExists: false, enabled: false }).kind, "skip");
+});
+
+test("planBranchAction: sujeira só veta o SWITCH — create leva a tree junto (regressão: 19 skips deixaram a feature na base branch)", () => {
+	const base = { name: "feat/adm-84-x", base: "develop", enabled: true };
+	// na base, suja, branch NÃO existe → create (git switch -c carrega as mudanças)
+	const created = planBranchAction({ ...base, current: "develop", dirty: true, branchExists: false });
+	assert.equal(created.kind, "create", "nunca deixar a feature commitar na base por causa de tree suja");
+	assert.match(created.reason, /carrying the working tree along/);
+	// na base, suja, branch JÁ existe → skip (checkout pode conflitar)
+	const skipped = planBranchAction({ ...base, current: "develop", dirty: true, branchExists: true });
+	assert.equal(skipped.kind, "skip");
+	assert.match(skipped.reason, /already exists/);
 });
 
 test("inferType: fix/chore/docs por prefixo; senão fallback", () => {
