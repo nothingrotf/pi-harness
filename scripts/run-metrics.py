@@ -95,6 +95,9 @@ def collect(run_dir):
     m["shadow_n"] = len(ctxs)
     m["shadow_max_k"] = round(max(ctxs) / 1000) if ctxs else None
     m["shadow_would_cut"] = ev.get("context_reseam_shadow", 0)
+    m["reseam_cuts"] = ev.get("context_reseam_cut", 0)
+    m["continuations"] = ev.get("batch_continued", 0)
+    m["no_progress"] = ev.get("batch_no_progress", 0)
 
     synths = sorted(glob.glob(os.path.join(run_dir, "validation", "harness-code-review", "synthesis-r*.json")))
     single = os.path.join(run_dir, "validation", "harness-code-review", "synthesis.json")
@@ -136,6 +139,13 @@ def collect(run_dir):
     m["peak_ctx_k"] = round(total["maxCtx"] / 1000)
     m["models"] = dict(per_model)
 
+    # Normalizado por task entregue — a unica forma honesta de comparar features de tamanhos
+    # diferentes (o A/B controlado compara totais; entre features so' o por-task diz algo).
+    delivered = m["planned_tasks"] + m["fix_tasks"]
+    m["cost_per_task"] = round(m["cost_usd"] / delivered, 2) if delivered else None
+    m["tokens_per_task_M"] = round(m["tokens_M"] / delivered, 2) if delivered else None
+    m["fix_ratio"] = round(m["fix_tasks"] / m["planned_tasks"], 2) if m["planned_tasks"] else None
+
     cfg = load(os.path.join(run_dir, "models.snapshot.json"))
     if cfg:
         m["config"] = {r: f"{c.get('model', '(inherit)')}/{c.get('thinking', '-')}" for r, c in (cfg.get("roles") or {}).items()}
@@ -164,9 +174,15 @@ ROWS = [
     ("commit_gate_passed", "commit gate verde"),
     ("commit_gate_failed", "commit gate vermelho"),
     ("zero_test_gates", "gates zero-teste"),
-    ("shadow_max_k", "sombra: pico ctx (k)"),
-    ("shadow_would_cut", "sombra: would-cut"),
+    ("shadow_max_k", "pico ctx na fronteira (k)"),
     ("peak_ctx_k", "pico contexto real (k)"),
+    ("shadow_would_cut", "sombra: would-cut"),
+    ("reseam_cuts", "cortes por contexto"),
+    ("continuations", "steps de continuacao"),
+    ("no_progress", "batches sem progresso"),
+    ("cost_per_task", "custo POR TASK (USD)"),
+    ("tokens_per_task_M", "tokens POR TASK (M)"),
+    ("fix_ratio", "FIX / task planejada"),
 ]
 
 
