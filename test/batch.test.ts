@@ -80,12 +80,44 @@ test("REGRESSÃO (caso real medido): fold não pode empilhar cauda num batch já
 		{ id: "T9", skillName: "backend" },
 		{ id: "T10", skillName: "backend" },
 	];
-	const got = ids(batchTasks(plan, 7));
-	assert.deepEqual(got, [["T1", "T2", "T3", "T4", "T5", "T6", "T7", "T8"], ["T9", "T10"]], "a feature roda em 2 sessões, não numa só");
+	const got = batchTasks(plan, 7);
+	const w = (b: PlanTaskRef[]) => b.reduce((s, t) => s + (t.weight ?? 1), 0);
+	assert.deepEqual(ids(got), [["T1", "T2", "T3", "T4", "T5", "T6"], ["T7", "T8", "T9", "T10"]], "2 sessões, e o lookahead corta ANTES do cluster T7-T8 em vez de engoli-lo");
 	assert.ok(
-		got.every((b) => b.length <= 8),
-		"nenhum batch acima do teto de transbordo",
+		got.every((b) => w(b) <= 7),
+		`nenhum batch acima do budget (pesos: ${got.map(w)})`,
 	);
+});
+
+test("REGRESSÃO (plano real do PR B): clusters adjacentes não são grudados num batch de 157%", () => {
+	// 17 tasks, budget 7. Três clusters (pesos 5, 6, 2) + cauda com break duro e duas trocas de
+	// skill. Sem lookahead o batcher enchia até 5 (< budget), passava pela emenda LEGAL entre os
+	// dois primeiros clusters e era obrigado a engolir o segundo inteiro → batch de peso 11.
+	const c = (id: string, cohesion?: string, weight?: number, skill = "api-worker", brk = false): PlanTaskRef => ({
+		id,
+		skillName: skill,
+		...(cohesion ? { cohesion } : {}),
+		...(weight ? { weight } : {}),
+		...(brk ? { batchBreakBefore: true } : {}),
+	});
+	const plan = [
+		c("T1", "two-call-core"), c("T2", "two-call-core"), c("T3", "two-call-core"), c("T4", "two-call-core"), c("T5", "two-call-core"),
+		c("T6", "orchestrator-rewire", 2), c("T7", "orchestrator-rewire"), c("T8", "orchestrator-rewire", 2), c("T9", "orchestrator-rewire"),
+		c("T10", "review-integrity"), c("T11", "review-integrity"),
+		c("T12"), c("T13", undefined, 2, "api-worker", true), c("T14"), c("T15"),
+		c("T16", undefined, undefined, "web-worker"), c("T17", undefined, undefined, "platform-worker"),
+	];
+	const got = batchTasks(plan, 7);
+	const w = (b: PlanTaskRef[]) => b.reduce((s, t) => s + (t.weight ?? 1), 0);
+	assert.deepEqual(ids(got)[0], ["T1", "T2", "T3", "T4", "T5"], "corta na emenda legal entre os dois clusters");
+	assert.ok(
+		got.every((b) => w(b) <= 7),
+		`nenhum batch acima do budget (pesos: ${got.map(w)})`,
+	);
+	for (const tag of ["two-call-core", "orchestrator-rewire", "review-integrity"]) {
+		const spread = got.filter((b) => b.some((t) => t.cohesion === tag)).length;
+		assert.equal(spread, 1, `cluster "${tag}" continua inteiro num só batch`);
+	}
 });
 
 test("coesão nunca é rachada (overflow permitido além do budget)", () => {

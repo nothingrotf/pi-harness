@@ -36,6 +36,20 @@ export function batchBudget(env: NodeJS.ProcessEnv = process.env): number {
 	return Math.floor(n);
 }
 
+/**
+ * Peso do cluster de coesão que COMEÇA em `i` (a corrida de tasks consecutivas com a mesma tag
+ * não-vazia). Sem tag → o peso da própria task. É o compromisso mínimo de quem entra ali: como
+ * `cutForbidden` proíbe rachar o cluster, aceitar a primeira task obriga a aceitar todas.
+ */
+function clusterWeightAt(tasks: PlanTaskRef[], i: number): number {
+	const first = tasks[i];
+	if (!first) return 0;
+	if (!first.cohesion) return weightOf(first);
+	let total = 0;
+	for (let j = i; j < tasks.length && tasks[j].cohesion === first.cohesion; j++) total += weightOf(tasks[j]);
+	return total;
+}
+
 /** Corte PROIBIDO entre a→b: mesma tag de coesão não-vazia (não racha um cluster coeso). */
 export function cutForbidden(a: PlanTaskRef, b: PlanTaskRef): boolean {
 	return !!a.cohesion && a.cohesion === b.cohesion;
@@ -93,9 +107,17 @@ export function batchTasks(tasks: PlanTaskRef[], budget: number = batchBudget())
 		const w = sumWeight(current); // budget token-aware: soma de pesos, não contagem (default 1 = count)
 		const atBudget = w >= budget;
 		const skillSeam = t.skillName !== next.skillName;
-		// Fecha: (a) ao atingir o budget, em qualquer emenda permitida; ou (b) numa emenda de skill
-		// com o batch já ≥ softFloor (bônus de localização — budget ainda manda, isto só antecipa).
-		if (atBudget || (skillSeam && w >= softFloor)) {
+		// LOOKAHEAD: um cluster de coesão é indivisível, então entrar nele é um compromisso com o seu
+		// peso INTEIRO. Encher até o budget antes de olhar adiante faz o batcher passar por uma emenda
+		// legal e depois ser obrigado a engolir o cluster todo. Caso real (plano do PR B): clusters de
+		// peso 5 e 6, emenda legal entre eles ignorada porque 5 < 7 — resultado, um batch de peso 11
+		// (157% do budget), a mesma forma que produziu 570k tok/turno. Se o próximo cluster não cabe e o
+		// batch já tem massa (≥ softFloor), corta AQUI.
+		const nextCluster = clusterWeightAt(tasks, i + 1);
+		const clusterOverflows = w >= softFloor && w + nextCluster > budget;
+		// Fecha: (a) ao atingir o budget, em qualquer emenda permitida; (b) numa emenda de skill
+		// com o batch já ≥ softFloor (bônus de localização); ou (c) quando o próximo cluster não cabe.
+		if (atBudget || clusterOverflows || (skillSeam && w >= softFloor)) {
 			batches.push(current);
 			current = [];
 		}
