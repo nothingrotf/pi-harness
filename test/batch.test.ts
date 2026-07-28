@@ -5,7 +5,7 @@
  */
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { batchBudget, batchTasks, DEFAULT_BATCH_BUDGET } from "../src/batch.ts";
+import { batchBudget, batchTasks, DEFAULT_BATCH_BUDGET, foldCeiling } from "../src/batch.ts";
 import type { PlanTaskRef } from "../src/feature-runner.ts";
 
 /** Helper: N tasks sequenciais com skill/coesão opcionais. */
@@ -42,21 +42,49 @@ test("split por budget: 20 tasks homogêneas / budget 7 → [7,7,6]", () => {
 	);
 });
 
-test("cauda curta (1–2) funde no batch anterior", () => {
-	// 15 tasks / budget 7 → [7,7,1] → funde a cauda 1 → [7,8].
+test("cauda curta funde SÓ até o teto de transbordo (25% do budget)", () => {
+	// 15 tasks / budget 7 → [7,7,1] → 7+1=8 ≤ teto(8) → funde → [7,8].
 	assert.deepEqual(
 		ids(batchTasks(mk(15), 7)).map((b) => b.length),
 		[7, 8],
 	);
-	// 16 / 7 → [7,7,2] → funde → [7,9].
+	// 16 / 7 → [7,7,2] → 7+2=9 > teto(8) → NÃO funde. Um worker de 2 tasks paga ~45k de cold start;
+	// um batch de 9 paga contexto crescente em CADA turno — medido em 301k/570k tok/turno.
 	assert.deepEqual(
 		ids(batchTasks(mk(16), 7)).map((b) => b.length),
-		[7, 9],
+		[7, 7, 2],
 	);
-	// 17 / 7 → [7,7,3] → cauda 3 NÃO funde.
+	// 17 / 7 → [7,7,3] → cauda 3 NÃO funde (regra de tamanho, independente do teto).
 	assert.deepEqual(
 		ids(batchTasks(mk(17), 7)).map((b) => b.length),
 		[7, 7, 3],
+	);
+});
+
+test("foldCeiling: 25% de transbordo, arredondado pra baixo", () => {
+	assert.equal(foldCeiling(7), 8);
+	assert.equal(foldCeiling(4), 5);
+	assert.equal(foldCeiling(10), 12);
+});
+
+test("REGRESSÃO (caso real medido): fold não pode empilhar cauda num batch já estourado", () => {
+	// Plano exato da feature do A/B em sotaq: 10 tasks, budget 7, T7 weight 2 + cluster de coesão
+	// T7–T8. O corte cai em T8 (peso 9, já acima do budget porque cutForbidden protege o cluster) e
+	// a cauda T9+T10 era fundida de volta → UM batch de 10 tasks / peso 11 (157% do budget).
+	// Consequência medida nas duas runs: contexto monotônico até 301k (opus) e 570k (sonnet)
+	// tok/turno, contra ~90k de mediana no resto da feature.
+	const plan = [
+		...mk(6),
+		{ id: "T7", skillName: "backend", cohesion: "asr-orchestration", weight: 2 },
+		{ id: "T8", skillName: "backend", cohesion: "asr-orchestration" },
+		{ id: "T9", skillName: "backend" },
+		{ id: "T10", skillName: "backend" },
+	];
+	const got = ids(batchTasks(plan, 7));
+	assert.deepEqual(got, [["T1", "T2", "T3", "T4", "T5", "T6", "T7", "T8"], ["T9", "T10"]], "a feature roda em 2 sessões, não numa só");
+	assert.ok(
+		got.every((b) => b.length <= 8),
+		"nenhum batch acima do teto de transbordo",
 	);
 });
 

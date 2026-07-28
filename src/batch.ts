@@ -106,16 +106,36 @@ export function batchTasks(tasks: PlanTaskRef[], budget: number = batchBudget())
 }
 
 /**
+ * Transbordo tolerado no fold da cauda (25% do budget, arredondado pra baixo). Budget 7 → teto 8:
+ * funde 7+1, recusa 7+2 e 9+2. Abaixo disso o fold vira impossível (todo batch cheio recusaria e
+ * cada cauda viraria um worker de 1 task); acima, reabre o caso de 157% que motivou o teto.
+ */
+export function foldCeiling(budget: number): number {
+	return Math.floor(budget * 1.25);
+}
+
+/**
  * Funde uma cauda curta (último batch de 1–2 tasks) no batch anterior — regra tlc, evita um worker
  * quase-vazio. NÃO funde se o split da cauda foi FORÇADO por `batchBreakBefore` (respeita a
  * fronteira dura) nem se não há batch anterior.
  */
-function foldShortTail(batches: PlanTaskRef[][], _budget: number): PlanTaskRef[][] {
+function foldShortTail(batches: PlanTaskRef[][], budget: number): PlanTaskRef[][] {
 	if (batches.length < 2) return batches;
 	const last = batches[batches.length - 1];
 	if (last.length > 2) return batches;
 	if (last[0]?.batchBreakBefore) return batches; // fronteira dura: não funde
 	const prev = batches[batches.length - 2];
+	// O fold troca um custo por outro: evita um worker quase-vazio (cold start ~45k tokens) ao preço
+	// de um batch maior. Vale para um transbordo PEQUENO; não vale quando o batch anterior já
+	// estourou, porque aí o preço é uma sessão longa cujo contexto cresce a cada task — e cada turno
+	// re-cobra a conversa inteira.
+	//
+	// Incidente que isto fecha (medido): plano de 10 tasks, budget 7, peso 11. O corte caiu em T8
+	// (peso 9, já acima do budget) e a cauda T9+T10 foi fundida de volta — UM batch de 10 tasks a
+	// 157% do budget. As duas runs do A/B rodaram essa sessão única e o contexto cresceu
+	// monotonicamente até 301k (opus) e 570k (sonnet) tokens/turno, contra ~90k de mediana no resto
+	// da mesma feature. `_budget` estava sem uso aqui: o fold era incondicional.
+	if (sumWeight(prev) + sumWeight(last) > foldCeiling(budget)) return batches;
 	// Não funde através de um cluster de coesão partido (a cauda pertence a outro cluster): seguro
 	// porque cutForbidden já impede rachar o MESMO cluster; aqui a cauda tem cohesion distinta/ausente.
 	prev.push(...last);
