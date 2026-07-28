@@ -216,8 +216,8 @@ Erros de tool: 504 de 21.935 (2,3%), incl. 36 falhas de schema no `edit`
 | 7 | Branch: tree suja não abandona mais a feature na base | feito | `e18a0ef` |
 | 8 | Preflight de portas no run-start (`ports_preflight`) | feito | `4898144` |
 | 10 | Sentinela de coleta vazia (falso verde) no commit gate + skills | feito | `4898144` |
-| 5 | Bootstrap pré-digerido (imposto de contexto — 97% dos tokens) | **aberto** | — |
-| 6 | Sessões mais curtas (`HARNESS_TASK_BUDGET`) | **aberto** | — |
+| 5 | Dieta de leitura (worker não lê plan.json/contract.md; diff escrito 1x) | feito | `9b5737b` |
+| 6 | Re-costura por contexto — **MODO SOMBRA** (mede em toda fronteira de task, nunca corta; `HARNESS_CONTEXT_RESEAM` default 200k). Corte real só após eval de 3-5 features comparando frequência/posição dos would-cut vs fix-ratio, rounds e 1º-QA. O corte real deverá respeitar clusters `cohesion` ("never split a phase", tlc-spec-driven). | sombra | `9b5737b` |
 
 Nada disto foi exercitado numa feature real ainda — só 499 testes unitários + verificação
 dos parsers contra os artefatos reais de sotaq e hibou. A próxima validação honesta é uma
