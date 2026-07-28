@@ -7,9 +7,12 @@ import {
 	addLesson,
 	autoPrune,
 	emptyStore,
+	findMatchingLesson,
 	listLessons,
 	type LessonsStore,
+	lessonsBriefing,
 	lessonsMdPath,
+	lessonSimilarity,
 	normalizeLessonText,
 	penalizeLesson,
 	readLessonsStore,
@@ -173,4 +176,51 @@ test("penalizeLesson: só confirmed pode ser penalizada (regressão: candidate i
 	assert.equal(p.ok, false);
 	assert.match(p.error ?? "", /only confirmed/);
 	assert.equal(r.ok ? r.lesson.harmful : -1, 0, "candidate intocada");
+});
+
+test("lessonSimilarity: parafrase da MESMA lição pontua alto; lição de outro assunto pontua baixo", () => {
+	const a = "When two call sites need the same derived domain value, extract one named function both call";
+	const b = "Two call sites that need the same derived value must call one shared named function";
+	const c = "Date bounds and YYYY-MM-DD serialization in UI filters must be computed in UTC";
+	assert.ok(lessonSimilarity(a, b) >= 0.6, `parafrase deve mergear, deu ${lessonSimilarity(a, b)}`);
+	assert.ok(lessonSimilarity(a, c) < 0.6, `assuntos distintos não mergeiam, deu ${lessonSimilarity(a, c)}`);
+	assert.equal(lessonSimilarity("the a of", "and or but"), 0, "só stopwords → 0");
+});
+
+test("addLesson: parafrase mergeia e PROMOVE (regressão real: 37 liões em sotaq+hibou, 100% candidate/recurrence 1)", () => {
+	const s = emptyStore();
+	const r1 = add(s, "feat-a", "When two call sites need the same derived domain value, extract one named function both call");
+	const r2 = add(s, "feat-b", "Two call sites that need the same derived value must call one shared named function");
+	assert.equal(s.lessons.length, 1, "parafrase não cria segunda lição");
+	assert.ok(r2.ok && r2.lesson.recurrence === 2 && r2.lesson.status === "confirmed" && r2.promoted);
+	assert.equal(r1.ok ? r1.lesson.id : "", r2.ok ? r2.lesson.id : "x", "mesma lição");
+});
+
+test("findMatchingLesson: signal diferente nunca mergeia, nem por similaridade", () => {
+	const s = emptyStore();
+	const text = "Persistence must use the domain-owned status const, never a local string literal";
+	add(s, "feat-a", text, { signal: "gate_fail" });
+	assert.equal(findMatchingLesson(s, "gate_fail", `${text} anywhere`)?.signal, "gate_fail");
+	assert.equal(findMatchingLesson(s, "failed_assertion", text), undefined, "signal distinto é outra lição");
+});
+
+test("lessonsBriefing: vazio quando não há lições; separa confirmed de candidate; omite quarantined", () => {
+	const s = emptyStore();
+	assert.equal(lessonsBriefing(s), "", "store vazia não injeta nada");
+
+	add(s, "feat-a", "Aggregate responses whose fields must sum have to read from one repeatable read transaction");
+	add(s, "feat-b", "Aggregate responses whose fields must sum have to read from one repeatable read transaction");
+	add(s, "feat-c", "Give each e2e test its own rate-limit caller identity to avoid shared bucket flakiness");
+	const confirmed = listLessons(s, { status: "confirmed" });
+	assert.equal(confirmed.length, 1, "a recorrente promoveu");
+
+	const brief = lessonsBriefing(s);
+	assert.match(brief, /## Confirmed/);
+	assert.match(brief, /## Candidates/);
+	assert.match(brief, /repeatable read transaction/);
+	assert.match(brief, /rate-limit caller identity/);
+
+	const q = confirmed[0];
+	q.status = "quarantined";
+	assert.doesNotMatch(lessonsBriefing(s), /repeatable read transaction/, "quarantined nunca é injetada");
 });

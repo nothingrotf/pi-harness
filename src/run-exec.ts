@@ -12,8 +12,8 @@
 import { type FeatureRun, runLoop } from "./feature-runner.ts";
 import { appendProgress, dismissedRefs, handoffOutcome, latestHandoff, type PersistedHandoff } from "./handoff.ts";
 import { loadModelConfig, resolveChoice, roleForStep, skippedGateSkills } from "./model-config.ts";
-import { completionGate, ensureAssertions, loadOrBuildFeatureRun, readPlan, writeFeatureRun } from "./plan.ts";
-import { applyResumeMode, buildRunReport, insertFixTasks, type ResumeModeOpts } from "./run-control.ts";
+import { appendFixTasksToPlan, completionGate, ensureAssertions, loadOrBuildFeatureRun, readPlan, writeFeatureRun } from "./plan.ts";
+import { applyGateRoundGrant, applyResumeMode, buildRunReport, insertFixTasks, type ResumeModeOpts } from "./run-control.ts";
 import { clearWorkerClient, registerRun, registerWorkerClient, unregisterRun } from "./run-registry.ts";
 import { makeRpcSpawn } from "./rpc-worker.ts";
 import { featureUsageFromRun, sessionUsageFromFile } from "./usage.ts";
@@ -41,10 +41,22 @@ export async function executeFeatureRun(cwd: string, featureId: string, opts: Ex
 	if (!rp) return { ok: false, error: "no_run", message: `Could not build a feature run for "${featureId}".` };
 	const { run } = rp;
 	const mode = applyResumeMode(run, rp.resume, opts);
+	const grantNote = applyGateRoundGrant(run, opts.grantGateRound);
 	const inserted = opts.fixTasks?.length ? insertFixTasks(run, opts.fixTasks) : [];
-	// Assertions novas trazidas por fix tasks (bug reports) entram no status.json como pending —
-	// sem isto o completion gate nunca as vê e o qa-validator não as testa.
-	if (inserted.length) ensureAssertions(cwd, featureId, (opts.fixTasks ?? []).filter((t) => inserted.includes(t.id)).flatMap((t) => t.fulfills ?? []));
+	if (inserted.length) {
+		const fixes = (opts.fixTasks ?? []).filter((t) => inserted.includes(t.id));
+		// Registra a fix no plan.json TAMBÉM: `next_task` só lê de lá, e sem isto o worker de fix cai
+		// fora do loop e commita sem passar pelo commitGate (ver appendFixTasksToPlan).
+		const planned = appendFixTasksToPlan(
+			cwd,
+			featureId,
+			fixes.map((t) => ({ id: t.id, description: t.description ?? "", skillName: t.skillName, fulfills: t.fulfills ?? [], preconditions: t.preconditions, expectedBehavior: t.expectedBehavior })),
+		);
+		if (planned.issues.length) appendProgress(cwd, featureId, "fix_plan_append_failed", { fixTasks: inserted, issues: planned.issues });
+		// Assertions novas trazidas por fix tasks (bug reports) entram no status.json como pending —
+		// sem isto o completion gate nunca as vê e o qa-validator não as testa.
+		ensureAssertions(cwd, featureId, fixes.flatMap((t) => t.fulfills ?? []));
+	}
 
 	const cfg = loadModelConfig(); // per-role model+effort (worker/validator) — ENFORCED nos children
 	let controller: AbortController;
@@ -53,7 +65,7 @@ export async function executeFeatureRun(cwd: string, featureId: string, opts: Ex
 	} catch {
 		return { ok: false, error: "already_running", message: `A run for "${featureId}" is already active. Pause it (/harness pause) or wait for it to return.` };
 	}
-	appendProgress(cwd, featureId, "run_started", { via: "runner", resume: mode.resume, fixTasks: inserted });
+	appendProgress(cwd, featureId, "run_started", { via: "runner", resume: mode.resume, fixTasks: inserted, ...(grantNote ? { gateRoundGranted: run.gateRoundBonus } : {}) });
 	try {
 		const spawn = makeRpcSpawn({
 			featureId,

@@ -4,6 +4,8 @@ import {
 	cleanupOrphan,
 	type FeatureRun,
 	type FeatureRunLoopDeps,
+	gateRoundCapReached,
+	grantGateRound,
 	grantRetryBudget,
 	IMPL_STEP_ID,
 	injectShipGate,
@@ -162,8 +164,68 @@ test("insertFixTask: re-arma ship gates completed (regressão: assertions da fix
 		assert.equal(g.status, "pending", `${g.id} re-armado para re-validar a fix`);
 		assert.equal(g.attempts, 0, `${g.id} ganha ciclo de validação fresco`);
 	}
+	assert.equal(run.gateRounds, 1, "a rodada é contada no run (attempts zera, gateRounds NÃO)");
 	const impl = run.steps.find((s) => s.id === IMPL_STEP_ID);
 	assert.equal(impl?.status, "completed", "steps de task concluídos NÃO regridem");
+});
+
+test("gateRounds: acumula por re-arme e nunca zera (o freio que attempts=0 apagava)", () => {
+	const run = planFeatureRun("feat-x", tasks("T1"), NOW);
+	injectShipGate(run);
+	const gate = run.steps.find((s) => s.id === "ship-gate-code-review") as FeatureRun["steps"][0];
+	for (let i = 1; i <= 4; i++) {
+		for (const s of run.steps) s.status = "completed";
+		insertFixTask(run, { id: `FIX${i}`, skillName: "backend-worker" });
+		assert.equal(run.gateRounds, i, `rodada ${i} contada`);
+		assert.equal(gate.attempts, 0, "attempts continua zerando (retentativa é outra dimensão)");
+	}
+	// Duas fixes empilhadas ANTES de re-validar são UMA rodada — a rodada é a validação, não a fix.
+	insertFixTask(run, { id: "FIX5", skillName: "backend-worker" });
+	assert.equal(run.gateRounds, 4, "gate já pending não re-conta");
+	assert.equal(gateRoundCapReached(run, 4), true, "bateu o teto");
+	assert.equal(gateRoundCapReached(run, 5), false, "abaixo do teto");
+	grantGateRound(run);
+	assert.equal(gateRoundCapReached(run, 4), false, "rodada concedida explicitamente destrava");
+});
+
+test("runLoop: teto de rodadas do ship gate → orchestrator_turn (gate_round_cap), não mais uma rodada", async () => {
+	const run = planFeatureRun("feat-x", tasks("T1"), NOW);
+	await runLoop("/repo", run, deps(spawnFrom({}), { roundCap: 2 }));
+	assert.equal(run.status, "completed");
+
+	// Duas rodadas COMPLETAS de fix→re-validação consomem o teto.
+	for (let i = 1; i <= 2; i++) {
+		insertFixTask(run, { id: `FIX${i}`, skillName: "backend-worker" });
+		run.status = "running";
+		await runLoop("/repo", run, deps(spawnFrom({}), { roundCap: 2 }));
+	}
+	assert.equal(run.gateRounds, 2);
+
+	const events: string[] = [];
+	const ran: string[] = [];
+	insertFixTask(run, { id: "FIX3", skillName: "backend-worker" });
+	run.status = "running";
+	await runLoop(
+		"/repo",
+		run,
+		deps(
+			async (s) => {
+				ran.push(s.id);
+				return { code: 0, success: true };
+			},
+			{ roundCap: 2, log: (ev) => events.push(ev) },
+		),
+	);
+	assert.equal(run.status, "orchestrator_turn");
+	assert.equal(run.turnReason, "gate_round_cap");
+	assert.ok(events.includes("gate_round_cap"), "evento registado na trilha");
+	assert.deepEqual(ran, ["FIX3"], "a fix corre; o gate NÃO re-roda uma 3ª vez sozinho");
+
+	// (b) o orchestrator concede explicitamente mais uma rodada → destrava.
+	run.status = "running";
+	grantGateRound(run);
+	await runLoop("/repo", run, deps(spawnFrom({}), { roundCap: 2 }));
+	assert.equal(run.status, "completed", "grantGateRound destrava e o gate re-valida");
 });
 
 test("runLoop: ship gate falha (harness-code-review) → orchestrator_turn; fix task corre antes do gate no resume", async () => {

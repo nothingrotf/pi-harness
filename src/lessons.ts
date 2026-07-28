@@ -93,6 +93,57 @@ function lessonKey(signal: string, text: string): string {
 	return `${signal}::${normalizeLessonText(text)}`;
 }
 
+const STOPWORDS = new Set(["a", "an", "and", "are", "as", "at", "be", "but", "by", "can", "do", "for", "from", "has", "have", "in", "into", "is", "it", "its", "must", "never", "no", "not", "of", "on", "one", "or", "so", "that", "the", "their", "them", "then", "there", "this", "to", "was", "were", "when", "which", "with", "you", "your"]);
+
+/**
+ * Bag de tokens significativos de uma lição (normalizada, sem stopwords, sem tokens <3 chars).
+ * Base do matching por similaridade — ver `lessonSimilarity`.
+ */
+export function lessonTokens(text: string): Set<string> {
+	return new Set(
+		normalizeLessonText(text)
+			.split(" ")
+			.filter((w) => w.length >= 3 && !STOPWORDS.has(w)),
+	);
+}
+
+/**
+ * Jaccard sobre tokens significativos. Substitui o dedup EXATO-após-normalização, que era a razão
+ * de nenhuma lição jamais promover: duas lições sobre a MESMA coisa nunca ficam byte-idênticas, o
+ * key nunca colidia, `recurrence` ficava travado em 1 e `promoteThreshold` nunca era atingido
+ * (evidência: 37 lições reais em sotaq+hibou, 100% `candidate`, 100% recurrence 1 — inclusive
+ * L-003/L-004 do sotaq, o MESMO texto com pontuação diferente, contadas como duas).
+ */
+export function lessonSimilarity(a: string, b: string): number {
+	const ta = lessonTokens(a);
+	const tb = lessonTokens(b);
+	if (ta.size === 0 || tb.size === 0) return 0;
+	let inter = 0;
+	for (const t of ta) if (tb.has(t)) inter += 1;
+	return inter / (ta.size + tb.size - inter);
+}
+
+/** Acima disto duas lições são A MESMA e fazem merge (recurrence++). Conservador de propósito. */
+export const LESSON_MERGE_THRESHOLD = 0.6;
+
+/** Lição já registada que é a mesma que `text` (key exata primeiro, depois similaridade). */
+export function findMatchingLesson(store: LessonsStore, signal: string, text: string, threshold = LESSON_MERGE_THRESHOLD): Lesson | undefined {
+	const key = lessonKey(signal, text);
+	const exact = store.lessons.find((l) => l.key === key);
+	if (exact) return exact;
+	let best: Lesson | undefined;
+	let bestScore = threshold;
+	for (const l of store.lessons) {
+		if (l.signal !== signal) continue;
+		const score = lessonSimilarity(l.text, text);
+		if (score >= bestScore) {
+			best = l;
+			bestScore = score;
+		}
+	}
+	return best;
+}
+
 function ageDays(iso: string, now: Date): number {
 	const t = Date.parse(iso);
 	if (Number.isNaN(t)) return 0;
@@ -145,7 +196,7 @@ export function addLesson(store: LessonsStore, input: AddLessonInput): AddLesson
 
 	autoPrune(store);
 	const key = lessonKey(signal, text);
-	const existing = store.lessons.find((l) => l.key === key);
+	const existing = findMatchingLesson(store, signal, text);
 	const ev = scope ? `${source} (${scope})` : source;
 
 	if (existing) {
@@ -244,6 +295,45 @@ export function renderLessons(store: LessonsStore): string {
 	block("Confirmed (carregue na convergência / no worker)", buckets.confirmed, "Corroboradas em múltiplas features. Seguras como guidance.");
 	block("Candidates (em observação — NÃO carregue como guidance)", buckets.candidate, "Vistas 1x ou ainda não corroboradas. Rastreadas, não confiadas.");
 	block("Quarantined (falharam quando aplicadas — ignore)", buckets.quarantined, "Confirmed que recorreu junto de falha. Mantida pro mantenedor revisar.");
+	return `${out.join("\n").replace(/\n+$/, "")}\n`;
+}
+
+/** Tetos do briefing injetado — o custo é contexto de TODA sessão de worker, então é apertado. */
+export const LESSON_BRIEFING_LIMITS = { confirmed: 25, candidate: 15 } as const;
+
+/**
+ * Bloco COMPACTO de lições pra injetar no system prompt de todo worker/validator.
+ *
+ * O buraco que isto fecha: `lessons.json` era write-only. `store_lesson` gravava, `LESSONS.md`
+ * renderizava, e NENHUM prompt lia — 37 lições reais acumuladas em sotaq+hibou sem jamais chegar
+ * a um worker. A lição L-020 do hibou ("two call sites needing the same derived value must share
+ * one named function") foi escrita DEPOIS de 3 rounds de review a repetirem o mesmo defeito, e
+ * nunca preveniu nada porque ninguém a leu.
+ *
+ * `candidate` entra marcado e sem autoridade (é 1 ocorrência, pode ser ruído) mas ENTRA: enquanto
+ * a promoção estiver rara, carregar só `confirmed` injeta o conjunto vazio. `quarantined` nunca.
+ */
+export function lessonsBriefing(store: LessonsStore): string {
+	const confirmed = listLessons(store, { status: "confirmed" }).slice(0, LESSON_BRIEFING_LIMITS.confirmed);
+	const candidate = listLessons(store, { status: "candidate" }).slice(0, LESSON_BRIEFING_LIMITS.candidate);
+	if (confirmed.length === 0 && candidate.length === 0) return "";
+
+	const line = (l: Lesson): string => `- ${l.id}${l.scope ? ` [${l.scope}]` : ""}: ${l.text}`;
+	const out: string[] = [
+		"# Lessons from prior features in THIS repo",
+		"",
+		"Grounded in real verification failures here (ship-gate findings, failed assertions, red gates).",
+		"Read them BEFORE you design anything. They are the cheapest defect prevention you have: each one",
+		"cost this repo at least one failed review round. Full detail: `.harness/profile/LESSONS.md`.",
+		"",
+	];
+	if (confirmed.length > 0) {
+		out.push("## Confirmed — recurred across multiple features. Treat as binding.", "", ...confirmed.map(line), "");
+	}
+	if (candidate.length > 0) {
+		out.push("## Candidates — seen once. Not binding, but check your work against them.", "", ...candidate.map(line), "");
+	}
+	out.push("If your change repeats one of these, you are about to fail the ship gate for a known reason.");
 	return `${out.join("\n").replace(/\n+$/, "")}\n`;
 }
 

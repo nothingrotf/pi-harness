@@ -35,7 +35,13 @@ const PARAMS = Type.Object({
 	featureId: Type.String({ description: "The feature id (selects .harness/runs/<featureId>/)." }),
 	restartFeature: Type.Optional(Type.Boolean({ description: "Requeue the in-progress step and re-run it FROM SCRATCH with a fresh worker (instead of re-attaching the paused session)." })),
 	resumeWorkerSessionId: Type.Optional(Type.String({ description: "Re-attach a SPECIFIC recorded worker session id (see the run report / feature-run.json workerSessionIds)." })),
-	fixTasks: Type.Optional(Type.Array(FixTask, { description: "Fix tasks to insert ABOVE the ship gate before running (they preempt — run first)." })),
+	fixTasks: Type.Optional(Type.Array(FixTask, { description: "Fix tasks to insert ABOVE the ship gate before running (they preempt — run first). BLOCKING findings only — dispatching a fix for a non-blocking finding is the single most expensive mistake in this system." })),
+	grantGateRound: Type.Optional(
+		Type.Boolean({
+			description:
+				"Grant ONE extra ship-gate round after the runner returned turnReason 'gate_round_cap'. Deliberate act — re-calling run_feature alone will NOT resume a capped gate. Use only for a demonstrated correctness/security/contract defect; otherwise ship what is green and move the rest to a follow-up feature.",
+		}),
+	),
 });
 
 export function registerRunFeatureTool(pi: ExtensionAPI): void {
@@ -47,11 +53,12 @@ export function registerRunFeatureTool(pi: ExtensionAPI): void {
 				"Hand control to the deterministic feature runner (BLOCKING — the droid start_mission_run analog). It spawns ONE session-backed worker for the whole feature (next_task loop, commit per task), then runs the ship-gate validators, enforcing per-role model config, attempt budgets and pause/resume. Returns a report when the feature completes, pauses, or returns to you (orchestrator_turn). Resume modes: default re-attaches the paused worker; restartFeature re-runs fresh; resumeWorkerSessionId picks a specific session. Pass fixTasks to insert fixes above the gate before resuming.",
 			parameters: PARAMS,
 			async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-				const { featureId, restartFeature, resumeWorkerSessionId, fixTasks } = params as {
+				const { featureId, restartFeature, resumeWorkerSessionId, fixTasks, grantGateRound } = params as {
 					featureId: string;
 					restartFeature?: boolean;
 					resumeWorkerSessionId?: string;
 					fixTasks?: { id: string; skillName: string; description?: string; fulfills?: string[]; preconditions?: string[]; expectedBehavior?: string[] }[];
+					grantGateRound?: boolean;
 				};
 				// Sincroniza o ponteiro de feature ativa (.session.json) com a feature que ESTÁ a correr:
 				// sem isto, num fluxo multi-feature o ponteiro só-comando congelava na 1ª feature — o cockpit
@@ -65,7 +72,7 @@ export function registerRunFeatureTool(pi: ExtensionAPI): void {
 						return undefined;
 					}
 				})();
-				const res = await executeFeatureRun(ctx.cwd, featureId, { restartFeature, resumeWorkerSessionId, fixTasks, orchestratorSessionFile });
+				const res = await executeFeatureRun(ctx.cwd, featureId, { restartFeature, resumeWorkerSessionId, fixTasks, grantGateRound, orchestratorSessionFile });
 				if (!res.ok) return { content: [{ type: "text", text: res.message }], details: { error: res.error } };
 				return { content: [{ type: "text", text: res.report }], details: { status: res.run.status, pauseReason: res.run.pauseReason } };
 			},

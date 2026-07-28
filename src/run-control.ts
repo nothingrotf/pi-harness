@@ -11,7 +11,7 @@
  * monta o report que o tool devolve ao orchestrator. Puro/testável — sem IO além dos tipos.
  */
 import type { FeatureRun, PlanTaskRef } from "./feature-runner.ts";
-import { insertFixTask } from "./feature-runner.ts";
+import { gateRoundBudget, grantGateRound, insertFixTask } from "./feature-runner.ts";
 import { dismissalRef, type PersistedHandoff } from "./handoff.ts";
 import { type SessionUsage, usageReportLines } from "./usage.ts";
 
@@ -20,6 +20,8 @@ export interface ResumeModeOpts {
 	restartFeature?: boolean;
 	/** re-attacha esta sessão específica (droid: resumeWorkerSessionId). */
 	resumeWorkerSessionId?: string;
+	/** concede UMA rodada extra de ship gate após `gate_round_cap` (ato deliberado). */
+	grantGateRound?: boolean;
 }
 
 export interface ResumeMode {
@@ -57,6 +59,16 @@ export function applyResumeMode(run: FeatureRun, baseResume: boolean, opts: Resu
 		return { resume: true, note: `re-attaching worker session "${id}" on step "${step.id}"` };
 	}
 	return { resume: baseResume };
+}
+
+/**
+ * Concede a rodada extra pedida explicitamente (`grantGateRound`) e devolve a nota do report.
+ * Separado de applyResumeMode de propósito: destravar o teto de review é uma decisão, não um resume.
+ */
+export function applyGateRoundGrant(run: FeatureRun, grant?: boolean): string | undefined {
+	if (!grant) return undefined;
+	grantGateRound(run);
+	return `gate round granted — rounds ${run.gateRounds ?? 0}/${gateRoundBudget(run)}`;
 }
 
 /** Insere fix tasks acima do ship gate (dedup por id de step já existente). Retorna os ids inseridos. */
@@ -126,7 +138,16 @@ function nextActionFor(run: FeatureRun): string {
 		case "completed":
 			return "Next: verify status.json (all assertions passed) and summarize what shipped.";
 		case "orchestrator_turn":
-			return "Next: analyze the handoff (delegate root-cause to Agent subagents), then call run_feature again — with fixTasks:[…] if a fix is needed (inserted above the ship gate).";
+			if (run.turnReason === "gate_round_cap") {
+				return [
+					`Next: ship-gate ROUND CAP reached (${run.gateRounds ?? 0}/${gateRoundBudget(run)} rounds). Do NOT dispatch another fix reflexively — measured on this harness's own runs, 83% of blocking findings raised after round 1 were introduced by the previous round's fix.`,
+					"Decide explicitly, and tell the user which you chose:",
+					"  (a) SHIP — if the correctness axis is clean, move the remaining non-blocking findings to a follow-up feature and let the gate pass;",
+					"  (b) ONE more round — only for a correctness/security/contract defect you can demonstrate: call run_feature with grantGateRound:true (re-calling without it will NOT resume);",
+					"  (c) STOP — return to the user with the open findings if the feature is genuinely not converging.",
+				].join("\n");
+			}
+			return "Next: analyze the handoff (delegate root-cause to Agent subagents), then call run_feature again — with fixTasks:[…] if a fix is needed (inserted above the ship gate). Dispatch fixes for BLOCKING findings only — non-blocking findings are backlog, never a fix task.";
 		case "paused":
 			switch (run.pauseReason) {
 				case "usage_limit":

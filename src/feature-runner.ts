@@ -36,6 +36,20 @@ import { batchBudget, batchTasks } from "./batch.ts";
 /** Per-step attempt budget (referência: 5). */
 export const STEP_ATTEMPT_BUDGET = 5;
 
+/**
+ * Teto de RODADAS do ship gate (re-validações da feature após fix tasks). Dimensão distinta de
+ * `attempts`: attempts conta re-tentativas da MESMA validação (worker crashou, retornou failure) e
+ * legitimamente zera a cada re-arme; a RODADA conta quantas vezes o gate já julgou este trabalho.
+ * É do RUN, não do step: uma fix re-arma os três gates em bloco, então "rodada" é um fato da
+ * feature.
+ *
+ * Existe porque `insertFixTask` re-arma o gate com `attempts = 0`, o que apagava o único freio do
+ * loop: numa run real o gate acumulou 18 rodadas / 22 fix tasks / 20,6 h com `attempts` nunca
+ * passando de 5. Ao bater o teto o runner devolve ao orchestrator; só um `grantGateRound`
+ * EXPLÍCITO destrava — re-chamar run_feature não basta, que é precisamente o reflexo observado.
+ */
+export const GATE_ROUND_CAP = Number(process.env.HARNESS_GATE_ROUND_CAP ?? 6);
+
 export type FeatureRunStatus = "running" | "paused" | "orchestrator_turn" | "completed";
 /** `cancelled` é RESERVADO (glifo ✓/●/○/✗ da TUI); o runner ainda não cancela steps — só pausa por budget. */
 export type StepStatus = "pending" | "in_progress" | "completed" | "cancelled";
@@ -109,6 +123,10 @@ export interface FeatureRun {
 	turnReason?: string;
 	/** budget extra por step concedido no resume após esgotamento (doc 07: featureRetryBudgetBonus). */
 	retryBudgetBonus?: Record<string, number>;
+	/** Rodadas de ship gate já gastas (++ a cada re-arme por fix task). Nunca zera — GATE_ROUND_CAP. */
+	gateRounds?: number;
+	/** Rodadas extras concedidas explicitamente pelo orchestrator (grantGateRound). */
+	gateRoundBonus?: number;
 }
 
 /** Resultado de spawnar um child. `aborted` = interrompido (SIGINT/abort). */
@@ -160,6 +178,8 @@ export interface FeatureRunLoopDeps {
 	onProgress?: (run: FeatureRun) => void;
 	now?: () => string;
 	budget?: number;
+	/** teto de rodadas de re-validação do ship gate (inj-etável p/ teste; default GATE_ROUND_CAP). */
+	roundCap?: number;
 	/** ship-gate skills a pular (skipScrutiny/skipUserTesting) — de skippedGateSkills(config). */
 	gateSkip?: ReadonlySet<string>;
 	/** gerador de worker session id (injetável p/ teste; default aleatório). */
@@ -312,13 +332,34 @@ export function insertFixTask(run: FeatureRun, task: PlanTaskRef): void {
 	else run.steps.splice(gateIdx, 0, step);
 	// RE-ARMA os ship gates já concluídos: uma fix task muda o código DEPOIS da validação — gates
 	// completed têm de re-validar (senão as assertions da fix nunca viram `passed` → completion
-	// gate deadlock). Attempts resetam: novo ciclo de validação, budget fresco.
+	// gate deadlock). Attempts resetam (novo ciclo, budget fresco); `gateRounds` incrementa UMA vez
+	// por re-arme e NUNCA zera — é o freio do loop de review (GATE_ROUND_CAP). Fixes empilhadas
+	// antes de re-validar contam como UMA rodada: a rodada é a validação, não a fix.
+	let rearmed = false;
 	for (const s of run.steps) {
 		if (s.kind === "ship-gate" && s.status === "completed") {
 			s.status = "pending";
 			s.attempts = 0;
+			rearmed = true;
 		}
 	}
+	if (rearmed) run.gateRounds = (run.gateRounds ?? 0) + 1;
+}
+
+/** Teto de rodadas efetivo (cap + rodadas concedidas explicitamente). */
+export function gateRoundBudget(run: FeatureRun, cap: number = GATE_ROUND_CAP): number {
+	return cap + (run.gateRoundBonus ?? 0);
+}
+
+/** true quando o ship gate já esgotou as rodadas de re-validação permitidas. */
+export function gateRoundCapReached(run: FeatureRun, cap: number = GATE_ROUND_CAP): boolean {
+	return (run.gateRounds ?? 0) >= gateRoundBudget(run, cap);
+}
+
+/** Concede UMA rodada extra de ship gate. Ato deliberado do orchestrator — nunca automático. */
+export function grantGateRound(run: FeatureRun): number {
+	run.gateRoundBonus = (run.gateRoundBonus ?? 0) + 1;
+	return run.gateRoundBonus;
 }
 
 function nextWorkerSessionId(step: FeatureStep, gen: () => string): string {
@@ -335,6 +376,7 @@ function nextWorkerSessionId(step: FeatureStep, gen: () => string): string {
  */
 export async function runLoop(cwd: string, run: FeatureRun, deps: FeatureRunLoopDeps, signal?: AbortSignal, opts: RunLoopOpts = {}): Promise<FeatureRun> {
 	const base = deps.budget ?? STEP_ATTEMPT_BUDGET;
+	const roundCap = deps.roundCap ?? GATE_ROUND_CAP;
 	const genId = deps.genSessionId ?? defaultGenSessionId;
 	const heartbeatMs = opts.heartbeatMs ?? deps.heartbeatMs;
 	// Fresh start → reclama órfãos (recuperação de HARD kill: in_progress → pending, re-roda do zero).
@@ -392,6 +434,15 @@ export async function runLoop(cwd: string, run: FeatureRun, deps: FeatureRunLoop
 					break;
 				}
 				run.status = "completed";
+				break;
+			}
+			// Teto de RODADAS do ship gate: um review que já julgou esta feature N vezes não vira
+			// automaticamente a N+1. Devolve ao orchestrator pra decidir explicitamente (ship o que está
+			// verde e move o resto pra follow-up, ou concede uma rodada). Sem isto fix→review é ilimitado.
+			if (step.kind === "ship-gate" && gateRoundCapReached(run, roundCap)) {
+				run.status = "orchestrator_turn";
+				run.turnReason = "gate_round_cap";
+				deps.log?.("gate_round_cap", { id: step.id, rounds: run.gateRounds ?? 0, cap: gateRoundBudget(run, roundCap) });
 				break;
 			}
 			const budget = base + (run.retryBudgetBonus?.[step.id] ?? 0);

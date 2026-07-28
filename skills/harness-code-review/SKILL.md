@@ -32,16 +32,27 @@ Read `.harness/runs/<feature-id>/validation/harness-code-review/synthesis.json` 
 previous round). If absent → this is **round 1**, full review (below). If present → this is a
 **re-run after fix tasks**, and you MUST narrow scope, not repeat the whole 3-axis pass:
 - Set `round` = previous `round` + 1 and carry the prior synthesis as `previousRound` context.
-- **Scope the diff to the FIX commits only** — the commits added since the prior synthesis
-  (`git log <prior-head>..HEAD`; the prior head is the last task commit the prior round reviewed,
-  recoverable from the run's progress log / handoffs). Each axis reviews the fix diff **together
-  with the original blocking finding it addresses** (pass the prior `blockingFindings` as input) so
-  it verifies the fix actually resolves the issue AND introduces no regression — not a blind
-  re-scan of untouched code.
+- **Scope the diff to the FIX commits only** — read `reviewedHead` straight out of the prior
+  synthesis and diff `git log <reviewedHead>..HEAD`. Do NOT reconstruct it from the progress log or
+  handoffs; §5 mandates the field precisely so this is one read. Each axis reviews the fix diff
+  **together with the original blocking finding it addresses** (pass the prior `blockingFindings`
+  as input) so it verifies the fix actually resolves the issue AND introduces no regression — not a
+  blind re-scan of untouched code.
+- **Load `litigatedFindings`** (the cumulative ledger, §5). It carries every finding any round has
+  already judged, with its verdict. You do not re-raise anything in it — that is how a rewritten
+  sentence oscillates between two opposite verdicts across rounds. Pass it to every axis.
+- **Verify MULTI-PART prior findings part by part.** A finding with two clauses is resolved only
+  when both are. A fix handoff claiming a whole finding closed after addressing the headline half
+  is the observed failure; check each clause against HEAD yourself.
 - Findings the prior round already cleared are NOT re-litigated unless the fix touched their files.
 This is the droid scrutiny re-run protocol (review only fix features, original+fix together) and it
 is what the orchestrator promises ("re-run only re-checks what failed"). Round 1 reviews the whole
 feature diff; later rounds review the delta.
+
+**Suppressed inputs (do NOT let these fail the run):** before §0, read `.harness/runs/<feature-id>/dismissed.json`
+and `harness.md` §"Known Pre-Existing Issues". A gate failure or finding matching either is reported
+in `suppressed` and does not make `status: "fail"` — three consecutive rounds of one real feature
+burned on already-dismissed flakes.
 
 ## 1) Gather the feature diff + worker evidence (scope)
 Collect what the reviewers need to judge **claims vs reality**, not just the diff:
@@ -68,9 +79,12 @@ after a green gate, **only over the feature/fix diff's changed code**, and **onl
    suite), and confirm they **FAIL** (kill the mutant). Then **discard the mutation** — the real
    working tree must be byte-identical afterward (verify `git status` clean).
 3. A **surviving** mutant (tests still pass with the fault) = the suite doesn't discriminate that
-   behavior → a **blocking finding** (`axis: "correctness"`, `finding: "tests survive mutation: <what>"`,
-   `file:line`). The orchestrator turns it into a fix task (strengthen the test), same as any blocking
-   finding. Record killed/survived per mutation in the synthesis (`sensor` block below).
+   behavior → a finding (`axis: "correctness"`, `finding: "tests survive mutation: <what>"`,
+   `file:line`). **Blocking on round 1 only.** From round 2 a survivor is `deferred` unless the
+   mutated line is itself the fix for a prior blocking finding — every fix writes fresh lines that
+   no test was written against, so a late-round sensor manufactures a survivor on demand and the
+   loop never terminates (observed: survivors reported as blocking in rounds 5, 7, 8 and 17 of one
+   feature). Record killed/survived per mutation in the synthesis (`sensor` block below).
 Do NOT weaken or delete tests here; you only probe them. If the gate was red you never reach this
 step. Keep it bounded — this is a sensor, not full mutation-testing tooling.
 
@@ -96,9 +110,41 @@ Ask each for prioritized findings with `file:line` references and evidence.
 After all three finish, synthesize **findings first**, deduplicated across axes. Weight overlapping
 findings more heavily (same issue flagged by 2+ axes = high signal), resolve disagreements with
 your judgment, keep it brief. The three axes are complementary, not redundant: correctness/security,
-structural maintainability, and house-pattern conformance each catch a distinct class. Any
-**blocking** finding (correctness/security defect, ADR/boundary contradiction, structural
-regression that must not ship) → `status: "fail"`.
+structural maintainability, and house-pattern conformance each catch a distinct class.
+
+### Severity floor (HARD — this decides whether the feature ships)
+`blocking` is not "the reviewer would prefer otherwise". A finding is **blocking** only if it is
+both (a) one of these classes and (b) **reachable** — demonstrated on a live path, not hypothetical:
+- a **correctness or security defect** in shipped behavior (wrong result, data loss, race, injection,
+  auth bypass, money moved twice);
+- a **frozen contract assertion** in `contract.md` that the code does not satisfy;
+- a **red programmatic gate** or a migration/rollout that cannot be applied;
+- **round 1 only:** a surviving discrimination mutant (§1.5).
+
+Everything else is **non-blocking**, no matter how strongly an axis words it. Explicitly non-blocking,
+always: documentation / ADR / runbook / comment prose that disagrees with the code; naming; file
+layout; duplication; a missing test for already-correct behavior; "this could be extracted";
+style. These are real — they go in `nonBlockingFindings` and become the **backlog**, not a fix task.
+
+Why the floor exists, from this harness's own runs: across 100 review rounds, **83% of blocking
+findings raised after round 1 were introduced by the previous round's fix**. In one feature, rounds
+9–13 produced 7 consecutive blocking findings that were all ADR/runbook wording, while the reviewer
+had already written at round 8 *"the code is correct on every reachable path"*. Prose contradictions
+blocked a shipped, correct feature for 5 rounds. **Wording never blocks a release.**
+
+### Round-aware posture
+Read `round` from §0.5. Your job changes as it climbs:
+- **round 1** — full review, full severity range. This is where real defects are found; spend here.
+- **rounds 2–3** — verify the prior blockers are resolved; new blockers only under the floor above.
+- **round 4+** — **convergence posture.** State it explicitly in `salientSummary`. Raise a new
+  blocker ONLY for a correctness/security/contract defect you can demonstrate by execution. Anything
+  else, including every finding you would have raised at round 1, goes to `deferredFindings` with a
+  one-line reason. If the correctness axis returns zero blocking findings, say so and pass.
+- A finding already recorded in `litigatedFindings` (§5) with verdict `resolved` or `deferred` is
+  **not re-raised** unless you can show the same defect is live again at HEAD.
+
+`status: "fail"` iff `blockingFindings` is non-empty or the gate is red. Non-blocking findings
+NEVER produce `fail` — a feature does not stop shipping over prose.
 
 ## 4) Learning loop (light)
 The **blocking findings** in your synthesis are the grounded signals the orchestrator distills into
@@ -119,26 +165,39 @@ each to exactly one bucket, and record the losers too (don't let a rejected obse
   re-surfaced verbatim next round.
 
 ## 5) Write synthesis + return to orchestrator
-Write `.harness/runs/<feature-id>/validation/harness-code-review/synthesis.json`:
+Write **both** `.harness/runs/<feature-id>/validation/harness-code-review/synthesis-r<round>.json`
+(immutable, one per round) **and** `synthesis.json` (the same content — the pointer the next round
+reads). The per-round copy exists because a single overwritten path leaves one round of memory, and
+one round of memory is what lets round N+2 re-decide what round N settled.
 ```json
 {
   "feature": "<feature-id>", "round": 1, "status": "pass" | "fail",
   "scope": "full" | "fix-delta",
+  "reviewedHead": "<full sha of HEAD at review time>",
+  "range": "<baseSha>..<reviewedHead>",
   "gate": { "test": {"passed":true}, "typecheck": {"passed":true}, "lint": {"passed":true} },
+  "suppressed": [ { "what":"...", "source":"dismissed.json|harness.md" } ],
   "sensor": { "mutations": 2, "killed": 2, "survived": 0, "survivors": [] },
   "axes": { "correctness": {...}, "quality": {...}, "conventions": {...} },
-  "blockingFindings": [ { "axis":"correctness|quality|conventions", "file":"...", "line":0, "finding":"...", "rule":"<rule or null>" } ],
+  "blockingFindings": [ { "axis":"correctness|quality|conventions", "file":"...", "line":0, "finding":"...", "rule":"<rule or null>", "reachability":"<how you demonstrated it is live>" } ],
+  "nonBlockingFindings": [ { "axis":"...", "file":"...", "line":0, "finding":"..." } ],
+  "deferredFindings": [ { "finding":"...", "reason":"convergence posture round 4+ | sensor after round 1" } ],
+  "litigatedFindings": [ { "id":"R1-B1", "round":1, "finding":"...", "verdict":"resolved|deferred|open|withdrawn", "evidence":"..." } ],
   "appliedUpdates": [ { "target":"services.yaml|library", "description":"..." } ],
   "suggestedGuidanceUpdates": [ { "target":"harness.md|skills|conventions-map.md|coding-principles.md", "suggestion":"...", "evidence":"...", "isSystemic":true } ],
   "rejectedObservations": [ { "observation":"...", "reason":"..." } ],
   "previousRound": null
 }
 ```
+`litigatedFindings` is **cumulative and append-only**: copy the prior round's array forward, update
+the verdicts you resolved this round, append this round's new findings. It is the feature's memory.
+
 On a re-run set `round` (incremented), `scope: "fix-delta"`, and `previousRound` = a short digest of
 the prior synthesis (its round + which blocking findings it raised) so the trail is self-describing.
 Call `EndFeatureRun` with `returnToOrchestrator: true` (always). Blocking findings or a red gate →
-`successState: "failure"`; otherwise `"success"`. Put the synthesis path in `salientSummary`. The
-orchestrator creates fix tasks for blocking findings (re-run only re-checks what failed), acts on
+`successState: "failure"`; otherwise `"success"`. Put the synthesis path **and the round number** in
+`salientSummary`. The orchestrator creates fix tasks for blocking findings **only** (§3 floor —
+non-blocking findings are backlog and MUST NOT be dispatched as fixes), acts on
 `suggestedGuidanceUpdates`, then the harness-qa-validator step runs next.
 
 To run a single axis ad-hoc, spawn that one agent directly instead of this orchestrator.

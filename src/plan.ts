@@ -132,6 +132,47 @@ export function readPlan(cwd: string, featureId: string): Plan | null {
 	}
 }
 
+/**
+ * Registra fix tasks no plan.json (além dos steps do feature-run).
+ *
+ * O buraco que isto fecha: `insertFixTask` escrevia SÓ em feature-run.json, e `next_task` lê SÓ
+ * plan.json — então todo worker de fix recebia "Task FIXn not found in plan", abandonava o loop e
+ * commitava fora do protocolo. Consequência real: o **commitGate não rodava** em 144 de 330 tasks
+ * (44%) nas runs de sotaq+hibou, ou seja, quase metade dos commits entrava sem typecheck — o que
+ * alimenta a próxima rodada de review. Reportado espontaneamente por workers em 12 features.
+ *
+ * A invariante de cobertura (`validatePlan`: cada assertion reivindicada por EXATAMENTE uma task)
+ * é preservada aparando `fulfills` para as assertions ainda não reivindicadas; assertions novas
+ * (bug report) entram em `plan.assertions`. O step do feature-run mantém o `fulfills` completo —
+ * quem re-testa é o qa-validator via status.json.
+ */
+export function appendFixTasksToPlan(cwd: string, featureId: string, tasks: Task[]): { appended: string[]; issues: string[] } {
+	const plan = readPlan(cwd, featureId);
+	if (!plan) return { appended: [], issues: [`no plan.json for "${featureId}"`] };
+
+	const existing = new Set(plan.tasks.map((t) => t.id));
+	const claimed = new Set(plan.tasks.flatMap((t) => t.fulfills ?? []));
+	const assertions = new Set(plan.assertions ?? []);
+	const appended: string[] = [];
+
+	for (const t of tasks) {
+		if (!t.id || existing.has(t.id)) continue;
+		const fulfills = (t.fulfills ?? []).filter((a) => !claimed.has(a));
+		for (const a of fulfills) {
+			claimed.add(a);
+			assertions.add(a);
+		}
+		plan.tasks.push({ ...t, description: t.description || `Fix task ${t.id} (spec delivered in the worker bootstrap).`, fulfills });
+		existing.add(t.id);
+		appended.push(t.id);
+	}
+	if (appended.length === 0) return { appended, issues: [] };
+
+	plan.assertions = [...assertions];
+	const res = storePlan(cwd, plan);
+	return res.ok ? { appended, issues: [] } : { appended: [], issues: res.issues };
+}
+
 export interface CompletionGateResult {
 	ok: boolean;
 	/** assertions ainda não `passed` (pending/failed) — vazio quando ok. */

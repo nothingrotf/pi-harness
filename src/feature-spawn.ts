@@ -15,6 +15,7 @@ import { fileURLToPath } from "node:url";
 import { buildConvergeDispatch } from "./converge-dispatch.ts";
 import type { FeatureStep } from "./feature-runner.ts";
 import type { ConvergeFn } from "./headless.ts";
+import { lessonsBriefing, readLessonsStore } from "./lessons.ts";
 import { type HarnessModelConfig, type ResolvedChoice, resolveChoice } from "./model-config.ts";
 import { buildWorkerBootstrap } from "./worker-bootstrap.ts";
 
@@ -74,6 +75,10 @@ export function buildWorkerSystemPrompt(step: FeatureStep, cwd: string, opts: { 
 		const validator = readSkill(path.join(harnessSkillsDir(), step.skillName));
 		if (validator) parts.push(`# ${step.skillName}\n`, validator);
 	}
+	// Lições do repo ANTES do bootstrap: o worker as lê antes de receber a task, que é quando ainda
+	// dá pra prevenir o defeito. Sem isto lessons.json era write-only (ver lessonsBriefing).
+	const lessons = lessonsBriefing(readLessonsStore(cwd));
+	if (lessons) parts.push("\n", lessons);
 	parts.push("\n", buildWorkerBootstrap(step, opts));
 	parts.push(
 		`\n[runtime] Feature run dir: .harness/runs/${opts.featureId}/ · Profile: .harness/profile/`,

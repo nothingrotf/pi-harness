@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { buildFeatureRun, completionGate, ensureAssertions, featureProgress, loadOrBuildFeatureRun, type Plan, readFeatureRun, readPlan, readStatus, storePlan, validatePlan, writeFeatureRun } from "../src/plan.ts";
+import { appendFixTasksToPlan, buildFeatureRun, completionGate, ensureAssertions, featureProgress, loadOrBuildFeatureRun, type Plan, readFeatureRun, readPlan, readStatus, storePlan, validatePlan, writeFeatureRun } from "../src/plan.ts";
 import { IMPL_STEP_ID } from "../src/feature-runner.ts";
 import { appendProgress } from "../src/handoff.ts";
 
@@ -308,4 +308,45 @@ test("completionGate: pending/failed listadas em failing; todas passed → ok", 
 	st.assertions.A2 = "passed";
 	fs.writeFileSync(sp, JSON.stringify(st));
 	assert.deepEqual(completionGate(d, "feat-x"), { ok: true, failing: [] });
+});
+
+test("appendFixTasksToPlan: fix vira task do plano (regressão: next_task só lê plan.json → 44% dos commits sem commitGate)", () => {
+	const d = tmp();
+	storePlan(d, plan());
+	const r = appendFixTasksToPlan(d, "feat-x", [{ id: "FIX1", description: "close the blocking finding", skillName: "backend-worker", fulfills: ["A-NEW"] }]);
+	assert.deepEqual(r, { appended: ["FIX1"], issues: [] });
+
+	const stored = readPlan(d, "feat-x");
+	const fix = stored?.tasks.find((t) => t.id === "FIX1");
+	assert.ok(fix, "next_task encontra a fix no plano");
+	assert.deepEqual(fix?.fulfills, ["A-NEW"]);
+	assert.ok(stored?.assertions.includes("A-NEW"), "assertion nova do bug report entra no plano");
+	assert.equal(readStatus(d, "feat-x")?.assertions["A-NEW"], "pending", "e no status, pendente");
+});
+
+test("appendFixTasksToPlan: preserva a invariante de cobertura (não re-reivindica assertion já reivindicada) e é idempotente", () => {
+	const d = tmp();
+	storePlan(d, plan());
+	// A1 já é da T2: a fix a re-testa, mas o plano não pode ter duas donas.
+	const r = appendFixTasksToPlan(d, "feat-x", [{ id: "FIX1", description: "re-fix A1", skillName: "backend-worker", fulfills: ["A1", "A-NEW"] }]);
+	assert.deepEqual(r.appended, ["FIX1"]);
+	const stored = readPlan(d, "feat-x");
+	assert.deepEqual(stored?.tasks.find((t) => t.id === "FIX1")?.fulfills, ["A-NEW"], "só a assertion não reivindicada");
+	assert.deepEqual(validatePlan(stored as Plan), { ok: true, issues: [] }, "invariante intacta");
+
+	const again = appendFixTasksToPlan(d, "feat-x", [{ id: "FIX1", description: "re-fix A1", skillName: "backend-worker", fulfills: ["A-NEW"] }]);
+	assert.deepEqual(again.appended, [], "id já presente não duplica");
+	assert.equal(readPlan(d, "feat-x")?.tasks.filter((t) => t.id === "FIX1").length, 1);
+});
+
+test("appendFixTasksToPlan: preserva verdicts já conquistados (não regride passed → pending)", () => {
+	const d = tmp();
+	storePlan(d, plan());
+	const st = readStatus(d, "feat-x");
+	if (st) {
+		st.assertions.A1 = "passed";
+		fs.writeFileSync(path.join(d, ".harness", "runs", "feat-x", "status.json"), JSON.stringify(st));
+	}
+	appendFixTasksToPlan(d, "feat-x", [{ id: "FIX1", description: "x", skillName: "backend-worker", fulfills: ["A-NEW"] }]);
+	assert.equal(readStatus(d, "feat-x")?.assertions.A1, "passed", "storePlan mergeia, não clobbera");
 });
