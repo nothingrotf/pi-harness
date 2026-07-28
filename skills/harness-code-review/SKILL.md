@@ -119,6 +119,9 @@ both (a) one of these classes and (b) **reachable** — demonstrated on a live p
   auth bypass, money moved twice);
 - a **frozen contract assertion** in `contract.md` that the code does not satisfy;
 - a **red programmatic gate** or a migration/rollout that cannot be applied;
+- a **shared derivation re-computed** by a consumer (`feature.md` §Shared derivations) **where the
+  two expressions can disagree** — show the input where they differ or the path where one updates
+  without the other. Duplication that provably agrees on every input is non-blocking;
 - **round 1 only:** a surviving discrimination mutant (§1.5).
 
 Everything else is **non-blocking**, no matter how strongly an axis words it. Explicitly non-blocking,

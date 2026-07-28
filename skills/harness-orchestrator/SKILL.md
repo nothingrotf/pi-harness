@@ -89,6 +89,7 @@ Follow the `harness-setup` and `harness-feature-converge` skill procedures:
 - Planning infrastructure and boundaries - check what's already running
 - Designing the architecture of what we're building - define the system's components, their responsibilities, and how they interact
 - Planning the testing strategy - determine and verify testing infrastructure, user testing surface
+- **Naming the shared derivations before decomposing** (`harness-feature-converge` Phase 4.5) - the contract is black-box and the plan is a delivery order, so nothing else in the pipeline ever looks at the internal shape of the code. Any value two or more tasks compute gets ONE owner, created FIRST. Skipping this is the most expensive mistake measured on real runs: one feature let six tasks each derive "which tier this call landed on" in their own file and paid 11 review rounds and 22 fix tasks for a 60-line function a single question would have named on day one.
 - Creating the feature artifacts
 **Do not rush.** Each phase requires user confirmation before proceeding. If requirements are unclear, keep asking until they're not.
 ### 2. Worker Design
@@ -120,7 +121,7 @@ You work with the cached profile and the per-feature run directory.
 | Directory | What it is | Files |
 |-----------|------------|-------|
 | **`.harness/profile/`** | The cached repo profile (committed). Stable across features; authored/refreshed by `harness-setup`. | `architecture.md`, `services.yaml`, `init.sh`, `harness.md`, `delivery.json`, `library/`, `skills/<worker-type>/`, `readiness.json`, `profile.json` |
-| **`.harness/runs/<feature-id>/`** | The per-feature run (gitignored). Ephemeral; authored by `harness-feature-converge`. | `feature.md`, `contract.md`, `status.json`, `plan.json`, `feature-run.json`, `progress_log.jsonl`, `handoffs/`, `validation/`, `sessions/`, `evidence/` |
+| **`.harness/runs/<feature-id>/`** | The per-feature run (gitignored). Ephemeral; authored by `harness-feature-converge`. | `feature.md` (incl. §`Shared derivations`), `contract.md`, `status.json`, `plan.json`, `feature-run.json`, `progress_log.jsonl`, `handoffs/`, `validation/`, `sessions/`, `evidence/` |
 | **repo root(s)** | The git repositories where implementation work happens. | implementation code / commits |
 The **detailed schema for every artifact lives in the authoring skill** (`harness-setup` for the profile, `harness-feature-converge` for the run) — not duplicated here. The orchestrator owns the **order, the invariants, and the checklist**:
 Create the feature artifacts in this order:

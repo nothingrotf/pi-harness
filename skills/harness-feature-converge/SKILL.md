@@ -145,6 +145,9 @@ persisting Phase 1's policy output as an auditable table — one row per swept d
 what this feature delivers and how, plus the decisions that bound it — workers and validators read it
 so they never re-litigate a settled gray area.
 
+You will **append a `## Shared derivations` section here in Phase 4.5**, once the contract exists
+and you know what the system has to compute. Leave the placeholder now.
+
 ## Phase 3 — contract.md (the acceptance contract → FROZEN)
 
 The formal contract: a finite checklist of **testable behavioral assertions** that define
@@ -204,13 +207,60 @@ After the contract is finalized, initialize the status record with all assertion
 `"pending"`. (Lifecycle: `pending → passed | failed`; the harness-qa-validator writes results; the
 end-of-feature gate requires all `passed`.)
 
+## Phase 4.5 — Shared-derivation pass (the design step — REQUIRED before you decompose)
+
+The contract is deliberately **black-box**: it says what the system must do, never what shape the
+code takes. The plan is a **delivery order**. Between them nothing has ever looked at the internal
+form of what you are about to build — and that gap is the most expensive defect source this harness
+has measured.
+
+**The failure mode, from a real run.** A feature routed model choice per pipeline task. Six planned
+tasks each independently touched "which tier is this call on": a policy table, tier→model config,
+the reasoning budget, a quality-mode shift, a degradation step, a session pin. Every task wrote its
+own expression of that one value in its own file. No task ever said "this is ONE concept". The
+review then found the same defect in a different file every round: round 1 in the mode shift, round
+2 in the effective policy, round 3 in the model resolver, and so on. It took **11 review rounds and
+22 fix tasks** to arrive at a single 60-line `landed-tier.ts` that one design question would have
+named on day one. The repo's own lesson store recorded it afterwards — *"two independent
+expressions of one concept regressed three review rounds running"* — which is exactly the knowledge
+that should have existed BEFORE the plan, not after the bill.
+
+**Do this, in order:**
+
+1. **List the derived values.** Walk the contract assertions and ask, for each: what value does the
+   system have to COMPUTE to satisfy this? Write them as nouns — "the tier a call actually lands
+   on", "the effective price after credits", "whether this org may spend", "the canonical status of
+   a payment". Aim for 3–10. These are concepts, not functions yet.
+2. **Cross them against the work.** For each derived value, mark every prospective task that would
+   read, compute, or modify it. Any value touched by **2 or more tasks is a shared derivation.**
+3. **Give each shared derivation ONE owner, FIRST.** Emit a foundational task (empty `fulfills`)
+   that creates the single named function/module both sides call, placed before every task that
+   consumes it. Name it in the task description explicitly — "create `landedTier(request)`; every
+   consumer asks it, nobody re-derives". Then write into the consuming tasks' `expectedBehavior`:
+   *"reads `<name>`; does not re-derive `<value>`"*. A constraint the worker has to infer is a
+   constraint that gets forgotten — same rule as the hard constraints below.
+4. **Check the closed vocabularies.** Any enum/status/kind the feature branches on gets ONE
+   canonical declaration in the owning domain, named in a task. Two independently written literal
+   sets for the same vocabulary is the same defect wearing different clothes.
+5. **Record it.** Put the table (derived value → owning task → consumers) in `feature.md` under
+   `## Shared derivations`. The code-review conventions axis reads it, and "consumer re-derives an
+   owned value" becomes a checkable finding instead of a discovery.
+
+**Consult the lessons first.** `.harness/profile/LESSONS.md` is grounded in this repo's own past
+failures and is injected into your context. Confirmed lessons are binding here — several of them
+exist precisely because a prior feature skipped this phase.
+
+Keep it proportional: a two-task feature with no shared value writes "none" and moves on. This is a
+design **question**, not a design document.
+
 ## Phase 5 — plan.json (ordered tasks)
 
 `plan.json` is the **structured task queue** — the `features.json` analog and the **single source
 of truth** for the tasks (there is NO separate markdown plan). You decompose into tasks and
 persist them via the **`store_plan`** tool; workers read it via `jq`. Schema: `{ featureId, tasks: [...], assertions: [...] }`.
 
-Decompose the work into **ordered tasks**, using both the contract and `architecture.md`.
+Decompose the work into **ordered tasks**, using the contract, `architecture.md`, **and the Phase
+4.5 shared-derivation table — its owner tasks come first, before any consumer**.
 Tasks execute in array order — the topmost pending runs next. Each task:
 
 | Field | Description |

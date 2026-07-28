@@ -66,7 +66,7 @@ Never violate the Boundaries in `harness.md`.
 ## Phase 1: Startup
 
 ### 1.1 Read Context (parallelize — single tool-call batch)
-- `.harness/runs/<feature-id>/feature.md` — the feature intent + scope.
+- `.harness/runs/<feature-id>/feature.md` — the feature intent + scope. **Read its `## Shared derivations` table** — see §Shared derivations below; it is binding on every task you touch.
 - `.harness/profile/architecture.md` — authoritative architecture (mandatory: understand how your task fits).
 - the repo's own `AGENTS.md` + `.agents/rules/` — code conventions/DoD (governs how code is written).
 - `.harness/profile/library/coding-principles.md` — generic code-quality bias the ship-gate **quality axis** scores against; internalize it before coding to avoid rework (defers to the repo's `AGENTS.md` on conflict).
@@ -99,6 +99,22 @@ and `library/` doesn't cover it, do an online lookup before implementing.
 ### 1.7 Start Services
 Start needed services from `services.yaml` (`depends_on` first; wait for healthcheck). If
 any fails → return to orchestrator immediately.
+
+## Shared derivations (binding — read before you write a line)
+`feature.md` §`## Shared derivations` lists the values this feature computes that **more than one
+task touches**, and the single function/module that OWNS each. The rule is one line: **call the
+owner; never re-derive the value.** If your task needs "the tier this call landed on" and the table
+names `landedTier()`, you call it — you do not write an equivalent expression because yours is
+right here and shorter.
+
+This is not style. Two independent expressions of one concept is the defect class that multiplies:
+they drift, a fix reconciles one and breaks the mirror, and the next review round finds it in the
+next file. One real feature in this harness paid **11 review rounds and 22 fix tasks** for exactly
+this. The ship-gate conventions axis checks the table against your diff.
+
+If you find a shared derivation the table missed — you are about to compute something another task
+already computes — do NOT silently duplicate it: extract the owner, use it, and say so in your
+handoff (`discoveredIssues`, `non_blocking`) so the orchestrator records the row.
 
 ## Code Quality Principles (non-negotiable)
 **Canonical source: `.harness/profile/library/coding-principles.md`** — the generic quality bias the

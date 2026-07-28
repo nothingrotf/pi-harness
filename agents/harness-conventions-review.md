@@ -48,6 +48,25 @@ conventions-map flags as "gate-enforced") is run by the **harness-code-review pr
 and CI — do **not** spend findings re-flagging them. Stay on the **review-enforced** rules a
 script cannot see.
 
+## Shared derivations (check this FIRST when the feature declared any)
+
+Read `.harness/runs/<feature-id>/feature.md` §`## Shared derivations`. It names the values this
+feature computes that **more than one task touches**, and the single owner each was given. For each
+row: does every consumer in the diff CALL the owner, or did it re-derive the value inline?
+
+A second independent expression of an owned derivation is **blocking when the two can disagree** —
+show the input for which they already differ, or the reachable path where one is updated and the
+other is not. That is the one defect class this harness has measured as reliably self-multiplying:
+two halves of one concept drift apart, a fix reconciles one half and breaks the mirror half, and the
+next round finds it in the next file. One real feature spent 11 review rounds and 22 fix tasks on
+exactly this. When the duplication is real but the two expressions provably agree on every input,
+it is non-blocking. Report either as `"<value>" re-derived at file:line; owner is <name>
+(feature.md §Shared derivations)`.
+
+If the section is absent or says "none", spend one pass looking for the pattern anyway: two or more
+sites in the diff computing the same domain value from the same inputs. Report it non-blocking with
+the proposed owner — the converge step missed it, and naming it now is cheaper than round 3.
+
 ## What to look for (kinds of conformance — the specifics come from the map)
 
 Use the map's catalog; common classes worth checking when the repo documents them:
@@ -64,9 +83,10 @@ Use the map's catalog; common classes worth checking when the repo documents the
 
 ## Output
 
-Prioritize: (1) boundary/contract violations, (2) ADR/architectural conformance breaks,
-(3) structural pattern breaks (layering, ownership), (4) state/hooks/UI conformance,
-(5) observability/logging conformance, (6) naming/code-standards, (7) testing-classification.
+Prioritize: (1) shared-derivation re-computation, (2) boundary/contract violations, (3)
+ADR/architectural conformance breaks, (4) structural pattern breaks (layering, ownership), (5)
+state/hooks/UI conformance, (6) observability/logging conformance, (7) naming/code-standards, (8)
+testing-classification.
 Every finding names the rule it breaks and shows `file:line`. Skip cosmetic nits when boundary
 or architectural breaks exist. Be direct and high-conviction; do not soften a boundary bypass or
 an ADR contradiction into a mild suggestion. Do **not** spawn nested subagents.
