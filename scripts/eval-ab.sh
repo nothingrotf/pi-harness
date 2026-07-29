@@ -14,7 +14,7 @@
 #
 # Uso:
 #   eval-ab.sh prep    <repo> <featureId>
-#   eval-ab.sh archive <repo> <featureId> <label>
+#   eval-ab.sh archive <repo> <featureId> <label> [--keep-branch]
 #   eval-ab.sh arm     <repo> <featureId> <sourceLabel> <branchName>
 #   eval-ab.sh finish
 #
@@ -57,7 +57,7 @@ prep)
 	echo "AGORA: confira ~/.pi/agent/pi-harness/models.json (config da run 1) e rode /harness run \"$fid\""
 	;;
 archive)
-	repo="${1:?repo}"; fid="${2:?featureId}"; label="${3:?label}"
+	repo="${1:?repo}"; fid="${2:?featureId}"; label="${3:?label}"; keep_branch="${4:-}"
 	cd "$repo"
 	run=".harness/runs/$fid"; ev=".harness/runs/.evals/$fid"; dest="$ev/$label"
 	[ -f "$run/feature-run.json" ] || die "nada pra arquivar: $run sem feature-run.json"
@@ -79,14 +79,18 @@ archive)
 	cp -R .harness/profile "$dest/profile.after"
 	git checkout -- .harness/ 2>/dev/null || true
 
-	if [ "$cur" != "$base_branch" ]; then
+	if [ "$keep_branch" = "--keep-branch" ]; then
+		# A run fica onde esta (ex.: uma entrega pendente que nao deve ser renomeada). O proximo braco
+		# sai por `arm`, que corta do commit base gravado.
+		echo "branch \"$cur\" preservada (--keep-branch); os dados da run estao em $dest"
+	elif [ "$cur" != "$base_branch" ]; then
 		git branch -m "$cur" "${cur}--${label}"
 		git switch "$base_branch"
 		echo "branch: $cur -> ${cur}--${label}; de volta em $base_branch"
+		[ "$(git rev-parse HEAD)" = "$base_sha" ] || echo "AVISO: HEAD de $base_branch != base do prep (${base_sha:0:8}) — a base andou; a proxima run parte de outro commit."
 	else
 		echo "AVISO: ja em $base_branch — a run commitou na base? confira ${label} manualmente."
 	fi
-	[ "$(git rev-parse HEAD)" = "$base_sha" ] || echo "AVISO: HEAD de $base_branch != base do prep (${base_sha:0:8}) — a base andou; a proxima run parte de outro commit."
 
 	rm -f "$run/feature-run.json" "$run/feature-run.json.bak" "$run/progress_log.jsonl" \
 		"$run/next-task.json" "$run/dismissed.json" "$run/worker-transcripts.jsonl"
