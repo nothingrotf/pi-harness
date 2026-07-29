@@ -42,7 +42,8 @@ export function registerNextTaskTool(pi: ExtensionAPI): void {
 				if (contextTokens) appendProgress(ctx.cwd, featureId, "task_context", { contextTokens });
 				// Escopa o universo à fatia do batch em execução (doc 05 §5.1): o step in_progress do
 				// feature-run.json carrega as tasks DESTE batch. Fallback (K=1/sem run) = plano inteiro.
-				const { taskIds, batchId } = batchUniverse(readFeatureRun(ctx.cwd, featureId), plan.tasks.map((t) => t.id));
+				const featureRun = readFeatureRun(ctx.cwd, featureId);
+				const { taskIds, batchId } = batchUniverse(featureRun, plan.tasks.map((t) => t.id));
 				// Brief autocontido (contract OQ1): resolve fulfills → texto das assertions no spec.
 				// Contract é FROZEN — leitura por chamada é barata e sempre consistente.
 				const contractAssertions = readContractAssertions(ctx.cwd, featureId);
@@ -94,7 +95,12 @@ export function registerNextTaskTool(pi: ExtensionAPI): void {
 				// já carrega tokens demais, fecha o batch aqui. As tasks restantes ficam pendentes e o runner
 				// abre um step de continuação com um worker fresco. Ver reseam.ts pro custo medido e pras
 				// travas (piso de tasks + coesão) que impedem virar um-worker-por-task.
-				if (d.action === "start" && d.completePrev && task) {
+				// FAIL-SAFE por skew de versão: só corta se o RUNNER que conduz este run souber abrir um step
+				// de continuação. Os workers são processos novos (código atual); o runner vive na sessão do
+				// orchestrator e pode ser mais velho. Sem o carimbo, cortar DESCARTA as tasks restantes — numa
+				// run real 7 tasks foram marcadas como feitas sem nunca terem começado.
+				const canContinue = featureRun?.capabilities?.batchContinuation === true;
+				if (d.action === "start" && d.completePrev && task && canContinue) {
 					const completedNow = new Set([...completed, d.completePrev]);
 					const r = decideReseam({
 						contextTokens,

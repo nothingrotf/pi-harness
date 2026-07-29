@@ -127,6 +127,9 @@ export interface FeatureRun {
 	gateRounds?: number;
 	/** Rodadas extras concedidas explicitamente pelo orchestrator (grantGateRound). */
 	gateRoundBonus?: number;
+	/** Capacidades do runner que escreveu este record — lidas pelos workers (processos separados,
+	 * possivelmente de uma versão mais nova) pra não usar um protocolo que o runner não entende. */
+	capabilities?: { batchContinuation?: boolean };
 }
 
 /** Resultado de spawnar um child. `aborted` = interrompido (SIGINT/abort). */
@@ -411,6 +414,12 @@ export async function runLoop(cwd: string, run: FeatureRun, deps: FeatureRunLoop
 	run.status = "running";
 	run.pauseReason = undefined; // limpa razão stale (um usage_limit antigo não pode contaminar o registo do próximo pause/complete)
 	run.turnReason = undefined;
+	// Carimba as capacidades DESTE runner. Os workers são processos NOVOS (leem o código atual), mas o
+	// runner vive na sessão do orchestrator e pode ser antigo. Um worker novo cortando o batch contra
+	// um runner velho — que não sabe abrir continuação — DESCARTA as tasks restantes em silêncio.
+	// Aconteceu: 7 tasks marcadas como feitas sem terem começado; só o ship gate salvou. Com o
+	// carimbo, o next_task só corta quando o runner sabe continuar (ver reseam — fail-safe por skew).
+	run.capabilities = { ...run.capabilities, batchContinuation: true };
 	touch(run, deps);
 
 	// Preempção por ordenação (doc 07): no resume, se um pending está ACIMA do in_progress

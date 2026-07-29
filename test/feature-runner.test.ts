@@ -530,3 +530,10 @@ test("continuação exige PROGRESSO: worker que não entregou nada não gera ste
 	assert.equal(run.steps.filter((s) => s.id.includes("-cont")).length, 0, "nenhuma continuação");
 	assert.ok(!events.includes("batch_continued"));
 });
+
+test("runLoop carimba a capacidade de continuação (fail-safe: worker novo + runner velho descartava tasks)", async () => {
+	const run = planFeatureRun("feat-x", tasks("T1", "T2"), NOW);
+	assert.equal(run.capabilities?.batchContinuation, undefined, "record novo não nasce carimbado");
+	await runLoop("/repo", run, deps(spawnFrom({})));
+	assert.equal(run.capabilities?.batchContinuation, true, "o runner que sabe continuar se identifica no record");
+});
