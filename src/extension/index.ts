@@ -637,6 +637,36 @@ export default function registerHarnessExtension(pi: ExtensionAPI): void {
 				);
 				return;
 			}
+			// `/harness run <featureId>` — executa uma feature JA convergida, sem picker. Sem este ramo o
+			// comando caía no caminho de converge e o próprio "run " virava parte do slug
+			// (`run <id>` → featureIdFromRequest → "run-<id>"), convergindo uma feature NOVA a cada
+			// invocação. Custou três experimentos controlados e uma convergência paga cada vez: os ids
+			// `run-run-...` no disco são o rastro. Id desconhecido AVISA — nunca converge por engano.
+			const runWithId = /^run(\s+--headless)?\s+(?!-)(\S.*)$/.exec(sub);
+			if (runWithId) {
+				const headless = !!runWithId[1];
+				const wanted = runWithId[2].trim();
+				const { listRuns } = await import("../runs.ts");
+				const known = listRuns(ctx.cwd);
+				const hit = known.find((r) => r.featureId === wanted);
+				if (!hit) {
+					const near = known.filter((r) => r.featureId.includes(wanted) || wanted.includes(r.featureId)).slice(0, 3);
+					ctx.ui.notify(
+						`pi-harness: no converged run "${wanted}".${near.length ? ` Did you mean: ${near.map((r) => r.featureId).join(", ")}?` : ""} To converge a NEW feature use /harness "<description>" (without "run").`,
+						"warning",
+					);
+					return;
+				}
+				mode.active = true;
+				mode.featureId = hit.featureId;
+				mode.phase = "run";
+				await applyModeChrome(ctx, mode);
+				saveMode(ctx.cwd, mode);
+				dispatchToAgent(buildResumeDispatch(hit.featureId, {}));
+				ctx.ui.notify(`pi-harness: running converged feature "${hit.featureId}"${headless ? " (headless)" : ""} — orchestrator will call run_feature.`);
+				if (ctx.hasUI) strip.start(ctx, hit.featureId);
+				return;
+			}
 			if (sub === "run" || sub === "run --headless") {
 				// Execução da feature convergida (Fatia 3). DEFAULT = nativo TUI + TODO (orquestrador
 				// no chat, agentes via subagent, visíveis). --headless = FeatureRunner code-initiated.
