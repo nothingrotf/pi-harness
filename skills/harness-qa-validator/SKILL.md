@@ -17,7 +17,8 @@ return to the orchestrator** when done.
 | `.harness/runs/<feature-id>/contract.md` | assertion definitions (what to test) | |
 | `.harness/runs/<feature-id>/` status | assertion pass/fail status | |
 | `.harness/runs/<feature-id>/plan.json` | task list with `fulfills` mapping | |
-| `.harness/profile/library/user-testing.md` | discovered testing knowledge (tools, URLs, setup, quirks) — read and update | |
+| `.harness/profile/library/user-testing.md` | the verification manual (Launch/Doctor/Evidence/Concurrency + `## Feature Map` index) — read and update | |
+| `.harness/profile/library/user-testing-<feature-slug>.md` | per-feature map entries (4-H2 contract: Sub-features / How to get to it / Driving it / Gotchas) — read and enrich | |
 | `.harness/profile/services.yaml` | service defs (start/stop/healthcheck) — update if needed | |
 | `.harness/runs/<feature-id>/validation/user-testing/` | synthesis + flow reports (output) | |
 
@@ -38,7 +39,10 @@ Step 8 returns `success`.
 
 ## 2) Setup (start services, seed data)
 Read the sources above. Start services from `services.yaml` (`depends_on` first; wait for
-healthcheck). Seed test data per `user-testing.md`/`harness.md`. Each assertion names its tool
+healthcheck) — follow `user-testing.md` `## Launch` when present. **Run the `## Doctor` check
+before anything drives the surface** — never drive an instance that hasn't been health-checked;
+doctor red → fix the environment first, not the flows. Seed test data per
+`user-testing.md`/`harness.md`. Each assertion names its tool
 (`agent-browser` for web/Electron, `tuistory` for CLI/TUI, `curl` for API). **External deps:**
 mock only at the boundary (never the app's own services — the core app runs for real). **Setup
 issues:** resolve them (fix healthchecks/ports/seed scripts/fixtures) but never modify
@@ -71,6 +75,8 @@ Agent({
     Isolation context: <app URL, credentials, data dir, namespace, port, working dir, …>.
     Run dir: .harness/runs/<feature-id>/ · Profile: .harness/profile/
     Testing tool: <tool> (agent-browser/tuistory are CLIs — drive via bash; get usage with `<tool> --help` first).
+    Feature map entries for your flows: <paths to relevant library/user-testing-<slug>.md files, or "none mapped yet">.
+    Doctor check: <the user-testing.md ## Doctor command for this surface>. Run it before your first drive and after any failed drive.
     Write report to: .harness/runs/<feature-id>/validation/user-testing/flows/<group-id>.json
     Save evidence to: .harness/runs/<feature-id>/evidence/<group-id>/
     Flow Validator Guidance section: "Flow Validator Guidance: <surface>".
@@ -84,13 +90,24 @@ Read all flow reports. Per assertion: **pass** (confirmed), **fail** (mismatch),
 (prerequisite broken, or functionality not yet present — deferred = blocked). Update status:
 `pass → "passed"`; `fail → "failed"` (record issues); `blocked → "failed"` (record reason).
 
-## 5.5) Triage knowledge
+## 5.5) Triage knowledge + enrich the feature map
 Collect `frictions`/`blockers`/`toolsUsed`; dedupe by root cause. Factual, useful learnings
 (correct URLs, seed commands, timing, tool setup) → update `library/user-testing.md` /
 `services.yaml`; track as `appliedUpdates`.
 
+**Feature map upsert (every run):** for each user-facing feature this run drove, upsert
+`library/user-testing-<feature-slug>.md` with the fixed 4-H2 contract (`## Sub-features`,
+`## How to get to it (user POV)`, `## Driving it`, `## Gotchas`) using what the flow reports
+actually observed (real routes, working commands, gotchas hit), and keep the `## Feature Map`
+index in `user-testing.md` in sync. This is how each feature run makes the next one cheaper —
+the map, not rediscovery, is the source of "how do I reach and drive X". Fixing a stale entry is
+doc drift (fix the map); described-but-broken app behavior is a product regression (a failed
+assertion, never papered over in the map).
+
 ## 6) Teardown
-Stop all services via `services.yaml` `stop` commands.
+Stop all services via `services.yaml` `stop` commands. Tear down only what this run started;
+never kill by process name. **Never delete evidence** — proof artifacts under `evidence/`
+survive teardown; confirm they still exist after cleanup.
 
 ## 7) Write synthesis report
 Write `validation/user-testing/synthesis.json`:

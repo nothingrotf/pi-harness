@@ -29,7 +29,15 @@ accounts, access other namespaces, or use anything outside your boundary.
 ## 0) Check for guidance
 Read `.harness/profile/harness.md` `## Testing & Validation Guidance` (follow if present).
 Read `.harness/profile/library/user-testing.md`; follow the `## Flow Validator Guidance`
-section named in your prompt (isolation rules, boundaries).
+section named in your prompt (isolation rules, boundaries). Read the **feature map entries**
+named in your prompt (`library/user-testing-<slug>.md`) — they tell you how to reach and drive
+each flow; prefer the map over rediscovering routes/commands. If an entry is stale, note it in
+`frictions` (the parent updates the map).
+
+**Doctor first.** Run the Doctor check from your prompt before your first drive, and again after
+any failed drive — never drive an instance that hasn't been health-checked since it last did
+something surprising. Doctor red → mark affected assertions `blocked` (environment), don't fight
+the surface.
 
 ## Setup Issues
 If infrastructure isn't working (service down, tool broken, login fails): only try
@@ -75,7 +83,11 @@ Write to the output path in your prompt:
 Save all evidence to `.harness/runs/<feature-id>/evidence/<group-id>/` (create it); descriptive
 filenames; reference them relative to `evidence/`. Per assertion, provide at minimum what the
 contract requires: screenshots (any UI flow), console-errors check (any UI flow; "none" if
-clean), terminal snapshots (CLI), network calls (API).
+clean), terminal snapshots (CLI), network calls (API). Capture the **action and the resulting
+state**, not just the final screen; for any mutation, cross-check the stored value through a
+**read-only second view** (a GET/list endpoint, a reload, a query) — the UI saying "saved" is
+not the row existing. Exercise the **real user path** — never internal setters or test-only
+endpoints. Never delete evidence during cleanup.
 
 ## Resource Management
 You run in parallel with other flow validators — each tool session uses memory. Use a **single**

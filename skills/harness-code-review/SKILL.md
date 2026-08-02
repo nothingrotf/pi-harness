@@ -58,8 +58,21 @@ on a red gate.**
 
 ## 0.5) Prior-run check (re-run scoping — do NOT re-review the whole diff every round)
 Read `.harness/runs/<feature-id>/validation/harness-code-review/synthesis.json` if it exists (a
-previous round). If absent → this is **round 1**, full review (below). If present → this is a
-**re-run after fix tasks**, and you MUST narrow scope, not repeat the whole 3-axis pass:
+previous round). If absent → this is **round 1**, full review (below).
+
+**Verdict reuse (patch-id — check BEFORE anything else re-runs).** A verdict pins the *content* it
+reviewed, not the SHA. Compute the current range's content id:
+`git diff <base>..HEAD | git patch-id --stable | awk '{print $1}'`. If the prior synthesis has
+`status: "pass"` and its `rangePatchId` equals the current one (HEAD identical, or moved only by
+rebase/amend with byte-identical content), **the prior verdict stands**: do NOT re-run the gate,
+the sensor, or the axes. Write `synthesis-r<round>.json` + `synthesis.json` copying the prior
+synthesis with `round` incremented, `scope: "verdict-reuse"`, updated `reviewedHead`, and a
+`salientSummary` naming the reused round — then `EndFeatureRun` `success`. If the patch-ids
+differ, the delta is real: proceed below (and on a fix re-run, the fix commits are exactly that
+delta). This is what makes a no-op re-invocation cost one git command instead of a full review.
+
+If present and the content changed → this is a **re-run after fix tasks**, and you MUST narrow
+scope, not repeat the whole 3-axis pass:
 - Set `round` = previous `round` + 1 and carry the prior synthesis as `previousRound` context.
 - **Scope the diff to the FIX commits only** — read `reviewedHead` straight out of the prior
   synthesis and diff `git log <reviewedHead>..HEAD`. Do NOT reconstruct it from the progress log or
@@ -208,9 +221,10 @@ one round of memory is what lets round N+2 re-decide what round N settled.
 ```json
 {
   "feature": "<feature-id>", "round": 1, "status": "pass" | "fail",
-  "scope": "full" | "fix-delta",
+  "scope": "full" | "fix-delta" | "verdict-reuse",
   "reviewedHead": "<full sha of HEAD at review time>",
   "range": "<baseSha>..<reviewedHead>",
+  "rangePatchId": "<git diff <base>..HEAD | git patch-id --stable — content id of the reviewed range>",
   "gate": { "test": {"passed":true}, "typecheck": {"passed":true}, "lint": {"passed":true} },
   "suppressed": [ { "what":"...", "source":"dismissed.json|harness.md" } ],
   "sensor": { "mutations": 2, "killed": 2, "survived": 0, "survivors": [] },

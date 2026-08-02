@@ -164,6 +164,16 @@ first — it may install/start what validation needs):
   actually interact with the surface; confirm `services.yaml` commands run **green**; measure
   resources (memory/CPU/process count before & after exercising a flow).
 
+**Self-proof (REQUIRED — a surface that was never driven is a draft, not a deliverable):** drive
+**ONE real user flow end-to-end** exactly as `library/user-testing.md` teaches it: bring the surface
+up per the Launch recipe → run the **Doctor** check → drive the flow with the named tool
+(agent-browser/tuistory/curl) → capture evidence (screenshot/transcript/response + the resulting
+state, not just the final screen) → clean up. After cleanup, confirm the evidence still exists at
+its named location — a cleanup that eats the proof fails this step. Record the driven flow as the
+**first Feature Map entry** (Phase 8 contract). If the drive fails, fix the recipe (or report the
+product defect) before `store_profile` — a profile whose user-testing doc was never executed teaches
+wrong steps to every future validator.
+
 **Resource Cost Classification:** compute max concurrent validators per surface — **70% of
 available headroom**, capped at **5** — with explicit per-surface reasoning (how much each
 validator instance costs vs machine headroom). Record it in `library/user-testing.md`
@@ -183,7 +193,30 @@ Same rule for per-project commands: each one must select a non-empty, DIFFERENT 
 
 `.harness/profile/library/` (flat, by topic):
 - `environment.md` — env vars, external deps, setup notes (NOT ports — those live in `services.yaml`).
-- `user-testing.md` — `## Validation Surface`, `## Validation Prerequisites` (how each was verified in Phase 7), `## Validation Concurrency` (max concurrent + numbers + rationale).
+- `user-testing.md` — the verification manual for the app's real user surface. Required sections:
+  - `## Validation Surface` — surfaces, URLs, auth, tools per surface.
+  - `## Launch` — exact bring-up recipe (idempotent) + readiness signal + teardown.
+  - `## Doctor` — ONE read-only check per surface answering "is this instance worth driving?"
+    (process up, right build, port owned by us, auth valid). Validators run it before the first
+    drive and after any failed drive — never drive an instance that hasn't been health-checked
+    since it last did something surprising.
+  - `## Validation Prerequisites` (how each was verified in Phase 7).
+  - `## Validation Concurrency` (max concurrent + numbers + rationale).
+  - `## Evidence` — what proves behavior on this app (UI = screenshot + resulting state; API =
+    request/response; mutation = a read-only second view of the stored value) and where artifacts
+    live. Cleanup removes instances and scratch state, **never evidence**.
+  - `## Feature Map` — the index: one line per mapped feature linking its
+    `user-testing-<feature-slug>.md` file with a one-line coverage summary.
+- `user-testing-<feature-slug>.md` — one per mapped user-facing feature (seed the map with the top
+  3–5 features mined from routes/commands/menus + the Phase 7 self-proof flow; `harness-qa-validator`
+  enriches the map every feature run). **Fixed contract — exactly these four H2s, in order:**
+  1. `## Sub-features` — short IDs with one-line behaviors.
+  2. `## How to get to it (user POV)` — every entry point (route, menu, shortcut, command).
+  3. `## Driving it` — preconditions, then user action → exact tool command → observable result;
+     stable handles (ARIA roles/labels, prompt strings, route paths) over coordinates.
+  4. `## Gotchas` — traps that waste runs (debounce → wait for the observable, focus-dependent
+     shortcuts, seed-data quirks).
+  Keep implementation details out — user paths, stable handles, commands, observable proof only.
 - `repo-facts.md` — distilled repo facts so workers don't re-derive: identity, the gate, conventions, layout, "don't break"/"don't do" lists, **and the readiness level + weakest categories** (from `readiness.json`).
 - `conventions-map.md` — see Phase 9.
 - `coding-principles.md` — see Phase 8.1.
