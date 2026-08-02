@@ -31,10 +31,11 @@ export function resolvePiBin(): string {
  * "subagent" não existe e era silenciosamente filtrado (reviewers não spawnavam).
  */
 const SUBAGENT_TOOLS = "Agent,get_subagent_result,steer_subagent";
-const TOOLS_TASK = "read,grep,find,ls,bash,edit,write,next_task,EndFeatureRun";
-const TOOLS_GATE = `read,grep,find,ls,bash,edit,write,${SUBAGENT_TOOLS},store_delivery,EndFeatureRun`;
+const CORE_TOOLS = "read,Read,grep,find,ls,bash,Bash,edit,Edit,write,Write,exec_command,write_stdin,apply_patch,exec,wait";
+const TOOLS_TASK = `${CORE_TOOLS},next_task,EndFeatureRun`;
+const TOOLS_GATE = `${CORE_TOOLS},${SUBAGENT_TOOLS},store_delivery,EndFeatureRun`;
 /** Converge autora os artefatos + delega a contract a subagents + chama store_plan. */
-const TOOLS_CONVERGE = `read,grep,find,ls,bash,edit,write,${SUBAGENT_TOOLS},store_plan`;
+const TOOLS_CONVERGE = `${CORE_TOOLS},${SUBAGENT_TOOLS},store_plan`;
 
 function harnessSkillsDir(): string {
 	return fileURLToPath(new URL("../skills", import.meta.url));
@@ -265,4 +266,3 @@ export function makeRealConvergeFn(opts: RealConvergeOpts = {}): ConvergeFn {
 			});
 		});
 }
-

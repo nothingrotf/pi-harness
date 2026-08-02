@@ -21,7 +21,7 @@ export function resolvePiBin(): string {
 }
 
 const TOOLS_AUDIT = "read,grep,find,ls,bash,store_agent_readiness_report";
-const TOOLS_FIX = "read,grep,find,ls,bash,edit,write";
+const TOOLS_FIX = "read,grep,find,ls,bash,edit,write,exec,wait";
 
 function skillDir(): string {
 	return fileURLToPath(new URL("../skills/harness-readiness-audit", import.meta.url));
