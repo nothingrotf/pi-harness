@@ -107,7 +107,11 @@ Collect what the reviewers need to judge **claims vs reality**, not just the dif
 - the **worker handoffs** `.harness/runs/<feature-id>/handoffs/*.json` (what the worker *claims* it
   implemented, tested, and left undone) and, when present, the **worker transcript skeleton**
   (`sessions/*.jsonl` tool/'message' skeleton) — so a reviewer can check a claim ("added tests for
-  X", "handled the error path") against the actual diff and flag procedure deviations.
+  X", "handled the error path") against the actual diff and flag procedure deviations;
+- the **worker decision log** `.harness/runs/<feature-id>/decisions.tsv` when present — rejected
+  approaches and recorded assumptions there pre-answer "why is it shaped like this", so an axis
+  doesn't raise a finding the worker already litigated with evidence (and an unlogged risky choice
+  is itself worth a finding).
 Use Bash directly, or an `Explore` agent when the changed set is large.
 
 ## 1.5) Discrimination sensor (do the tests actually catch regressions? — bounded, scratch-state only)
@@ -155,7 +159,22 @@ Ask each for prioritized findings with `file:line` references and evidence.
 ## 3) Synthesize
 After all three finish, synthesize **findings first**, deduplicated across axes. Weight overlapping
 findings more heavily (same issue flagged by 2+ axes = high signal), resolve disagreements with
-your judgment, keep it brief. The three axes are complementary, not redundant: correctness/security,
+your judgment, keep it brief.
+
+**Agreement map (record it — it is the signal).** For each deduplicated finding note which axes
+raised it independently. 2+ axes = high-confidence; a lone-axis finding is worth reading but earns
+extra scrutiny before it blocks. Also record where axes explicitly *disagreed* (one says defect,
+another says fine) and how you resolved it — execution beats argument: when axes disagree on a
+reachable defect, run the code and let the result decide (this is exactly how a real R2-B1 was
+settled after two axes concluded "no defect").
+
+**Dismissed findings (with reasons — the trust mechanism).** An axis finding you judge wrong,
+hypothetical-without-a-reachable-path, out of scope, or "I would have done it differently" noise
+does not silently vanish: record it in `dismissedFindings` with a one-line reason. The dismissal
+ledger is what lets the orchestrator (or a human) override your judgment, and prevents the same
+noise from being re-raised verbatim next round. Common dismissal reasons worth naming: hypothetical
+(no reachable path traced), style preference, pattern consistent with the codebase, flags code this
+feature didn't touch. The three axes are complementary, not redundant: correctness/security,
 structural maintainability, and house-pattern conformance each catch a distinct class.
 
 ### Severity floor (HARD — this decides whether the feature ships)
@@ -229,8 +248,10 @@ one round of memory is what lets round N+2 re-decide what round N settled.
   "suppressed": [ { "what":"...", "source":"dismissed.json|harness.md" } ],
   "sensor": { "mutations": 2, "killed": 2, "survived": 0, "survivors": [] },
   "axes": { "correctness": {...}, "quality": {...}, "conventions": {...} },
-  "blockingFindings": [ { "axis":"correctness|quality|conventions", "file":"...", "line":0, "finding":"...", "rule":"<rule or null>", "reachability":"<how you demonstrated it is live>" } ],
-  "nonBlockingFindings": [ { "axis":"...", "file":"...", "line":0, "finding":"..." } ],
+  "blockingFindings": [ { "axis":"correctness|quality|conventions", "file":"...", "line":0, "finding":"...", "rule":"<rule or null>", "reachability":"<how you demonstrated it is live>", "raisedBy":["correctness","quality"] } ],
+  "nonBlockingFindings": [ { "axis":"...", "file":"...", "line":0, "finding":"...", "raisedBy":["quality"] } ],
+  "dismissedFindings": [ { "axis":"...", "finding":"...", "reason":"hypothetical — no reachable path | style preference | consistent with codebase | untouched code" } ],
+  "agreement": { "convergent": [ { "finding":"...", "axes":["correctness","quality"] } ], "divergent": [ { "finding":"...", "positions":{"correctness":"defect","conventions":"fine"}, "resolution":"<how settled — prefer execution>" } ] },
   "deferredFindings": [ { "finding":"...", "reason":"convergence posture round 4+ | sensor after round 1" } ],
   "litigatedFindings": [ { "id":"R1-B1", "round":1, "finding":"...", "verdict":"resolved|deferred|open|withdrawn", "evidence":"..." } ],
   "appliedUpdates": [ { "target":"services.yaml|library", "description":"..." } ],

@@ -198,6 +198,17 @@ blocked by something outside your scope (missing dependency, unmet precondition,
 a decision needed) — don't burn the remaining tasks against a blocker. Report what you completed
 and what remains.
 
+### Decision log (append-only TSV — the auditable trail)
+Keep `.harness/runs/<feature-id>/decisions.tsv` (create with a header row if absent). Columns,
+exactly: `ts	phase	decision	why	evidence	result`. `ts` = ISO8601; `phase` = your current task id;
+`evidence` = a POINTER (commit sha, `file:line`, test name, artifact path) — never a paragraph;
+`result` = short outcome (`tests green`, `reverted`, `open`, `blocked`). Log **decision points, not
+actions**: a design fork you resolved, an approach you rejected, an assumption you took, a deviation
+from the task spec, a workaround — plus one row per task at commit time. Append-only; supersede with
+a new row, never edit. Strip tabs/newlines from cell values. This trail is what lets the
+orchestrator and reviewers audit *why* without replaying your session, and what a resumed worker
+reads to not re-litigate your choices.
+
 ## Phase 3: Cleanup & Handoff
 
 ### 3.1 Final Validation
