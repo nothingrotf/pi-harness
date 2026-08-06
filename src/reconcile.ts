@@ -128,7 +128,7 @@ export function detectClobber(before: string[], after: string[]): string[] {
  * artefatos afetados pelo drift, seguindo as estratégias do plano, e a carimbar com
  * store_profile no fim. Espelha buildSetupDispatch, mas em modo refresh/merge.
  */
-export function buildRefreshDispatch(changed: string[], tools: DispatchTools = {}): string {
+export function buildRefreshDispatch(changed: string[], _tools: DispatchTools = {}): string {
 	const plan = buildRefreshPlan(changed);
 	const lines = [
 		"Refresh the existing Tier-1 Repo Profile for THIS repository — MERGE, do NOT clobber.",
@@ -145,16 +145,10 @@ export function buildRefreshDispatch(changed: string[], tools: DispatchTools = {
 		"",
 	];
 	let n = 1;
-	if (tools.todo) {
-		lines.push(`${n++}. Create a plan with the \`todo\` tool — one todo per targeted artifact above.`);
-	}
 	lines.push(
 		`${n++}. Invoke the \`harness-setup\` skill in REFRESH mode: re-derive only the drifted inputs and reconcile per the strategies above. Do NOT re-author untouched artifacts.`,
 		`${n++}. Finish by calling the \`store_profile\` tool — it re-stamps profile.json (preserving the original generation time, bumping the refresh count) only after the merged content is in place.`,
 		`${n++}. Give a short summary of what was merged and list any removals that need approval.`,
 	);
-	if (tools.todo) {
-		lines.push(`${n++}. Clear the plan with the \`todo\` tool (\`action: "clear"\`).`);
-	}
 	return lines.join("\n");
 }

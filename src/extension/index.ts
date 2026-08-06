@@ -225,11 +225,11 @@ export default function registerHarnessExtension(pi: ExtensionAPI): void {
 	};
 
 	// DISPATCH NATIVO (model-driven, in-session) — o jeito nativo: os tool calls
-	// streamam ao vivo no terminal e o **rpiv-todo** mostra o Plan das 5 fases. Sem
+	// streamam ao vivo no terminal. Sem
 	// widget custom nem subprocesso. (O ReadinessRunner code-initiated continua
 	// disponível pro headless/CI — ver src/readiness-runner.ts e docs/02.)
 	// Detecta em runtime quais tools companheiros estão ATIVOS na sessão, pra usar
-	// (e avisar) os que existem: rpiv-todo (`todo`) e pi-subagents (`subagent`).
+	// (e avisar) os que existem: pi-subagents (`subagent`) e afins.
 	const activeTools = (): Set<string> => {
 		try {
 			return new Set(pi.getActiveTools());
@@ -250,9 +250,9 @@ export default function registerHarnessExtension(pi: ExtensionAPI): void {
 			return;
 		}
 		const t = activeTools();
-		appendAudit(ctx.cwd, "audit_dispatched", { via, todo: t.has("todo") });
-		dispatchToAgent(buildAuditDispatch({ todo: t.has("todo") }));
-		ctx.ui.notify(`pi-harness: live audit — tools: ${toolBadge(t, ["todo", "store_agent_readiness_report"])}`);
+		appendAudit(ctx.cwd, "audit_dispatched", { via });
+		dispatchToAgent(buildAuditDispatch({}));
+		ctx.ui.notify(`pi-harness: live audit — tools: ${toolBadge(t, ["store_agent_readiness_report"])}`);
 	};
 
 	const runFix = (ctx: ExtensionCommandContext, args: string): void => {
@@ -262,9 +262,9 @@ export default function registerHarnessExtension(pi: ExtensionAPI): void {
 			return;
 		}
 		const t = activeTools();
-		appendAudit(ctx.cwd, "fix_dispatched", { hasArgs: args.trim().length > 0, todo: t.has("todo"), subagent: hasSubagentTool(t) });
-		dispatchToAgent(buildFixDispatch(args, { todo: t.has("todo"), subagent: hasSubagentTool(t) }));
-		ctx.ui.notify(`pi-harness: live remediation — tools: ${toolBadge(t, ["todo", "Agent"])}`);
+		appendAudit(ctx.cwd, "fix_dispatched", { hasArgs: args.trim().length > 0, subagent: hasSubagentTool(t) });
+		dispatchToAgent(buildFixDispatch(args, { subagent: hasSubagentTool(t) }));
+		ctx.ui.notify(`pi-harness: live remediation — tools: ${toolBadge(t, ["subagent"])}`);
 	};
 
 	// Feature Control (overlay Alt+T): loop que reabre o overlay após o config de modelos.
@@ -415,9 +415,9 @@ export default function registerHarnessExtension(pi: ExtensionAPI): void {
 		const runCfg = loadModelConfig();
 		const runNudge = orchestratorModelNudge(ctx.model, runCfg);
 		if (runNudge) ctx.ui.notify(runNudge, "warning");
-		const dispatch = buildRunDispatch(featureId, { todo: t.has("todo"), subagent: hasSubagentTool(t), advisor: t.has("advisor"), askUser: t.has("ask_user_question") }, runCfg.gates);
+		const dispatch = buildRunDispatch(featureId, { subagent: hasSubagentTool(t), advisor: t.has("advisor"), askUser: t.has("ask_user_question") }, runCfg.gates);
 		dispatchToAgent(steering ? `${steering}\n\n${dispatch}` : dispatch);
-		ctx.ui.notify(`pi-harness: executing "${featureId}" — orchestrator in chat → run_feature (runner-driven workers) → ship gate. tools: ${toolBadge(t, ["todo", "run_feature", "Agent", "advisor"])}`);
+		ctx.ui.notify(`pi-harness: executing "${featureId}" — orchestrator in chat → run_feature (runner-driven workers) → ship gate. tools: ${toolBadge(t, ["run_feature", "subagent", "advisor"])}`);
 		if (ctx.hasUI) {
 			strip.start(ctx, featureId);
 			// cap. 09: dropa o cartão vivo no transcript (1x por run/sessão). Alt+T = cockpit.
@@ -466,13 +466,13 @@ export default function registerHarnessExtension(pi: ExtensionAPI): void {
 
 	// Reference flows as their own commands (1:1): /readiness-report and /readiness-fix.
 	pi.registerCommand("readiness-report", {
-		description: "Audit Agent-Readiness live in the session (5-phase Plan via todo) and store the snapshot.",
+		description: "Audit Agent-Readiness live in the session (5 phases) and store the snapshot.",
 		handler: async (_args: string, ctx: ExtensionCommandContext): Promise<void> => {
 			runAudit(ctx, "/readiness-report");
 		},
 	});
 	pi.registerCommand("readiness-fix", {
-		description: "Fix failing readiness signals live — one todo per signal (isolatable via subagent).",
+		description: "Fix failing readiness signals live — one fix per signal (isolatable via subagent).",
 		handler: async (args: string, ctx: ExtensionCommandContext): Promise<void> => {
 			runFix(ctx, args);
 		},
@@ -793,11 +793,11 @@ export default function registerHarnessExtension(pi: ExtensionAPI): void {
 				const existing = ensureProfile(ctx.cwd, { refresh: true });
 				if (existing.status === "refresh") {
 					const parts = existing.changed.length ? existing.changed.join(", ") : "all";
-					dispatchToAgent(buildRefreshDispatch(existing.changed, { todo: t.has("todo") }));
-					ctx.ui.notify(`pi-harness: profile REFRESH live — merging (not clobbering) ${parts} → store_profile. tools: ${toolBadge(t, ["todo", "store_profile"])}`);
+					dispatchToAgent(buildRefreshDispatch(existing.changed, {}));
+					ctx.ui.notify(`pi-harness: profile REFRESH live — merging (not clobbering) ${parts} → store_profile. tools: ${toolBadge(t, ["store_profile"])}`);
 				} else {
-					dispatchToAgent(buildSetupDispatch({ todo: t.has("todo") }));
-					ctx.ui.notify(`pi-harness: profile setup live — authoring .harness/profile/ then store_profile. tools: ${toolBadge(t, ["todo", "store_profile"])}`);
+					dispatchToAgent(buildSetupDispatch({}));
+					ctx.ui.notify(`pi-harness: profile setup live — authoring .harness/profile/ then store_profile. tools: ${toolBadge(t, ["store_profile"])}`);
 				}
 				return;
 			}
@@ -877,8 +877,8 @@ export default function registerHarnessExtension(pi: ExtensionAPI): void {
 			// usa o modelo do chat, não o role `orchestrator` (que só governa o headless).
 			const convergeNudge = orchestratorModelNudge(ctx.model, loadModelConfig());
 			if (convergeNudge) ctx.ui.notify(convergeNudge, "warning");
-			dispatchToAgent(buildConvergeDispatch(request, mode.featureId, { todo: t.has("todo") }));
-			ctx.ui.notify(`pi-harness: converging "${mode.featureId}" live — authoring .harness/runs/${mode.featureId}/ then store_plan. tools: ${toolBadge(t, ["todo", "store_plan"])}`);
+			dispatchToAgent(buildConvergeDispatch(request, mode.featureId, {}));
+			ctx.ui.notify(`pi-harness: converging "${mode.featureId}" live — authoring .harness/runs/${mode.featureId}/ then store_plan. tools: ${toolBadge(t, ["store_plan"])}`);
 		},
 	});
 

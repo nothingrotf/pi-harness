@@ -228,7 +228,7 @@ You, above anyone else, determine feature success.
 - `store_plan` — persist the converged plan (validates the coverage invariant; MERGES existing assertion verdicts on re-store) — the ONLY sanctioned way to (re)write `plan.json`/`status.json`
 - `store_delivery` — delivery record transitions (drives the cockpit Delivery tab and the human merge-gate overlay)
 - `store_agent_readiness_report` — persist the readiness snapshot (readiness gate / audits)
-- `todo` — the Plan (one todo per `run_feature` round); `ask_user_question` — structured decisions on blockers/gray areas
+- `ask_user_question` — structured decisions on blockers/gray areas
 - `subagent` (pi-subagents) — spawn a sub-agent for ANALYSIS/INVESTIGATION only (`{ agent, task, async: false }`, self-contained task; always specify outputs + require filepaths back). NEVER for implementation — that is `run_feature`'s job
 - `dismiss_handoff_items` — record handoff discovered-issues you deliberately chose **not** to act on, WITH a justification each (out-of-scope / pre-existing / already-tracked / wontfix). Persists `dismissed.json` + a `handoff_items_dismissed` log event so they don't resurface in later `run_feature` reports. Use it instead of silently ignoring an issue — never to bury a real blocking finding (fix those). Still persist any genuinely systemic learning into the right shared state (`harness.md` / a task description).
 - `Skill`, `Write`/`Edit`, bash, read, web search/fetch

@@ -9,9 +9,9 @@ test("CONVERGE_PHASES: 5 fases (size+entender → store_plan)", () => {
 	assert.match(CONVERGE_PHASES[CONVERGE_PHASES.length - 1], /store_plan/);
 });
 
-test("buildConvergeDispatch: com todo → Plan + harness-feature-converge + artefatos + store_plan + clear", () => {
-	const m = buildConvergeDispatch("add user login", "add-user-login", { todo: true });
-	assert.match(m, /`todo` tool/);
+test("buildConvergeDispatch: fases como roteiro + harness-feature-converge + artefatos + store_plan", () => {
+	const m = buildConvergeDispatch("add user login", "add-user-login", {});
+	assert.doesNotMatch(m, /`todo` tool/, "sem rpiv-todo — progresso é a strip/cockpit");
 	for (const p of CONVERGE_PHASES) assert.ok(m.includes(p), `falta fase: ${p}`);
 	assert.match(m, /harness-feature-converge/);
 	assert.match(m, /add user login/); // a request aparece
@@ -25,21 +25,13 @@ test("buildConvergeDispatch: com todo → Plan + harness-feature-converge + arte
 	// auto-sizing: escala o esforço, não a estrutura (invariante)
 	assert.match(m, /Size the feature first/);
 	assert.match(m, /ALWAYS run regardless of size/);
-	assert.match(m, /clear the plan with the `todo` tool/);
+	assert.doesNotMatch(m, /clear the plan/);
 	assert.match(m, /do NOT hand-write plan\.json/i);
 	assert.match(m, /\/harness run/); // sugere o próximo passo (execução)
 });
 
-test("buildConvergeDispatch: sem todo → sem Plan/clear, ainda roda a skill + store_plan", () => {
-	const m = buildConvergeDispatch("x", "x", { todo: false });
-	assert.doesNotMatch(m, /`todo` tool/);
-	assert.doesNotMatch(m, /clear the plan/);
-	assert.match(m, /harness-feature-converge/);
-	assert.match(m, /store_plan/);
-});
-
 test("buildConvergeDispatch: lembra de ler o profile cacheado, não re-derivar", () => {
-	const m = buildConvergeDispatch("x", "x", { todo: true });
+	const m = buildConvergeDispatch("x", "x", {});
 	assert.match(m, /\.harness\/profile\//);
 	assert.match(m, /do NOT re-derive/);
 });

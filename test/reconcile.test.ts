@@ -89,12 +89,11 @@ test("refreshPlanFor: null sem profile; plano após store + drift", () => {
 });
 
 test("buildRefreshDispatch: instrui MERGE não-clobber + artefatos alvo + store_profile", () => {
-	const msg = buildRefreshDispatch(["toolcfg"], { todo: true });
+	const msg = buildRefreshDispatch(["toolcfg"], {});
 	assert.match(msg, /MERGE, do NOT clobber/);
 	assert.match(msg, /services\.yaml → additive-merge/);
 	assert.match(msg, /store_profile/);
-	assert.match(msg, /todo/, "com todo ativo, menciona o plano via todo");
-	// sem todo: ainda roda a skill + store, sem o passo de Plan
+	assert.doesNotMatch(msg, /`todo`/, "o harness não instrui mais o rpiv-todo");
 	const bare = buildRefreshDispatch(["rules"]);
 	assert.match(bare, /harness-setup/);
 	assert.match(bare, /library\/conventions-map\.md → regenerate/);

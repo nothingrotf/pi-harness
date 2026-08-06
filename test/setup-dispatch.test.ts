@@ -15,30 +15,22 @@ test("SETUP_PHASES: fases 0-9 do skill + store (numeração 1:1 com harness-setu
 	);
 });
 
-test("buildSetupDispatch: com todo → Plan + harness-setup + artefatos + clear", () => {
-	const m = buildSetupDispatch({ todo: true });
-	assert.match(m, /`todo` tool/);
+test("buildSetupDispatch: fases como roteiro + harness-setup + artefatos; sem rpiv-todo", () => {
+	const m = buildSetupDispatch({});
+	assert.doesNotMatch(m, /`todo` tool/, "sem rpiv-todo — o harness não instrui Plan");
 	for (const p of SETUP_PHASES) assert.ok(m.includes(p), `falta fase: ${p}`);
 	assert.match(m, /harness-setup/);
 	assert.match(m, /\.harness\/profile\//);
 	assert.match(m, /architecture\.md/);
 	assert.match(m, /services\.yaml/);
 	assert.match(m, /harness\.md/);
-	assert.match(m, /clear the plan with the `todo` tool/);
+	assert.doesNotMatch(m, /clear the plan/);
 	assert.match(m, /store_profile/); // estampa via tool, depois do conteúdo existir
 	assert.match(m, /do NOT hand-write profile\.json/i);
 });
 
-test("buildSetupDispatch: sem todo → sem Plan/clear, ainda roda a skill", () => {
-	const m = buildSetupDispatch({ todo: false });
-	assert.doesNotMatch(m, /`todo` tool/);
-	assert.doesNotMatch(m, /clear the plan/);
-	assert.match(m, /harness-setup/);
-	assert.match(m, /architecture\.md/);
-});
-
 test("buildSetupDispatch: não rewrita AGENTS.md do repo (brownfield)", () => {
-	assert.match(buildSetupDispatch({ todo: true }), /do NOT rewrite the repo's own AGENTS\.md/);
+	assert.match(buildSetupDispatch({}), /do NOT rewrite the repo's own AGENTS\.md/);
 });
 
 test("buildConventionsMapDispatch: indexa ADRs/rules/patterns + split gate-vs-review → conventions-map.md", () => {

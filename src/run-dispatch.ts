@@ -67,15 +67,6 @@ export function buildRunDispatch(featureId: string, tools: DispatchTools = {}, g
 		`1. Read ${runDir}plan.json (the ordered tasks) and status.json. If plan.json is missing, STOP — the feature isn't converged yet (the user must run /harness "<feature>" first).`,
 	];
 	let n = 2;
-	if (tools.todo) {
-		// UM todo por ROUND de run_feature — NÃO por task: run_feature é BLOCKING, então o
-		// orchestrator não consegue ticar todos mid-run e uma lista por-task ficaria stale o run
-		// inteiro (o progresso por-task AO VIVO é o run card no transcript + o cockpit Alt+T).
-		const gateLabel = gateNames.length ? ` + ship gate: ${gateNames.join(" → ")}` : "";
-		lines.push(
-			`${n++}. **Create the Plan with the \`todo\` tool** — one todo per \`run_feature\` ROUND, NOT one per task (\`run_feature\` is BLOCKING: you cannot update todos while it runs, so per-task todos would sit stale; live per-task progress is the run card in the transcript and the Feature Control cockpit, Alt+T). Start with a single todo "run feature: all tasks${gateLabel}"; mark it completed when the call returns, and add one todo per fix round on \`orchestrator_turn\`.`,
-		);
-	}
 	lines.push(
 		`${n++}. **Call the \`run_feature\` tool** with featureId="${featureId}" — it is BLOCKING and owns execution: it spawns ONE session-backed worker for the whole feature (it runs \`harness-worker-base\` once, then loops with \`next_task\` — commit per task; it can't advance without committing), then injects and runs the ship gate${skipNote ? skipNote : ` (${gateNames.join(" → ")}) as validator sessions`}. Attempt budgets, pause/resume and per-role model config are enforced by the runner. Watch progress in the cockpit (Alt+T).`,
 	);
@@ -92,10 +83,9 @@ export function buildRunDispatch(featureId: string, tools: DispatchTools = {}, g
 		lines.push(`${n++}. The ship gate is fully SKIPPED by mission config — still verify the contract assertions on the real surface yourself and update ${runDir}status.json before declaring done.`);
 	}
 	lines.push(
-		`${n++}. The feature is DONE when status.json has every assertion \`"passed"\`${gates.skipUserTesting ? " (you update status.json yourself — qa-validator is skipped)" : " and the gate is green"}.${tools.todo ? " Clear the Plan with the `todo` tool (`action: \"clear\"`)." : ""} Summarize what shipped (assertions passed, tasks run, any deferred follow-ups).`,
+		`${n++}. The feature is DONE when status.json has every assertion \`"passed"\`${gates.skipUserTesting ? " (you update status.json yourself — qa-validator is skipped)" : " and the gate is green"}. Summarize what shipped (assertions passed, tasks run, any deferred follow-ups).`,
 	);
 	const utils: string[] = ["`run_feature` (the runner — ALL implementation/validation goes through it)"];
-	if (tools.todo) utils.push("`todo` (the Plan — one todo per run_feature round; update it whenever a run_feature call returns)");
 	if (tools.subagent) utils.push("`subagent` (analysis/investigation delegation only — never implementation)");
 	if (tools.advisor) utils.push("`advisor` (escalate verification verdicts)");
 	if (tools.askUser) utils.push("`ask_user_question` (ask on blockers instead of guessing)");

@@ -1,13 +1,13 @@
 /**
- * Native dispatch for Tier-2 feature convergence (Fatia 3) — model-driven, in-session,
- * with a Plan (rpiv-todo) of the convergence phases. The model runs the `harness-feature-converge`
- * skill and authors feature.md + contract.md (frozen) + plan.json under
- * .harness/runs/<feature-id>/, finishing by calling `store_plan` (which validates the
- * coverage invariant and persists plan.json + status.json the FeatureRunner consumes).
+ * Native dispatch for Tier-2 feature convergence (Fatia 3) — model-driven, in-session.
+ * The model runs the `harness-feature-converge` skill and authors feature.md + contract.md
+ * (frozen) + plan.json under .harness/runs/<feature-id>/, finishing by calling `store_plan`
+ * (which validates the coverage invariant and persists plan.json + status.json the
+ * FeatureRunner consumes). O progresso vivo é a strip/cockpit — sem Plan de todos.
  */
 import type { DispatchTools } from "./readiness-dispatch.ts";
 
-/** The convergence phases (one todo each — the "Plan · X/5"). */
+/** The convergence phases (referenciadas no dispatch como roteiro). */
 export const CONVERGE_PHASES: readonly string[] = [
 	"Phase 1: Size + understand the feature (Small/Medium/Large/Complex → depth; structure invariant) + gray-area",
 	"Phase 2: feature.md (intent + scope)",
@@ -16,10 +16,10 @@ export const CONVERGE_PHASES: readonly string[] = [
 	"Phase 5: store_plan (validate coverage + persist)",
 ];
 
-/** Builds the message that converges a feature live (Plan via rpiv-todo when active).
+/** Builds the message that converges a feature live.
  * `opts.headless` = CI mode (no interactive user): every gray area resolves as `[assumido]`
  * and `ask_user_question` is forbidden (there is nobody to answer). */
-export function buildConvergeDispatch(request: string, featureId: string, tools: DispatchTools = {}, opts: { headless?: boolean } = {}): string {
+export function buildConvergeDispatch(request: string, featureId: string, _tools: DispatchTools = {}, opts: { headless?: boolean } = {}): string {
 	const lines = [
 		`Converge the feature into its run artifacts now, live in this session.`,
 		`Feature id: ${featureId}. Run directory: .harness/runs/${featureId}/. User request: ${request}`,
@@ -35,15 +35,7 @@ export function buildConvergeDispatch(request: string, featureId: string, tools:
 		);
 	}
 	let n = 1;
-	if (tools.todo) {
-		lines.push(
-			`${n++}. First, create a plan with the \`todo\` tool — one todo per phase:`,
-			...CONVERGE_PHASES.map((p) => `   - ${p}`),
-			`${n++}. Invoke the \`harness-feature-converge\` skill and work through the phases in order, marking each todo in_progress → completed.`,
-		);
-	} else {
-		lines.push(`${n++}. Invoke the \`harness-feature-converge\` skill and work through its phases in order.`);
-	}
+	lines.push(`${n++}. Invoke the \`harness-feature-converge\` skill and work through its phases in order:`, ...CONVERGE_PHASES.map((p) => `   - ${p}`));
 	lines.push(
 		`${n++}. **Size the feature first** (Small/Medium/Large/Complex — see harness-feature-converge Phase 0): it scales the convergence depth, NOT the structure. contract.md (≥1 frozen black-box assertion), the store_plan coverage invariant, and the ship gate ALWAYS run regardless of size; when in doubt, size up (a thin contract ships unvalidated behavior).`,
 		`${n++}. Read the cached profile (.harness/profile/: architecture.md, services.yaml, harness.md, skills/, library/) — do NOT re-derive it. If the profile is absent, stop and tell the user to run /harness setup.`,
@@ -55,9 +47,6 @@ export function buildConvergeDispatch(request: string, featureId: string, tools:
 		lines.push(
 			`${n++}. After store_plan persists, the USER reviews & approves the plan in a proposal overlay. If they REJECT, you'll receive their reason as a new message — revise feature.md/contract.md/tasks and call store_plan again. If they approve (possibly with a comment), you're done.`,
 		);
-	}
-	if (tools.todo) {
-		lines.push(`${n++}. Finally, clear the plan with the \`todo\` tool (\`action: "clear"\`) so it doesn't linger.`);
 	}
 	return lines.join("\n");
 }

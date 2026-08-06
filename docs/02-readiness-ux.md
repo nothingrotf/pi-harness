@@ -163,7 +163,7 @@ isoladas** (via `pi-subagents`) pra alinhar a coordenação com o referência:
   audit; report+args → match semântico; report+sem args → AskUser categoria/sinal).
   Texto verbatim. **+ camada de orquestração** (nossa): cada fix roda no **agente
   dedicado `harness-readiness-remediator` por critério, em sequência**, espelhando as
-  sessões `readiness-remediation`; progresso rastreado com **rpiv-todo** (um todo
+  sessões `readiness-remediation` (um subagent
   por critério). (gate `fix` = mesmo caminho, args vazio.)
 
 ### Agentes dedicados (analog do auditor de referência / readiness-remediation)
@@ -201,15 +201,13 @@ extensão pi-harness (→ store tool + skill), recebe o prompt do auditor verbat
 `--append-system-prompt`, e o tools allowlist (`--tools`) replica os agentes
 dedicados (auditor read-only+store; remediator edit/write).
 
-### Default: dispatch NATIVO (in-session, ao vivo + Plan do rpiv-todo)
+### Default: dispatch NATIVO (in-session, ao vivo)
 
 O **default é model-driven nativo** — é o que o modelo de referência mostra no terminal: os tool
-calls streamam ao vivo na própria sessão e o **rpiv-todo** renderiza o **Plan · X/5**
-(uma todo por fase do auditor). `src/readiness-dispatch.ts` monta a mensagem
-(`pi.sendUserMessage`) que manda o modelo: (1) criar o plano de 5 fases com a tool
-`todo`, (2) rodar a skill `harness-readiness-audit` marcando cada fase in_progress→completed,
-(3) chamar `store_agent_readiness_report` (valida + grava). Zero widget custom, zero
-subprocesso — só compor pi-subagents + rpiv-todo + a skill + a store tool.
+calls streamam ao vivo na própria sessão. `src/readiness-dispatch.ts` monta a mensagem
+(`pi.sendUserMessage`) que manda o modelo: (1) rodar a skill `harness-readiness-audit`
+pelas 5 fases em ordem, (2) chamar `store_agent_readiness_report` (valida + grava). Zero
+widget custom, zero subprocesso — só compor pi-subagents + a skill + a store tool.
 
 ```
 ●  📊 Starting agent readiness evaluation
@@ -234,8 +232,9 @@ handler bloqueante congela o TUI; o nativo dá o streaming de graça.
 
 - **`pi-subagents`** — spawna as sessões isoladas (audit + fix por critério) e
   descobre os agentes dedicados no dir global de agents (espelho via symlink).
-- **`@juicesharp/rpiv-todo`** — rastreia os fixes (um todo por critério; overlay
-  sobrevive a /reload e compaction).
+- (removido) **rpiv-todo** — o harness não instrui mais o Plan de todos; se o usuário
+  tiver o rpiv-todo instalado, ele continua disponível para uso pessoal, mas os
+  dispatches do harness não o mencionam.
 
 NÃO reimplementamos as utilidades do pi-subagents (worktrees, async tracking,
 chains, acceptance, intercom — ~31k LOC): ele já está instalado e o design é
