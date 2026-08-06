@@ -11,7 +11,7 @@
  * por turnos/contexto/delegação, não por preço-por-token — mas sem medir custo por resultado
  * aceito, nenhuma decisão de sizing (budget de batch, modelo por role) é verificável. Este módulo
  * torna cada feature real um datapoint. Limitações conhecidas (documentadas em docs/06):
- * o orchestrator VIVO e os subagents nested (@tintinweb .output) ficam fora deste agregado.
+ * o orchestrator VIVO e os subagents nested (pi-subagents) ficam fora deste agregado.
  */
 import * as fs from "node:fs";
 import { findWorkerSessionFile } from "./control-worker.ts";

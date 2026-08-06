@@ -47,7 +47,7 @@ export function registerRunCardRenderer(pi: ExtensionAPI): void {
 		if (!featureId) return undefined;
 		const component: Component = {
 			// Lê o snapshot vivo + os subagents rodando agora (cap. 09): re-renderiza a cada ciclo
-			// do TUI (@tintinweb/pi-subagents anima ~80ms), então o Worker tica ao vivo no transcript.
+			// do TUI (o widget do pi-subagents anima ~80ms), então o Worker tica ao vivo no transcript.
 			// CLIP obrigatório: o pi-tui aborta a app inteira numa linha > width, e o card carrega
 			// conteúdo dinâmico ilimitado (task ids, activity snippets) — re-renderiza a cada ciclo.
 			render: (width: number): string[] => colorizeCard(theme, buildRunCard(getRunModel(featureId), { liveAgents: listLiveAgents() })).map((l) => clipToWidth(l, width)),

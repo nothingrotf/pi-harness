@@ -95,5 +95,5 @@ export function activeWorkerText(model: ControlModel): string {
 	const running = model.workers.find((w) => w.status === "running");
 	if (!running) return "Active Worker  —  (no worker running)";
 	const sid = running.workerSessionId === "—" ? "—" : running.workerSessionId.slice(0, 8);
-	return `Active Worker  ·  #${running.taskId}  ·  ${sid}  ·  running  (live logs in the native subagent stream)`;
+	return `Active Worker  ·  #${running.taskId}  ·  ${sid}  ·  running  (live logs in the native subagent session)`;
 }

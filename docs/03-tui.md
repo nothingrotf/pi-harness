@@ -91,10 +91,10 @@ No host do Pi a superfície tem **três** canais:
    > tail), flanqueadas só por colunas `│` (sem caixa). **Fonte do transcript:** o caminho NATIVO lê
    > a transcript REAL — no worker **headless** a sessão `--session-id` (`runs/<id>/sessions/*.jsonl`,
    > via `parseSessionEntries` pi 0.80.3, `src/session-read.ts`); no subagent **in-session**
-   > (@tintinweb) o `.output` JSONL que ele streama (`…/{sessionId}/tasks/{agentId}.output`,
+   > (pi-subagents) o `session.jsonl` do child (sob a session-root do parent, ou o `sessionFile` do `status.json` em async,
    > `readAgentOutputEntries`, localizado por `agentId` + a sessão-pai) — ambos read-only/cacheados e
    > foldados pelo `foldTranscript` (= o `g2H`). **Fallback** (1º frame, antes do ficheiro existir) = o
-   > buffer rolante de `recentActivity` (a string `activity` do @tintinweb acumulada por `mergeActivity`).
+   > feed de `recentActivity` (os `recentTools`/`recentOutput` do `details.progress[]` do pi-subagents).
    > O `entriesFromSessionEntries` ignora entries não-message (compaction/branch/model_change/custom).
    > O evento nativo `session_tree` (+ o watcher de fs) re-tica o cockpit ao vivo.
    overlayOptions:{width:"100%",maxHeight:"100%",anchor:"top-left",margin:0}})`; o render lê
@@ -367,7 +367,7 @@ e ao deep-dive de dados (doc UI 10) + persistência (doc 07):
 - **Worker #n + duração** (doc 10 `mnR`) — derivados (não armazenados): #n por ordem de início,
   duração = `task_started`→handoff (ou now p/ o running). Visíveis na view Workers.
 - **Worker Activity** (doc 10 `recentActivity`) — `live-agents` acumula a string `activity` do
-  `AgentDetails` (@tintinweb) num buffer rolante (`mergeActivity`); o run card mostra o bloco "Worker Activity".
+  `details.progress[]` (pi-subagents); o run card mostra o bloco "Worker Activity".
 - **Header `Time <elapsed>`** — do `startedAt` (primeiro `run_started`).
 - **Models: skip-scrutiny / skip-user-testing** (doc UI §8) — toggles no `model-config`; honrados
   pelo `injectShipGate` (headless) e pelo `buildRunDispatch` (nativo).

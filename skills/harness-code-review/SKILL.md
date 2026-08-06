@@ -139,9 +139,19 @@ Do NOT weaken or delete tests here; you only probe them. If the gate was red you
 step. Keep it bounded — this is a sensor, not full mutation-testing tooling.
 
 ## 2) Launch the three axes in parallel
-Spawn all three via the **`Agent` tool** (@tintinweb/pi-subagents) **in the same message** — one
-`Agent` call per axis with `run_in_background: true` on each so they run concurrently as isolated
-fresh-context sessions, **visible live in the UI**. Pass each the **same** scoped inputs:
+Spawn all three via the **`subagent` tool** (pi-subagents) in **ONE call** — parallel mode with
+`tasks: [...]` (one item per axis) and `async: false`, so they run concurrently as isolated
+fresh-context sessions and the call blocks until all three return:
+
+```
+subagent({ async: false, tasks: [
+  { agent: "harness-correctness-review", task: "<scoped inputs>" },
+  { agent: "harness-quality-review",     task: "<scoped inputs>" },
+  { agent: "harness-conventions-review", task: "<scoped inputs>" },
+] })
+```
+
+Pass each the **same** scoped inputs:
 `### Git / diff output`, `### Changed file contents`, `### Worker handoffs (claims)`, and (when
 present) `### Worker transcript skeleton` + (on a re-run) `### Prior blocking findings`. The
 handoff/transcript let a reviewer audit worker claims and procedure deviations, not just the code.

@@ -6,6 +6,7 @@ inheritProjectContext: true
 inheritSkills: false
 tools: read, grep, find, ls, bash, write
 defaultContext: fresh
+completionGuard: false
 ---
 
 # QA Flow Validator

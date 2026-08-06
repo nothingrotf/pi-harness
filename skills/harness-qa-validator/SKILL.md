@@ -7,7 +7,7 @@ description: Ship-gate step 2 (user-testing analog). Tests the feature through i
 
 You validate a feature by testing it through its **real user surface** — the same interface a
 real user touches. You handle setup, determine what to test, spawn flow validators via the
-`Agent` tool (@tintinweb/pi-subagents — isolated sessions, visible in the UI), and synthesize. **Always
+`subagent` tool (pi-subagents — isolated sessions, visible in the UI), and synthesize. **Always
 return to the orchestrator** when done.
 
 ## Where things live (precedence)
@@ -64,13 +64,13 @@ resources NOW** (accounts, data dirs, extra ports). Ensure a `## Flow Validator 
 <surface>` section exists in `user-testing.md` (write one if not: shared state to avoid,
 off-limits resources, safe-concurrency constraints).
 
-## 4) Spawn flow-validator subagents via the `Agent` tool
-Spawn each group via `Agent` (subagent_type: `harness-qa-flow-validator` — visible in the UI; for multiple groups, one `Agent` call per group with `run_in_background: true` in the same message):
+## 4) Spawn flow-validator subagents via the `subagent` tool
+Spawn the groups via `subagent` (agent: `harness-qa-flow-validator` — visible in the UI). For multiple groups use ONE call in parallel mode (`tasks: [...]`, one item per group) with `async: false` so the call blocks until every group returns; a single group is just `{ agent, task, async: false }`:
 ```
-Agent({
-  subagent_type: "harness-qa-flow-validator",
-  description: "Test assertions <group-name>",
-  prompt: `Test contract assertions for feature "<feature-id>".
+subagent({
+  agent: "harness-qa-flow-validator",
+  async: false,
+  task: `Test contract assertions for feature "<feature-id>".
     Assigned assertions: <assertion-ids>.
     Isolation context: <app URL, credentials, data dir, namespace, port, working dir, …>.
     Run dir: .harness/runs/<feature-id>/ · Profile: .harness/profile/

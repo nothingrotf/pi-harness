@@ -55,7 +55,7 @@ exactly after. Randomize which variant runs first when ordering could matter (ca
 service state).
 
 ### 4) Judge (blind, once)
-Spawn ONE readonly `Agent` (general-purpose; prefer a different model family from the arms'
+Spawn ONE readonly `subagent` (the `delegate` builtin or a readonly custom agent; prefer a different model family from the arms'
 workers). Give it: the rubric, and the two archived run dirs under neutral labels (`arm-1`,
 `arm-2` — sanitize any path/file that names the config). It scores per criterion with evidence
 pointers and picks a winner or declares a tie. It never sees model names, config diffs, or which

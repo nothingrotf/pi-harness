@@ -363,7 +363,7 @@ export function showFeatureControl(ctx: ExtensionContext, featureId: string, opt
 				const content: string[] = [];
 				for (const e of entries.slice(-maxItems)) content.push(...renderEntry(e, cw));
 				if (entries.length === 0) {
-					// Sem transcript ao vivo (o `.output` do @tintinweb ainda não existe — 1º frame — e sem
+					// Sem transcript ao vivo (a sessão do child pi-subagents ainda não existe — 1º frame — e sem
 					// buffer de activity): mostra um sinal HONESTO de que o worker está trabalhando
 					// (tool atual + counts) em vez do beco "(no worker activity yet)".
 					const parts: string[] = [];
@@ -524,7 +524,7 @@ export function showFeatureControl(ctx: ExtensionContext, featureId: string, opt
 					};
 				} else if (v === "workers") {
 					// Enter = SESSION VIEWER (droid §7b) — tanto pro worker gravado (sessão em disco) quanto
-					// pro live agent (.output do @tintinweb). `h` continua a abrir o handoff direto.
+					// pro live agent (sessão do child pi-subagents). `h` continua a abrir o handoff direto.
 					list.onSelect = (it) => {
 						if (it.value.startsWith("live__")) {
 							sessionLiveIdx = Number(it.value.slice("live__".length)) || 0;

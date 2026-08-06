@@ -226,7 +226,7 @@ export default function registerHarnessExtension(pi: ExtensionAPI): void {
 	// widget custom nem subprocesso. (O ReadinessRunner code-initiated continua
 	// disponível pro headless/CI — ver src/readiness-runner.ts e docs/02.)
 	// Detecta em runtime quais tools companheiros estão ATIVOS na sessão, pra usar
-	// (e avisar) os que existem: rpiv-todo (`todo`) e @tintinweb/pi-subagents (`Agent`).
+	// (e avisar) os que existem: rpiv-todo (`todo`) e pi-subagents (`subagent`).
 	const activeTools = (): Set<string> => {
 		try {
 			return new Set(pi.getActiveTools());
@@ -234,8 +234,8 @@ export default function registerHarnessExtension(pi: ExtensionAPI): void {
 			return new Set();
 		}
 	};
-	// Subagent PROVIDER ÚNICO: @tintinweb/pi-subagents (o tool `Agent`). Habilita o caminho nativo de
-	// spawn (worker + reviewers em sessão fresca; transcript ao vivo no Active Worker via `.output`).
+	// Subagent PROVIDER ÚNICO: pi-subagents (o tool `subagent`). Habilita o caminho nativo de
+	// spawn (reviewers/validators em sessão fresca; transcript ao vivo no Active Worker via a sessão do child).
 	const hasSubagentTool = (t: Set<string>): boolean => t.has("subagent");
 	const toolBadge = (t: Set<string>, names: string[]): string =>
 		names.map((n) => `${n} ${t.has(n) ? "✓" : "✗"}`).join(" · ");

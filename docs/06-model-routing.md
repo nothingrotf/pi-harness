@@ -52,7 +52,7 @@ worker total: $12.69 · validator total: $14.28 · TOTAL: $26.97
      `orchestrator [live chat, session-cumulative]` — rotulada como cumulativa (converge +
      análise + conversa; não é janelável ao run porque o run bloqueia o turno) e fora do
      `TOTAL (children)`.
-2. subagents nested (@tintinweb `.output`) ficam fora do agregado;
+2. subagents nested (pi-subagents) ficam fora do agregado;
 3. code-review/qa/deliver compartilham o role `validator` (sem split por gate no config);
 4. gate workers fazem fixes não-comportamentais (política de skill, não sandbox).
 

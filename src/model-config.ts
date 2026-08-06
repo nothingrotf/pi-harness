@@ -9,7 +9,7 @@
  * Ambos os spawns aceitam `--model` e `--thinking` (off|minimal|low|medium|high|xhigh|max).
  *
  * NÃO governa o orchestrator VIVO em sessão (o chat usa o modelo da sessão Pi) nem os subagents
- * de ANÁLISE in-session (@tintinweb/pi-subagents). Escopo: os spawns que o harness controla —
+ * de ANÁLISE in-session (pi-subagents). Escopo: os spawns que o harness controla —
  * que agora incluem TODA a implementação/validação (droid model).
  *
  * Persistência: `${agentDir}/pi-harness/models.json` (global, junto do config do Pi).

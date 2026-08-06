@@ -6,6 +6,8 @@ inheritProjectContext: true
 inheritSkills: false
 tools: read, grep, find, ls, bash
 defaultContext: fresh
+acceptanceRole: read-only
+completionGuard: false
 ---
 
 # Correctness Review
