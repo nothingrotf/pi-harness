@@ -8,3 +8,4 @@ node_modules/
 
 # run state do rpiv-workflow (efêmero)
 .rpiv/
+.pi-subagents/
