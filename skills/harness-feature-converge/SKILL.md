@@ -104,7 +104,7 @@ for this scope`.
   (As the profile accrues decisions across features, more gray areas land here → fewer asks — the
   harness learns the repo; the SKIP that makes feature N cheaper than feature 1.)
 - **HIGH** — multiple valid options, conflicting patterns, or a directional / irreversible /
-  security-data-cost-UX choice → **ASK** via the `ask_user_question` tool: **concrete options** (not
+  security-data-cost-UX choice → **ASK** the user (via the `ask_user_question` tool when available, otherwise directly in chat — wait for the answer): **concrete options** (not
   "A/B"), lead with a **recommended default + the reasoning** (PUSH — don't just poll), and always
   offer **"you decide"** (captures agent discretion). User picks → **`[confirmado]`**; "you decide"
   → **`[assumido]`** (discretion, with your default + rationale). Ask **one area at a time**; let each

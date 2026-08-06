@@ -2,9 +2,9 @@
 
 Como o readiness é **criado, garantido e validado**, e como aparece pro usuário.
 Port **1:1** do "Agent Readiness Model" do harness de referência, com pequenas
-mudanças locais documentadas aqui. Empresta o modelo staged do `rpiv-workflow`
+mudanças locais documentadas aqui. Empresta um modelo staged de pipeline
 (estado JSONL auditado + validação de output por estágio) e o idioma de painel do
-`rpiv-advisor`.
+overlays de stance/actions.
 
 ---
 
@@ -36,7 +36,7 @@ nível, schema estrito, e o `/readiness-fix` (a referência, ver §7).
 
 ## 2. Ciclo de vida do snapshot (create · ensure · validate · store)
 
-Pipeline de 4 estágios (modelo `rpiv-workflow`), com validação por estágio e
+Pipeline de 4 estágios, com validação por estágio e
 trilha JSONL auditável. **Tudo abaixo está construído** (Fatia 1).
 
 | Estágio | Onde | Faz | Gate |
@@ -89,7 +89,7 @@ Um painel, um campo `stance`, uma ação primária + medidor visual:
 
 ---
 
-## 4. O painel (estilo `rpiv-advisor`, "stance banner + actions")
+## 4. O painel ("stance banner + actions")
 
 ```
 ╭──────────────────────────────────────────────────────────────╮

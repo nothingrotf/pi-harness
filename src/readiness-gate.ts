@@ -1,5 +1,5 @@
 /**
- * Painel do readiness gate — overlay bordado no estilo do rpiv-advisor
+ * Painel do readiness gate — overlay bordado (stance banner + actions)
  * (Container + DynamicBorder + Text + SelectList). Renderiza o GateModel
  * (lógica pura em readiness.ts) e devolve a ação escolhida.
  *

@@ -72,11 +72,10 @@ export function buildRunDispatch(featureId: string, tools: DispatchTools = {}, g
 	);
 	const askOnBlock = tools.askUser ? "use the `ask_user_question` tool to ask the user (don't guess)" : "return to the user with the specific blocker (don't guess)";
 	const delegate = tools.subagent ? "delegate root-cause analysis to `subagent` children (analysis ONLY — code reading, flow tracing; NEVER implementation; use `async: false`)" : "analyze the root cause from the handoff and the repo state";
-	const escalate = tools.advisor ? " Use the `advisor` tool to escalate high-stakes verdicts to a stronger reviewer model." : "";
 	lines.push(
 		`${n++}. **Act on the run_feature report** (its \`status\`):`,
 		`   - \`completed\` → verify ${runDir}status.json (every assertion "passed"), then summarize what shipped.`,
-		`   - \`orchestrator_turn\` → a worker/validator returned to you: read the handoff in the report (details in ${runDir}handoffs/), ${delegate}, then call \`run_feature\` again with \`fixTasks: [...]\` (each names a profile worker skill; they're inserted ABOVE the ship gate and run first).${escalate} Cap at 5 rounds — if it still can't pass, ${askOnBlock}.`,
+		`   - \`orchestrator_turn\` → a worker/validator returned to you: read the handoff in the report (details in ${runDir}handoffs/), ${delegate}, then call \`run_feature\` again with \`fixTasks: [...]\` (each names a profile worker skill; they're inserted ABOVE the ship gate and run first). Cap at 5 rounds — if it still can't pass, ${askOnBlock}.`,
 		`   - \`paused\` → report the pause reason to the user. Resume by calling \`run_feature\` again: the default re-attaches the paused worker session ("continue where you left off"); \`restartFeature: true\` re-runs it fresh; \`resumeWorkerSessionId\` re-attaches a specific recorded session. \`usage_limit\` needs the user to fix billing first; \`step_retry_limit_exceeded\` means analyze WHY before retrying.`,
 	);
 	if (gateNames.length === 0) {
@@ -87,7 +86,6 @@ export function buildRunDispatch(featureId: string, tools: DispatchTools = {}, g
 	);
 	const utils: string[] = ["`run_feature` (the runner — ALL implementation/validation goes through it)"];
 	if (tools.subagent) utils.push("`subagent` (analysis/investigation delegation only — never implementation)");
-	if (tools.advisor) utils.push("`advisor` (escalate verification verdicts)");
 	if (tools.askUser) utils.push("`ask_user_question` (ask on blockers instead of guessing)");
 	lines.push("", `Use the available utilities: ${utils.join(", ")}.`);
 	return lines.join("\n");

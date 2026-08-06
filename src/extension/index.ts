@@ -415,9 +415,9 @@ export default function registerHarnessExtension(pi: ExtensionAPI): void {
 		const runCfg = loadModelConfig();
 		const runNudge = orchestratorModelNudge(ctx.model, runCfg);
 		if (runNudge) ctx.ui.notify(runNudge, "warning");
-		const dispatch = buildRunDispatch(featureId, { subagent: hasSubagentTool(t), advisor: t.has("advisor"), askUser: t.has("ask_user_question") }, runCfg.gates);
+		const dispatch = buildRunDispatch(featureId, { subagent: hasSubagentTool(t), askUser: t.has("ask_user_question") }, runCfg.gates);
 		dispatchToAgent(steering ? `${steering}\n\n${dispatch}` : dispatch);
-		ctx.ui.notify(`pi-harness: executing "${featureId}" — orchestrator in chat → run_feature (runner-driven workers) → ship gate. tools: ${toolBadge(t, ["run_feature", "subagent", "advisor"])}`);
+		ctx.ui.notify(`pi-harness: executing "${featureId}" — orchestrator in chat → run_feature (runner-driven workers) → ship gate. tools: ${toolBadge(t, ["run_feature", "subagent"])}`);
 		if (ctx.hasUI) {
 			strip.start(ctx, featureId);
 			// cap. 09: dropa o cartão vivo no transcript (1x por run/sessão). Alt+T = cockpit.

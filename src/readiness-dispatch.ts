@@ -12,9 +12,7 @@
 export interface DispatchTools {
 	/** pi-subagents (`subagent`) ativo? \u2192 isola cada worker/fix/review num subagente fresco. */
 	subagent?: boolean;
-	/** rpiv-advisor (`advisor`) ativo? \u2192 escala a verifica\u00e7\u00e3o pra um modelo mais forte (ship gate). */
-	advisor?: boolean;
-	/** rpiv-ask-user-question (`ask_user_question`) ativo? \u2192 pergunta estruturada em vez de adivinhar. */
+	/** tool `ask_user_question` ativo (qualquer provider)? \u2192 pergunta estruturada em vez de adivinhar. */
 	askUser?: boolean;
 }
 
@@ -44,7 +42,7 @@ export function buildFixDispatch(args: string, tools: DispatchTools = {}): strin
 	const a = args.trim();
 	const scope = a
 		? `the failing readiness signals matching "${a}" (match by id, name, or meaning)`
-		: "the failing readiness signals — group them by category and ask the user (ask_user_question) which to fix";
+		: "the failing readiness signals — group them by category and ask the user which to fix (via `ask_user_question` when available, otherwise ask directly in chat and wait)";
 	const isolate = tools.subagent
 		? " For isolation, delegate each fix to a fresh subagent: `subagent({ agent: \"harness-readiness-remediator\", task: \"...\", async: false })`."
 		: "";

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { buildResumeDispatch, buildRunDispatch } from "../src/run-dispatch.ts";
 
 test("buildRunDispatch: droid model — orchestrator chama run_feature; NUNCA spawna worker via Agent", () => {
-	const m = buildRunDispatch("add-login", { subagent: true, advisor: true, askUser: true });
+	const m = buildRunDispatch("add-login", { subagent: true, askUser: true });
 	assert.match(m, /harness-orchestrator/);
 	assert.match(m, /\.harness\/runs\/add-login\/plan\.json/);
 	assert.match(m, /status\.json/);
@@ -27,8 +27,8 @@ test("buildRunDispatch: droid model — orchestrator chama run_feature; NUNCA sp
 	assert.match(m, /restartFeature/);
 	assert.match(m, /resumeWorkerSessionId/);
 	assert.match(m, /Cap at 5 rounds/);
-	// utilitários reforçados
-	assert.match(m, /`advisor`/);
+	// utilitários reforçados (advisor removido — rpiv fora do prompt surface)
+	assert.doesNotMatch(m, /`advisor`/);
 	assert.match(m, /ask_user_question/);
 	assert.match(m, /Use the available utilities/);
 });
@@ -39,7 +39,6 @@ test("buildRunDispatch: sem utilitários → ainda usa run_feature (o runner é 
 	assert.doesNotMatch(m, /`todo` tool/);
 	assert.doesNotMatch(m, /`Agent` \(/, "sem o util Agent na lista de utilitários");
 	assert.doesNotMatch(m, /delegate root-cause analysis to `Agent`/);
-	assert.doesNotMatch(m, /`advisor`/);
 	assert.match(m, /harness-code-review/);
 	assert.match(m, /harness-qa-validator/);
 	assert.match(m, /harness-deliver/);
