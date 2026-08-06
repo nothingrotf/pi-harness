@@ -49,6 +49,8 @@ import { mergeDecisionMessage, readDeliveryRecord } from "../delivery.ts";
 import { registerRunCardRenderer, sendRunCard } from "../run-card-view.ts";
 import { agentsFromArgs, agentsFromDetails, clearAllLiveAgents, clearLiveAgents, completeAsyncRun, isSubagentTool, parseTaskId, registerAsyncRun, setAsyncStatusReader, setLiveAgents } from "../live-agents.ts";
 import { readAsyncStatusLite } from "../session-read.ts";
+import { buildWorkerTurnMessage, dedupeTurnMessage, readTurnContext } from "../context-inject.ts";
+import { evaluateGuard, type GuardScope } from "../guards.ts";
 import { clearMode, liveLockedFeature, loadMode, saveMode } from "../mode-store.ts";
 import { listRunIds } from "../runs.ts";
 
@@ -896,6 +898,40 @@ export default function registerHarnessExtension(pi: ExtensionAPI): void {
 		const cwd = lastCtx?.cwd;
 		return !!cwd && readPlan(cwd, fid) !== null;
 	};
+	// F1 (doc 09 §3.1): reinjeção de contexto POR TURNO dentro do processo do WORKER. O spawn
+	// (rpc-worker.ts) marca o child com PI_HARNESS_WORKER_FEATURE/KIND; esta mesma extensão,
+	// carregada ambient no child, reconstrói a mensagem do DISCO a cada turno (task corrente +
+	// assertions com status vivo + FROZEN + lições), oculta (display:false) e deduplicada.
+	const workerFeature = process.env.PI_HARNESS_WORKER_FEATURE;
+	const workerKind: "task" | "ship-gate" = process.env.PI_HARNESS_WORKER_KIND === "ship-gate" ? "ship-gate" : "task";
+	if (workerFeature) {
+		pi.on("before_agent_start", (_event, ctx) => {
+			const tc = readTurnContext(ctx.cwd, workerFeature);
+			if (!tc) return;
+			const content = dedupeTurnMessage(workerFeature, buildWorkerTurnMessage(tc));
+			return { message: { customType: "harness-turn-context", content, display: false } };
+		});
+	}
+	// F2 (doc 09 §3.2): guards programáticos — as regras que eram prosa viram `{block, reason}`
+	// no tool_call. Worker: contract.md FROZEN, plan/status tool-owned, AGENTS.md do repo, merge
+	// humano. Orchestrator (run/ship): nunca implementa — escrita fora de .harness/ → fixTasks.
+	pi.on("tool_call", (event, ctx) => {
+		const input = (event as { input?: { path?: unknown; command?: unknown } }).input;
+		const call = {
+			toolName: event.toolName,
+			path: typeof input?.path === "string" ? input.path : undefined,
+			command: typeof input?.command === "string" ? input.command : undefined,
+		};
+		let scope: GuardScope | null = null;
+		if (workerFeature) {
+			scope = { cwd: ctx.cwd, featureId: workerFeature, role: "worker", kind: workerKind, planExists: readPlan(ctx.cwd, workerFeature) !== null };
+		} else if (mode.active && (mode.phase === "run" || mode.phase === "ship") && mode.featureId) {
+			scope = { cwd: ctx.cwd, featureId: mode.featureId, role: "orchestrator", planExists: true };
+		}
+		if (!scope) return;
+		const verdict = evaluateGuard(call, scope);
+		if (verdict) return verdict;
+	});
 	// Refresh dos runs ASYNC: o listLiveAgents() refresca stats via status.json do asyncDir.
 	setAsyncStatusReader(readAsyncStatusLite);
 	// Runs ASYNC do pi-subagents (async é o default do provider): o tool retorna já — o tracking

@@ -137,7 +137,18 @@ export function makeRpcSpawn(opts: RpcSpawnOpts): SpawnFn {
 
 		let client: RpcWorkerClient;
 		try {
-			client = await factory({ cwd: ctx.cwd, env: process.env as Record<string, string | undefined>, args });
+			// Env de PAPEL do worker: a extensão pi-harness (carregada ambient no child) liga a
+			// reinjeção de contexto por turno (context-inject) e os guards por-path (guards.ts)
+			// SÓ quando estes marcadores existem — sessões normais ficam intocadas.
+			client = await factory({
+				cwd: ctx.cwd,
+				env: {
+					...(process.env as Record<string, string | undefined>),
+					PI_HARNESS_WORKER_FEATURE: opts.featureId,
+					PI_HARNESS_WORKER_KIND: step.kind === "ship-gate" ? "ship-gate" : "task",
+				},
+				args,
+			});
 		} catch {
 			rm(dir);
 			return { code: 1 }; // RpcClient indisponível → failure (o runner re-tenta/escala)
