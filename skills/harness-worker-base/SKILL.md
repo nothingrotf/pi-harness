@@ -215,6 +215,15 @@ reads to not re-litigate your choices.
 Run the verification step(s) from your task skill's Work Procedure (the gate from
 `services.yaml`). Fix failures your work introduced. Don't hand off with broken verification.
 
+**Bound every long-running command with a timeout.** Test suites, dev-server probes and
+integration runs can hang forever on a bad port/env/DB — and a hung command blocks the whole
+run (a real incident: an integration suite waited indefinitely on a test database; the worker
+sat 20+ minutes producing nothing). Use the bash tool's `timeout` parameter or prefix with
+`timeout <seconds>` (e.g. `timeout 600 bun test …`), pick a budget generous for the suite but
+finite, and when it fires treat it as a FAILURE to investigate (what hung, why) — never re-run
+the same command unbounded. Avoid ` | tail`-only capture on long commands: it buffers all
+output and hides progress; prefer writing to a log file and tailing that.
+
 **Read the test count, not just the exit code.** A runner that collected ZERO tests exits 0 and
 looks identical to a clean pass (`No test files found`, `Test Files no tests`, `collected 0 items`,
 `Tests: 0`). If your command collected nothing, the command is broken — not your code. Six real
