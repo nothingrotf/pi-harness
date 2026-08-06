@@ -297,7 +297,7 @@ Tasks execute in array order — the topmost pending runs next. Each task:
 description that states how a third-party API behaves (which region serves a model, what an
 endpoint accepts, what a field is called) is an instruction the worker will follow literally, and
 **the worker has no web tools** — it cannot check you (`harness-worker-base` §1.6). Neither can the
-review axes. You have `web_search`/`web_fetch`: verify the claim and cite the source in the task,
+review axes. You have `web_search`/`fetch_content`: verify the claim and cite the source in the task,
 or write it as an explicit unknown for the worker to resolve locally ("confirm against the
 installed SDK types before implementing"). Never state an unverified provider fact as a
 requirement. Observed cost: a brief said `location 'global'` for a model that the docs list only

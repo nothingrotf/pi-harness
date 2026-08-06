@@ -101,7 +101,7 @@ Candidate/Quarantined; skip if absent.
 
 ### 1.6 External facts you cannot verify (READ THIS BEFORE ASSERTING ANYTHING)
 **You have no web tools.** Your toolset is `read, grep, find, ls, bash, edit, write, next_task,
-EndFeatureRun` — no `web_search`, no `web_fetch`, no subagents. The research role belongs to the
+EndFeatureRun` — no `web_search`, no `fetch_content`, no subagents. The research role belongs to the
 orchestrator (it has those tools and distills findings into `.harness/profile/library/`).
 
 So when your task depends on a fact about an external service, SDK or API that the repo does not

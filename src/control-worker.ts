@@ -59,7 +59,9 @@ const TOOL_LABELS: Record<string, string> = {
 	glob: "Find",
 	ls: "List",
 	web_search: "Web Search",
-	web_fetch: "Fetch",
+	fetch_content: "Fetch",
+	get_search_content: "Search Content",
+	source_check: "Source Check",
 	todo: "Todo",
 };
 const SUBAGENT_LABEL_TOOLS = new Set(["agent", "task"]);

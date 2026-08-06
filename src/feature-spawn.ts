@@ -34,8 +34,11 @@ const SUBAGENT_TOOLS = "subagent";
 const CORE_TOOLS = "read,Read,grep,find,ls,bash,Bash,edit,Edit,write,Write,exec_command,write_stdin,apply_patch,exec,wait";
 const TOOLS_TASK = `${CORE_TOOLS},next_task,EndFeatureRun`;
 const TOOLS_GATE = `${CORE_TOOLS},${SUBAGENT_TOOLS},store_delivery,EndFeatureRun`;
-/** Converge autora os artefatos + delega a contract a subagents + chama store_plan. */
-const TOOLS_CONVERGE = `${CORE_TOOLS},${SUBAGENT_TOOLS},store_plan`;
+/** Converge autora os artefatos + delega a contract a subagents + chama store_plan. Inclui os
+ * web tools do pi-web-access: a skill exige verificar claims externos com fonte (§external facts)
+ * e o converge HEADLESS rodava sem eles — a instrução era impossível de cumprir. */
+const WEB_TOOLS = "web_search,fetch_content,get_search_content,source_check";
+const TOOLS_CONVERGE = `${CORE_TOOLS},${SUBAGENT_TOOLS},${WEB_TOOLS},store_plan`;
 
 function harnessSkillsDir(): string {
 	return fileURLToPath(new URL("../skills", import.meta.url));
