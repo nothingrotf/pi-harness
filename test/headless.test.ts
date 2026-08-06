@@ -47,6 +47,10 @@ test("convergePiArgs: --print headless + tools store_plan + prompt com request/f
 	assert.ok(a.includes("--print") && a.includes("--no-session"));
 	const ti = a.indexOf("--tools");
 	assert.ok(a[ti + 1].includes("store_plan"), "tools inclui store_plan");
+	for (const w of ["web_search", "fetch_content", "get_search_content", "source_check"]) {
+		assert.ok(a[ti + 1].includes(w), `tools inclui ${w} (pi-web-access — a skill exige verificar claims externos)`);
+	}
+	assert.ok(!a[ti + 1].includes("web_fetch"), "nome morto web_fetch fora da lista");
 	assert.ok(a.includes("--model") && a.includes("anthropic/claude"));
 	assert.ok(a.includes("--thinking") && a.includes("xhigh"), "effort do orchestrator → --thinking");
 	const prompt = a[a.length - 1];
