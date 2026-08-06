@@ -24,6 +24,30 @@ import { buildWorkerSystemPrompt, isUsageLimitEvent, isWorkerCrashEvent, rpcWork
 import { handoffOutcome, readHandoffExact } from "./handoff.ts";
 import { type HarnessModelConfig, resolveChoice, roleForStep } from "./model-config.ts";
 
+/** Teto do cleanup (abort/stop) — override por env p/ testes. */
+export function cleanupTimeoutMs(): number {
+	const raw = Number(process.env.HARNESS_WORKER_CLEANUP_TIMEOUT_MS);
+	return Number.isFinite(raw) && raw > 0 ? raw : 15000;
+}
+
+/** Aguarda `p` até `ms`; estourou → resolve mesmo assim (cleanup de child possivelmente morto). */
+function bounded(p: Promise<unknown>, ms: number): Promise<unknown> {
+	return new Promise((resolve, reject) => {
+		const t = setTimeout(() => resolve(undefined), ms);
+		(t as { unref?: () => void }).unref?.();
+		p.then(
+			(v) => {
+				clearTimeout(t);
+				resolve(v);
+			},
+			(e) => {
+				clearTimeout(t);
+				reject(e);
+			},
+		);
+	});
+}
+
 /** O subconjunto do RpcClient que o driver usa — permite injetar um fake nos testes. */
 export interface RpcWorkerClient {
 	start(): Promise<void>;
@@ -225,15 +249,20 @@ export function makeRpcSpawn(opts: RpcSpawnOpts): SpawnFn {
 			// `crashed` INCLUÍDO: num falso-positivo de crash o child ainda está VIVO — sem abort, o
 			// stop() SIGTERM/SIGKILLa um turno em voo e o runner spawnaria um 2º worker em paralelo.
 			// Num crash real o abort é um no-op inofensivo (child já morto).
+			// BOUNDED (incidente real): abort()/stop() aguardam RESPOSTA do child pelo wire — num
+			// child morto que não responde (sem rejeição), o await pendurava PARA SEMPRE e o
+			// run_feature nunca retornava (heartbeats por horas, sessão "travada"). Cleanup de um
+			// processo possivelmente morto tem teto; estourou → segue (o processo, se vivo, morre
+			// órfão e o orphan-cleanup/OS cobre).
 			if (started && (aborted || usageLimit || inactivity || crashed)) {
 				try {
-					await client.abort(); // pausa graceful: interrompe; o transcript --session-id fica p/ resume
+					await bounded(client.abort(), cleanupTimeoutMs()); // pausa graceful: interrompe; o transcript --session-id fica p/ resume
 				} catch {
 					// ignore
 				}
 			}
 			try {
-				await client.stop();
+				await bounded(client.stop(), cleanupTimeoutMs());
 			} catch {
 				// ignore
 			}

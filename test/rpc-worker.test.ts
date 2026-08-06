@@ -137,3 +137,27 @@ test("makeRpcSpawn: RpcClient indisponível (factory lança) → failure code 1"
 	assert.equal(out.code, 1);
 	assert.equal(out.success, undefined);
 });
+
+test("makeRpcSpawn: abort()/stop() pendurados num child morto NÃO travam o spawn (cleanup bounded)", async () => {
+	process.env.HARNESS_WORKER_INACTIVITY_MS = "80";
+	process.env.HARNESS_WORKER_CLEANUP_TIMEOUT_MS = "100";
+	try {
+		const never = new Promise<void>(() => {});
+		const factory: RpcClientFactory = async () => ({
+			start: async () => {},
+			onEvent: () => () => {},
+			prompt: async () => {},
+			abort: () => never,
+			stop: () => never,
+		});
+		const spawn = makeRpcSpawn({ featureId: "feat-x", genSessionId: () => "ws", clientFactory: factory });
+		const t0 = Date.now();
+		const out = await spawn(task, { cwd: tmp(), workerSessionId: "ws" });
+		const elapsed = Date.now() - t0;
+		assert.equal(out.inactivity, true, "sem eventos → inatividade dispara");
+		assert.ok(elapsed < 5000, `cleanup bounded — retornou em ${elapsed}ms (incidente real: pendurava para sempre em client.abort() num wire morto)`);
+	} finally {
+		delete process.env.HARNESS_WORKER_INACTIVITY_MS;
+		delete process.env.HARNESS_WORKER_CLEANUP_TIMEOUT_MS;
+	}
+});
