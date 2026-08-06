@@ -47,7 +47,8 @@ import { StripController } from "../control-strip.ts";
 import { readControlModel } from "../control-model.ts";
 import { mergeDecisionMessage, readDeliveryRecord } from "../delivery.ts";
 import { registerRunCardRenderer, sendRunCard } from "../run-card-view.ts";
-import { agentsFromArgs, agentsFromDetails, clearAllLiveAgents, clearLiveAgents, isSubagentTool, setLiveAgents } from "../live-agents.ts";
+import { agentsFromArgs, agentsFromDetails, clearAllLiveAgents, clearLiveAgents, completeAsyncRun, isSubagentTool, parseTaskId, registerAsyncRun, setAsyncStatusReader, setLiveAgents } from "../live-agents.ts";
+import { readAsyncStatusLite } from "../session-read.ts";
 import { clearMode, liveLockedFeature, loadMode, saveMode } from "../mode-store.ts";
 import { listRunIds } from "../runs.ts";
 
@@ -74,12 +75,6 @@ function clearModeChrome(ctx: ExtensionContext): void {
 	ctx.ui.setStatus(STATUS_KEY, undefined);
 }
 
-/**
- * Contribui os agentes namespaced (harness-*) pro @tintinweb/pi-subagents espelhando-os no dir
- * GLOBAL de agents (`<globalAgentDir>/agents/`) via symlink — sem escrever no repo do usuário. O
- * @tintinweb descobre agents em `<cwd>/.pi/agents/` e `<globalAgentDir>/agents/`, então o espelho
- * global cobre qualquer repo. Ver contributeAgentsDir().
- */
 /** Modelos disponíveis (auth configurada) via o modelRegistry da sessão: ref "provider/id" + nome amigável. */
 function registryModels(ctx: ExtensionContext): Array<{ ref: string; label: string }> {
 	try {
@@ -125,58 +120,42 @@ async function openModelConfig(ctx: ExtensionContext): Promise<void> {
 	ctx.ui.notify(`pi-harness: models saved — ${summarizeConfig(updated, { fallback, labels })}`);
 }
 
-function contributeAgentsDir(): void {
+function cleanupLegacyAgentMirror(): void {
+	// LEGACY cleanup do provider antigo (@tintinweb/pi-subagents): os agents harness-* eram
+	// espelhados no dir GLOBAL (<agentDir>/agents/) via symlink. O provider atual (pi-subagents)
+	// descobre os agents direto do manifest do pacote (package.json → pi.subagents.agents), então
+	// o espelho não só é desnecessário como criaria duplicatas user-scope. Remove qualquer
+	// harness-*.md que aponte pro nosso dir de agents (symlink) — cópias antigas também saem.
 	let srcDir: string | undefined;
 	try {
-		srcDir = fileURLToPath(new URL("../../agents", import.meta.url));
+		srcDir = fs.realpathSync(fileURLToPath(new URL("../../agents", import.meta.url)));
 	} catch {
-		// best-effort: sem isso, os dispatches caem nos builtins delegate/worker.
+		return;
 	}
-	// @tintinweb/pi-subagents (o tool `Agent`) descobre agents em <cwd>/.pi/agents/ e
-	// <globalAgentDir>/agents/. Sem espelhar aqui, o orquestrador não acha os agents de ANÁLISE
-	// (reviewers dos 3 eixos, qa-flow-validator, readiness auditor/remediator). Espelhamos os agents
-	// namespaced (harness-*) no dir GLOBAL via symlink (fora do repo do usuário). Implementação NÃO
-	// passa por aqui — workers são sessões runner-driven (run_feature → pi --mode rpc).
 	try {
-		if (!srcDir) return;
 		const globalAgentsDir = path.join(process.env.PI_CODING_AGENT_DIR ?? path.join(os.homedir(), ".pi", "agent"), "agents");
-		fs.mkdirSync(globalAgentsDir, { recursive: true });
-		// LEGACY cleanup: o agent `harness-worker` (worker de implementação via Agent) foi removido —
-		// workers agora são SEMPRE sessões runner-driven (run_feature → pi --mode rpc). Remove o
-		// symlink espelhado antigo pra não deixar um agent quebrado/obsoleto descobrível.
-		try {
-			fs.rmSync(path.join(globalAgentsDir, "harness-worker.md"), { force: true });
-		} catch {
-			/* noop */
-		}
-		for (const file of fs.readdirSync(srcDir)) {
+		for (const file of fs.readdirSync(globalAgentsDir)) {
 			if (!file.startsWith("harness-") || !file.endsWith(".md")) continue;
-			const src = path.join(srcDir, file);
 			const dest = path.join(globalAgentsDir, file);
-			// idempotente: pula se o symlink já aponta pro nosso arquivo.
 			try {
-				if (fs.realpathSync(dest) === fs.realpathSync(src)) continue;
+				const st = fs.lstatSync(dest);
+				if (st.isSymbolicLink()) {
+					if (path.dirname(fs.realpathSync(dest)) === srcDir) fs.rmSync(dest, { force: true });
+				} else if (fs.existsSync(path.join(srcDir, file))) {
+					// cópia antiga (fallback de symlink) com o mesmo nome de um agent nosso → remove.
+					fs.rmSync(dest, { force: true });
+				}
 			} catch {
-				/* dest ausente/quebrado — (re)cria abaixo */
-			}
-			try {
-				fs.rmSync(dest, { force: true });
-			} catch {
-				/* noop */
-			}
-			try {
-				fs.symlinkSync(src, dest);
-			} catch {
-				// symlink pode falhar (perms/Windows) — cai pra cópia.
+				/* symlink quebrado ou inacessível — remove best-effort */
 				try {
-					fs.copyFileSync(src, dest);
+					fs.rmSync(dest, { force: true });
 				} catch {
 					/* noop */
 				}
 			}
 		}
 	} catch {
-		// best-effort: sem isso, @tintinweb/pi-subagents não spawna os agents harness-*.
+		/* best-effort */
 	}
 }
 
@@ -219,8 +198,9 @@ export default function registerHarnessExtension(pi: ExtensionAPI): void {
 	// Run card (cap. 09): renderer da mensagem custom `harness-run` que vive no transcript e
 	// se auto-atualiza (Preparing → live → Done). Enviado ao iniciar um run (sendRunCard).
 	registerRunCardRenderer(pi);
-	// Agentes dedicados pro @tintinweb/pi-subagents (harness-readiness-auditor / harness-readiness-remediator).
-	contributeAgentsDir();
+	// Agents harness-* agora entram via manifest do pacote (package.json → pi.subagents.agents,
+	// descoberto pelo pi-subagents). Só limpamos o espelho legado do provider antigo.
+	cleanupLegacyAgentMirror();
 
 	// Dispatch ao agente, ROBUSTO a turno em andamento. Quando o agente está STREAMING (mid-turn),
 	// o runtime EXIGE saber como enfileirar a mensagem — senão lança "Agent is already processing.
@@ -256,7 +236,7 @@ export default function registerHarnessExtension(pi: ExtensionAPI): void {
 	};
 	// Subagent PROVIDER ÚNICO: @tintinweb/pi-subagents (o tool `Agent`). Habilita o caminho nativo de
 	// spawn (worker + reviewers em sessão fresca; transcript ao vivo no Active Worker via `.output`).
-	const hasSubagentTool = (t: Set<string>): boolean => t.has("Agent");
+	const hasSubagentTool = (t: Set<string>): boolean => t.has("subagent");
 	const toolBadge = (t: Set<string>, names: string[]): string =>
 		names.map((n) => `${n} ${t.has(n) ? "✓" : "✗"}`).join(" · ");
 
@@ -916,6 +896,26 @@ export default function registerHarnessExtension(pi: ExtensionAPI): void {
 		const cwd = lastCtx?.cwd;
 		return !!cwd && readPlan(cwd, fid) !== null;
 	};
+	// Refresh dos runs ASYNC: o listLiveAgents() refresca stats via status.json do asyncDir.
+	setAsyncStatusReader(readAsyncStatusLite);
+	// Runs ASYNC do pi-subagents (async é o default do provider): o tool retorna já — o tracking
+	// vem dos eventos de lifecycle no bus in-process. Payloads: {id, agent, task, goal, asyncDir}.
+	const piEvents = (pi as unknown as { events?: { on?: (name: string, fn: (data: unknown) => void) => void } }).events;
+	piEvents?.on?.("subagent:async-started", (data) => {
+		if (!runWorkerDispatch()) return;
+		const ev = (data ?? {}) as { id?: unknown; agent?: unknown; task?: unknown; goal?: unknown; asyncDir?: unknown };
+		registerAsyncRun(ev);
+		const cwd = lastCtx?.cwd;
+		const fid = mode.featureId;
+		if (cwd && fid) {
+			const tid = parseTaskId(`${typeof ev.goal === "string" ? ev.goal : ""} ${typeof ev.task === "string" ? ev.task : ""}`);
+			if (tid !== "—") appendProgress(cwd, fid, "task_started", { taskId: tid, agent: typeof ev.agent === "string" ? ev.agent : "worker" });
+		}
+	});
+	piEvents?.on?.("subagent:async-complete", (data) => {
+		const ev = (data ?? {}) as { runId?: unknown; id?: unknown };
+		completeAsyncRun(ev.runId ?? ev.id);
+	});
 	pi.on("tool_execution_start", (event) => {
 		if (!isSubagentTool(event.toolName) || !runWorkerDispatch()) return;
 		const agents = agentsFromArgs(event.args);

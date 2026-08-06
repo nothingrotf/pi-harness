@@ -111,16 +111,16 @@ const HEADER =
 /**
  * Camada de orquestração pi-harness (NÃO é do a referência — é nossa). Alinha a
  * coordenação com o referência: cada fix roda numa SESSÃO ISOLADA (fresh-context
- * worker via @tintinweb/pi-subagents, o tool `Agent`), uma por critério em sequência, espelhando as sessões
+ * worker via pi-subagents, o tool `subagent`), uma por critério em sequência, espelhando as sessões
  * readiness-remediation do modelo de referência; progresso rastreado com rpiv-todo.
  */
-const ORCHESTRATION_FOOTER = `## Execution (pi-harness orchestration — @tintinweb/pi-subagents + rpiv-todo)
+const ORCHESTRATION_FOOTER = `## Execution (pi-harness orchestration — pi-subagents + rpiv-todo)
 Run fixes in ISOLATION, one per criterion, mirroring the reference's per-criterion readiness-remediation sessions:
 1. Create one todo per signal you will fix: \`todo({ action: "create", subject: "<criterion name>" })\`.
 2. For each signal, in sequence (keep writes single-threaded):
    - mark it in_progress: \`todo({ action: "update", id, status: "in_progress" })\`;
-   - spawn the dedicated remediator in its own fresh-context session (foreground, so it runs to completion before the next — keep writes single-threaded; do NOT set \`isolated\`):
-     \`Agent({ subagent_type: "harness-readiness-remediator", description: "Fix readiness signal", prompt: "Fix the readiness signal <id> (<name>). Use that signal's Description and Evaluation instructions from the list above. Follow the Fix Instructions and CRITICAL Quality Standards above — genuine improvement, no gaming. Report exactly what changed." })\`;
+   - spawn the dedicated remediator in its own fresh-context session (foreground \`async: false\`, so it runs to completion before the next — keep writes single-threaded):
+     \`subagent({ agent: "harness-readiness-remediator", async: false, task: "Fix the readiness signal <id> (<name>). Use that signal's Description and Evaluation instructions from the list above. Follow the Fix Instructions and CRITICAL Quality Standards above — genuine improvement, no gaming. Report exactly what changed." })\`;
    - when it returns, mark it completed: \`todo({ action: "update", id, status: "completed" })\`.
 3. Do NOT run multiple writer workers concurrently on the same worktree.
 4. After all fixes, suggest running /readiness-report to re-audit and confirm the new level.`;

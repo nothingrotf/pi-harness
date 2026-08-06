@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { agentOutputFilePath, readAgentOutputEntries, readNativeSessionFile, readNativeWorkerEntries, readNativeWorkerTree, resolveAgentOutputFile, sessionApiReady } from "../src/session-read.ts";
+import { readAsyncStatusLite, readLiveAgentEntries, readNativeSessionFile, readNativeWorkerEntries, readNativeWorkerTree, resolveSubagentSessionFile, sessionApiReady, subagentSessionRoot } from "../src/session-read.ts";
 
 // O reader nativo (pi 0.80.3 get_entries/get_tree) é SEGURO de usar em qualquer contexto:
 // ficheiro ausente/path inválido → null SEM lançar (o caller cai pro fallback tolerante).
@@ -27,59 +27,85 @@ test("session-read: null gracioso em ficheiro ausente; transcript válido parsei
 	}
 });
 
-test("agentOutputFilePath: layout Claude-Code do @tintinweb (pi-subagents-uid/encodeCwd/sessionId/tasks/agentId.output)", () => {
-	const p = agentOutputFilePath("/home/u/proj", "sess123", "ag_abc");
-	assert.ok(p.endsWith(path.join("tasks", "ag_abc.output")), "termina em tasks/<agentId>.output");
-	assert.ok(p.includes("sess123"), "inclui o sessionId (pai)");
-	assert.ok(p.includes("pi-subagents-"), "root pi-subagents-<uid>");
+test("subagentSessionRoot: deriva <sessionsDir>/<basename-sem-.jsonl> do session file do parent (layout pi-subagents)", () => {
+	assert.equal(subagentSessionRoot("/sessions/cwd-enc/2026-01-01T00-00-00_abc.jsonl"), path.join("/sessions/cwd-enc", "2026-01-01T00-00-00_abc"));
+	assert.equal(subagentSessionRoot(null), null, "sem session file do parent → null (fallback do painel)");
+	assert.equal(subagentSessionRoot(undefined), null);
 });
 
-test("readAgentOutputEntries: lê o .output JSONL do @tintinweb e folda (colapsa toolCall+toolResult); guards + linha parcial", () => {
-	// guards
-	assert.equal(readAgentOutputEntries("/cwd", null, "ag"), null, "sem sessionId → null");
-	assert.equal(readAgentOutputEntries("/cwd", "s", null), null, "sem agentId → null");
-	assert.equal(readAgentOutputEntries("/cwd", "s-absent", "ag-absent"), null, "sem ficheiro → null (fallback)");
-
-	// escreve um .output realista no caminho reconstruído e lê (SELF-CONTIDO — não depende do pacote pi)
-	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "harness-out-"));
-	const sessionId = `sess_${Date.now()}`;
-	const agentId = "ag_test";
-	const file = agentOutputFilePath(cwd, sessionId, agentId);
-	fs.mkdirSync(path.dirname(file), { recursive: true });
-	const lines = [
-		{ isSidechain: true, agentId, type: "user", message: { role: "user", content: "Run T1" }, timestamp: "t", cwd },
-		{ isSidechain: true, agentId, type: "assistant", message: { role: "assistant", content: [{ type: "text", text: "On it — running tests" }] }, timestamp: "t", cwd },
-		{ isSidechain: true, agentId, type: "assistant", message: { role: "assistant", content: [{ type: "toolCall", name: "Execute", arguments: { command: "go test ./..." } }] }, timestamp: "t", cwd },
-		{ isSidechain: true, agentId, type: "toolResult", message: { role: "toolResult", content: [{ type: "text", text: "ok 0.184s" }] }, timestamp: "t", cwd },
-	];
-	fs.writeFileSync(file, `${lines.map((l) => JSON.stringify(l)).join("\n")}\n`);
-
-	const entries = readAgentOutputEntries(cwd, sessionId, agentId);
-	assert.ok(entries && entries.length >= 3, "parseou as mensagens/tools do .output");
-	const tool = entries?.find((e) => e.kind === "tool");
-	assert.equal(tool?.toolName, "Execute");
-	assert.equal(tool?.result, "ok 0.184s", "colapsou o toolResult no toolCall (o g2H)");
-	// linha parcial no fim (ficheiro a ser escrito ao vivo) não quebra
-	fs.appendFileSync(file, '{"partial');
-	assert.doesNotThrow(() => readAgentOutputEntries(cwd, sessionId, agentId));
-});
-
-test("resolveAgentOutputFile: sem agentId (foreground @tintinweb não streama) → pega o .output mais recente da sessão", () => {
-	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "harness-scan-"));
-	const sessionId = `sess_${Date.now()}`;
-	const older = agentOutputFilePath(cwd, sessionId, "ag_old");
-	const newer = agentOutputFilePath(cwd, sessionId, "ag_new");
+test("resolveSubagentSessionFile: pega o session.jsonl mais recente (<root>/<runId>/run-N/session.jsonl); runId restringe", () => {
+	const root = fs.mkdtempSync(path.join(os.tmpdir(), "harness-subsess-"));
+	const older = path.join(root, "run-aaa", "run-0", "session.jsonl");
+	const newer = path.join(root, "run-bbb", "run-0", "session.jsonl");
 	fs.mkdirSync(path.dirname(older), { recursive: true });
-	const line = (t: string) => `${JSON.stringify({ agentId: "x", type: "assistant", message: { role: "assistant", content: [{ type: "text", text: t }] } })}\n`;
-	fs.writeFileSync(older, line("old worker"));
-	fs.writeFileSync(newer, line("new worker"));
+	fs.mkdirSync(path.dirname(newer), { recursive: true });
+	const line = (t: string) => `${JSON.stringify({ type: "message", message: { role: "assistant", content: [{ type: "text", text: t }] } })}\n`;
+	fs.writeFileSync(older, line("old child"));
+	fs.writeFileSync(newer, line("new child"));
 	const now = Date.now();
 	fs.utimesSync(older, new Date(now - 10000), new Date(now - 10000));
 	fs.utimesSync(newer, new Date(now), new Date(now));
-	// sem agentId → scan por mtime → o mais recente (o worker vivo; a banda é singular = KG0)
-	assert.equal(resolveAgentOutputFile(cwd, sessionId, null), newer, "pega o .output mais fresco");
-	// com agentId exato → caminho exato tem precedência
-	assert.equal(resolveAgentOutputFile(cwd, sessionId, "ag_old"), older, "agentId exato → caminho exato");
-	// lê o conteúdo do mais recente
-	assert.equal(readAgentOutputEntries(cwd, sessionId, null)?.at(-1)?.text, "new worker");
+	// sem runId (foreground: o provider não expõe o runId nos partials) → scan por mtime
+	assert.equal(resolveSubagentSessionFile(root), newer, "pega o session.jsonl mais fresco");
+	// com runId (async) → restringe ao run dir
+	assert.equal(resolveSubagentSessionFile(root, "run-aaa"), older, "runId exato → só aquele run");
+	assert.equal(resolveSubagentSessionFile(path.join(root, "absent")), null, "root inexistente → null");
+});
+
+test("readAsyncStatusLite: lê o status.json do asyncDir (state/currentTool/toolCount/totalTokens/steps)", () => {
+	const asyncDir = fs.mkdtempSync(path.join(os.tmpdir(), "harness-async-"));
+	assert.equal(readAsyncStatusLite(asyncDir), null, "sem status.json → null (run recém-aceito)");
+	fs.writeFileSync(
+		path.join(asyncDir, "status.json"),
+		JSON.stringify({
+			runId: "r1",
+			mode: "single",
+			state: "running",
+			currentTool: "bash",
+			toolCount: 9,
+			totalTokens: { input: 5000, output: 2000, total: 7000 },
+			steps: [{ agent: "harness-qa-flow-validator", status: "running", recentTools: [{ tool: "bash", args: "curl", endMs: 1 }], sessionFile: "/tmp/child-session.jsonl" }],
+		}),
+	);
+	const st = readAsyncStatusLite(asyncDir);
+	assert.ok(st);
+	assert.deepEqual([st?.state, st?.currentTool, st?.toolCount, st?.tokens], ["running", "bash", 9, 7000]);
+	assert.equal(st?.steps?.length, 1);
+	// corrompido → null (tenta de novo no próximo mtime)
+	const dir2 = fs.mkdtempSync(path.join(os.tmpdir(), "harness-async2-"));
+	fs.writeFileSync(path.join(dir2, "status.json"), "{partial");
+	assert.equal(readAsyncStatusLite(dir2), null);
+});
+
+test("readLiveAgentEntries: async → sessionFile do status.json; foreground → session-root do parent; null → fallback", async () => {
+	const apiAvailable = await sessionApiReady;
+	const base = fs.mkdtempSync(path.join(os.tmpdir(), "harness-live-"));
+	// layout do parent: <sessions>/<enc>/<ts_sid>.jsonl → root <sessions>/<enc>/<ts_sid>/
+	const parentFile = path.join(base, "sessions", "enc", "2026-01-01T00-00-00_parent.jsonl");
+	fs.mkdirSync(path.dirname(parentFile), { recursive: true });
+	fs.writeFileSync(parentFile, "");
+	const childFile = path.join(base, "sessions", "enc", "2026-01-01T00-00-00_parent", "run-xyz", "run-0", "session.jsonl");
+	fs.mkdirSync(path.dirname(childFile), { recursive: true });
+	fs.writeFileSync(childFile, `${JSON.stringify({ type: "message", message: { role: "assistant", content: [{ type: "text", text: "child says hi" }] } })}\n`);
+
+	// foreground (sem runId/asyncDir): resolve sob a session-root do parent
+	const fg = readLiveAgentEntries(parentFile, {});
+	if (apiAvailable) {
+		assert.ok(fg && fg.length > 0, "parseia a sessão do child via API nativa");
+	} else {
+		assert.equal(fg, null);
+	}
+
+	// async: o sessionFile do status.json tem precedência
+	const asyncDir = fs.mkdtempSync(path.join(os.tmpdir(), "harness-live-async-"));
+	const asyncChild = path.join(asyncDir, "child-session.jsonl");
+	fs.writeFileSync(asyncChild, `${JSON.stringify({ type: "message", message: { role: "assistant", content: [{ type: "text", text: "async child" }] } })}\n`);
+	fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({ state: "running", steps: [{ agent: "a", status: "running", sessionFile: asyncChild }] }));
+	const as = readLiveAgentEntries(parentFile, { runId: "run-does-not-exist", asyncDir });
+	if (apiAvailable) {
+		assert.ok(as && as.length > 0, "usa o sessionFile do step do status.json");
+	}
+
+	// nada resolvível → null (o caller cai pro recentActivity)
+	assert.equal(readLiveAgentEntries(null, {}), null);
 });

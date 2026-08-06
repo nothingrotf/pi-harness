@@ -17,18 +17,17 @@ test("rpcWorkerArgs: launch flags p/ `pi --mode rpc` (sem --mode/--print/prompt 
 	assert.ok(!a.includes("--mode") && !a.includes("--print"), "o RpcClient adiciona --mode rpc; nada de --print");
 	const ti = a.indexOf("--tools");
 	assert.match(a[ti + 1], /EndFeatureRun/);
-	assert.doesNotMatch(a[ti + 1], /subagent/, "task não precisa de subagent");
+	assert.doesNotMatch(a[ti + 1], /(^|,)subagent(,|$)/, "task não precisa de subagent");
 	assert.ok(a.includes("--append-system-prompt") && a.includes("/tmp/sys.md"));
 	assert.equal(a.at(-1), "/tmp/sys.md", "sem prompt posicional — o último arg é o caminho do system prompt");
 	assert.ok(!a.includes("--model"), "sem model → herda o do parent");
 
 	const g = rpcWorkerArgs(gate, "/tmp/sys.md", { model: "anthropic/claude", thinking: "high" });
 	const gi = g.indexOf("--tools");
-	// `--tools` é allow-list dura e case-sensitive do pi core: o nome REAL é `Agent` ("subagent" não existe)
-	assert.match(g[gi + 1], /(^|,)Agent(,|$)/, "ship-gate spawna reviewers → precisa do tool Agent (nome exato)");
-	assert.match(g[gi + 1], /get_subagent_result/, "reviewers em background → get_subagent_result");
+	// `--tools` é allow-list dura e case-sensitive do pi core: o nome REAL é `subagent` (pi-subagents)
+	assert.match(g[gi + 1], /(^|,)subagent(,|$)/, "ship-gate spawna reviewers → precisa do tool subagent (nome exato)");
 	assert.match(g[gi + 1], /store_delivery/, "deliver grava o delivery record → store_delivery no gate (regressão: tool ausente na sessão do deliver-worker)");
-	assert.doesNotMatch(g[gi + 1], /(^|,)subagent(,|$)/, "nome morto 'subagent' fora da lista");
+	assert.doesNotMatch(g[gi + 1], /(^|,)Agent(,|$)/, "nome morto 'Agent' (provider antigo) fora da lista");
 	assert.ok(g.includes("--model") && g.includes("anthropic/claude"));
 	const thi = g.indexOf("--thinking");
 	assert.ok(thi !== -1 && g[thi + 1] === "high", "effort do role → --thinking high");

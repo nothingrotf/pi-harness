@@ -306,8 +306,10 @@ export interface ActiveWorker {
 	wsid?: string;
 	/** epoch ms do início (o `activeDurationAnchorMs` do droid) — permite a Duration tickar ao vivo. */
 	anchorMs?: number;
-	/** live-TUI (@tintinweb): o agent record id → localiza o `.output` JSONL do transcript real. */
-	agentId?: string;
+	/** live-TUI (pi-subagents): o run id ASYNC → localiza o status.json/sessionFile do child. */
+	runId?: string;
+	/** live-TUI (pi-subagents): o asyncDir do run (status.json/events.jsonl/output-N.log). */
+	asyncDir?: string;
 	durationMs?: number;
 	toolCount?: number;
 	tokens?: number;
@@ -335,7 +337,8 @@ export function pickActiveWorker(model: ControlModel, live: LiveAgent[]): Active
 			skill: la.agent.replace(/^harness-/, ""),
 			status: "running",
 			source: "live",
-			agentId: la.agentId,
+			runId: la.runId,
+			asyncDir: la.asyncDir,
 			anchorMs: la.startedAtMs,
 			toolCount: la.toolCount,
 			tokens: la.tokens,

@@ -3,8 +3,8 @@
  * ORCHESTRATOR (architect/manager, `harness-orchestrator` skill); implementation workers and
  * ship-gate validators are ALWAYS runner-driven sessions (`pi --mode rpc`) started by the
  * BLOCKING `run_feature` tool (the `start_mission_run` analog). The orchestrator NEVER
- * implements and NEVER spawns implementation workers as `Agent` subagents — `Agent` is for
- * analysis/investigation delegation only (contract review, root-cause, code reading).
+ * implements and NEVER spawns implementation workers via the `subagent` tool — `subagent` is
+ * for analysis/investigation delegation only (contract review, root-cause, code reading).
  *
  * The runner enforces the semantics deterministically: ONE worker session owns the whole
  * feature (loops `next_task`, commit per task), the ship gate is injected once, attempt
@@ -61,7 +61,7 @@ export function buildRunDispatch(featureId: string, tools: DispatchTools = {}, g
 			: "";
 
 	const lines = [
-		`Execute the converged feature's plan now. You are the **harness orchestrator** — follow the \`harness-orchestrator\` skill. You are the ARCHITECT/MANAGER in this chat; you NEVER implement. Implementation workers and ship-gate validators run as **runner-driven \`pi\` sessions** (started by the \`run_feature\` tool), NOT in this chat and NOT as \`Agent\` subagents.`,
+		`Execute the converged feature's plan now. You are the **harness orchestrator** — follow the \`harness-orchestrator\` skill. You are the ARCHITECT/MANAGER in this chat; you NEVER implement. Implementation workers and ship-gate validators run as **runner-driven \`pi\` sessions** (started by the \`run_feature\` tool), NOT in this chat and NOT as \`subagent\` children.`,
 		`Feature id: ${featureId}. Run directory: ${runDir}`,
 		"",
 		`1. Read ${runDir}plan.json (the ordered tasks) and status.json. If plan.json is missing, STOP — the feature isn't converged yet (the user must run /harness "<feature>" first).`,
@@ -80,7 +80,7 @@ export function buildRunDispatch(featureId: string, tools: DispatchTools = {}, g
 		`${n++}. **Call the \`run_feature\` tool** with featureId="${featureId}" — it is BLOCKING and owns execution: it spawns ONE session-backed worker for the whole feature (it runs \`harness-worker-base\` once, then loops with \`next_task\` — commit per task; it can't advance without committing), then injects and runs the ship gate${skipNote ? skipNote : ` (${gateNames.join(" → ")}) as validator sessions`}. Attempt budgets, pause/resume and per-role model config are enforced by the runner. Watch progress in the cockpit (Alt+T).`,
 	);
 	const askOnBlock = tools.askUser ? "use the `ask_user_question` tool to ask the user (don't guess)" : "return to the user with the specific blocker (don't guess)";
-	const delegate = tools.subagent ? "delegate root-cause analysis to `Agent` subagents (analysis ONLY — code reading, flow tracing; NEVER implementation)" : "analyze the root cause from the handoff and the repo state";
+	const delegate = tools.subagent ? "delegate root-cause analysis to `subagent` children (analysis ONLY — code reading, flow tracing; NEVER implementation; use `async: false`)" : "analyze the root cause from the handoff and the repo state";
 	const escalate = tools.advisor ? " Use the `advisor` tool to escalate high-stakes verdicts to a stronger reviewer model." : "";
 	lines.push(
 		`${n++}. **Act on the run_feature report** (its \`status\`):`,
@@ -96,7 +96,7 @@ export function buildRunDispatch(featureId: string, tools: DispatchTools = {}, g
 	);
 	const utils: string[] = ["`run_feature` (the runner — ALL implementation/validation goes through it)"];
 	if (tools.todo) utils.push("`todo` (the Plan — one todo per run_feature round; update it whenever a run_feature call returns)");
-	if (tools.subagent) utils.push("`Agent` (analysis/investigation delegation only — never implementation)");
+	if (tools.subagent) utils.push("`subagent` (analysis/investigation delegation only — never implementation)");
 	if (tools.advisor) utils.push("`advisor` (escalate verification verdicts)");
 	if (tools.askUser) utils.push("`ask_user_question` (ask on blockers instead of guessing)");
 	lines.push("", `Use the available utilities: ${utils.join(", ")}.`);

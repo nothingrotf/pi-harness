@@ -41,9 +41,9 @@ test("buildFixPlan: report + args → variante de match semântico (verbatim)", 
 		assert.match(plan.text, /Semantically match the user's requested signals/);
 		assert.match(plan.text, /CRITICAL: Quality Standards/);
 		assert.match(plan.text, /Evaluation instructions:/); // veio do criteria.json
-		// camada de orquestração: sessão isolada por critério (@tintinweb/pi-subagents) + todo (rpiv-todo)
-		assert.match(plan.text, /@tintinweb\/pi-subagents \+ rpiv-todo/);
-		assert.match(plan.text, /subagent_type: "harness-readiness-remediator"/);
+		// camada de orquestração: sessão isolada por critério (pi-subagents) + todo (rpiv-todo)
+		assert.match(plan.text, /pi-subagents \+ rpiv-todo/);
+		assert.match(plan.text, /agent: "harness-readiness-remediator"/);
 		assert.match(plan.text, /todo\(\{ action: "create"/);
 	}
 });

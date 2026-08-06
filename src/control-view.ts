@@ -36,7 +36,7 @@ import {
 	type WorkerEntry,
 	workerEntries,
 } from "./control-worker.ts";
-import { readAgentOutputEntries, readNativeWorkerEntries } from "./session-read.ts";
+import { readLiveAgentEntries, readNativeWorkerEntries } from "./session-read.ts";
 import {
 	type Row,
 	type TaskFilter,
@@ -326,7 +326,7 @@ export function showFeatureControl(ctx: ExtensionContext, featureId: string, opt
 			const sessionEntries = (): WorkerEntry[] => {
 				if (sessionLiveIdx !== undefined) {
 					const la = listLiveAgents()[sessionLiveIdx];
-					const native = readAgentOutputEntries(ctx.cwd, ctx.sessionManager?.getSessionId?.(), la?.agentId);
+					const native = la ? readLiveAgentEntries(ctx.sessionManager?.getSessionFile?.(), la) : null;
 					if (native && native.length > 0) return native;
 					return la?.recentActivity?.length ? entriesFromActivity(la.recentActivity) : [];
 				}
@@ -351,11 +351,11 @@ export function showFeatureControl(ctx: ExtensionContext, featureId: string, opt
 				if (sA <= 0) return head.slice(0, workerRows);
 				// Caminho NATIVO — a transcript REAL, o análogo do tcT/dG0 do 08a: headless → o jsonl da sessão
 				// do worker (runs/<id>/sessions via pi 0.80.3 parseSessionEntries); in-session subagent
-				// (@tintinweb) → o `.output` JSONL que ele streama (localizado por agentId + a sessão-pai).
-				// Fallback ao buffer de activity quando indisponível/vazio (1º frame, antes do .output existir).
+				// (pi-subagents) → o session.jsonl do child (sob a session-root do parent, ou o sessionFile
+				// do status.json em async). Fallback ao activity feed quando indisponível (1º frame).
 				let native: WorkerEntry[] | null = null;
 				if (aw.source === "session" && aw.wsid) native = readNativeWorkerEntries(ctx.cwd, featureId, aw.wsid);
-				else if (aw.source === "live" && aw.agentId) native = readAgentOutputEntries(ctx.cwd, ctx.sessionManager?.getSessionId?.(), aw.agentId);
+				else if (aw.source === "live") native = readLiveAgentEntries(ctx.sessionManager?.getSessionFile?.(), { runId: aw.runId, asyncDir: aw.asyncDir });
 				const entries = native && native.length > 0 ? native : workerEntries(ctx.cwd, featureId, aw);
 				const maxItems = Math.max(1, Math.floor(sA / 2));
 				// Largura interna do preview — o `B = max(40, H − 3)` do dG0 (fullRow clipa o excesso).
@@ -455,7 +455,7 @@ export function showFeatureControl(ctx: ExtensionContext, featureId: string, opt
 					const w = cols - 4;
 					const live = sessionLiveIdx !== undefined ? listLiveAgents()[sessionLiveIdx] : undefined;
 					const wk = m.workers.find((x) => x.workerSessionId === (sessionWsid ?? "") && (!sessionTaskId || x.taskId === sessionTaskId)) ?? m.workers.find((x) => x.taskId === sessionTaskId);
-					const sid = live ? (live.agentId ?? "live") : (sessionWsid ?? "—");
+					const sid = live ? (live.runId ?? "live") : (sessionWsid ?? "—");
 					const status = live ? "running" : (wk?.status ?? "—");
 					const durMs = live ? undefined : wk?.durationMs;
 					const info: string[] = [`${dim("Session")} ${theme.fg("text", shortId(sid))}`, `${dim("Task")} ${theme.fg("text", sessionTaskId ?? wk?.taskId ?? "—")}`, `${dim("Status")} ${theme.fg(status === "running" ? "success" : "muted", String(status))}`];

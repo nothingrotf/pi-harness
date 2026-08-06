@@ -13,9 +13,9 @@
  * tolerante (control-worker). Por isso este módulo é seguro de importar em qualquer contexto.
  */
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
-import { entriesFromSessionEntries, findWorkerSessionFile, foldTranscript, type RawSessionEntry, type WorkerEntry } from "./control-worker.ts";
+import { entriesFromSessionEntries, findWorkerSessionFile, type RawSessionEntry, type WorkerEntry } from "./control-worker.ts";
+import type { AsyncStatusLite } from "./live-agents.ts";
 
 interface PiSessionApi {
 	parseSessionEntries: (content: string) => RawSessionEntry[];
@@ -88,54 +88,29 @@ export function readNativeWorkerEntries(cwd: string, featureId: string, wsid: st
 	return readNativeSessionFile(file);
 }
 
-/** Encode um cwd como nome de dir filesystem-safe — o `encodeCwd` do @tintinweb output-file.ts. */
-function encodeCwd(cwd: string): string {
-	return cwd
-		.replace(/[/\\]/g, "-") // ambos separadores → dash
-		.replace(/^[A-Za-z]:-/, "") // strip prefixo de drive Windows ("C:-")
-		.replace(/^-+/, ""); // strip dashes iniciais (raiz POSIX/UNC)
-}
-
 /**
- * Caminho do `.output` JSONL que o @tintinweb streama por subagent (o `createOutputFilePath` do
- * pacote): `{tmpdir}/pi-subagents-{uid}/{encodeCwd(cwd)}/{sessionId}/tasks/{agentId}.output`.
- * `sessionId` = a sessão-PAI (orchestrator, `ctx.sessionManager.getSessionId()`); `agentId` = o
- * `details.agentId` do AgentDetails. PURO (testável).
+ * Session-root dos children do pi-subagents pra uma sessão-pai: o provider deriva
+ * `<sessionsDir>/<basename-sem-.jsonl>/` do session FILE do parent e grava cada child em
+ * `<root>/<runId>/run-<index>/session.jsonl` (o `getSubagentSessionRoot` do pacote). PURO.
  */
-export function agentOutputFilePath(cwd: string, sessionId: string, agentId: string): string {
-	const uid = process.getuid?.() ?? 0;
-	const root = path.join(os.tmpdir(), `pi-subagents-${uid}`);
-	return path.join(root, encodeCwd(cwd), sessionId, "tasks", `${agentId}.output`);
-}
-
-/** Lista as pastas `<session>/tasks` sob o root do cwd (p/ quando o sessionId é desconhecido). */
-function sessionTasksDirs(root: string): string[] {
-	try {
-		return fs
-			.readdirSync(root, { withFileTypes: true })
-			.filter((d) => d.isDirectory())
-			.map((d) => path.join(root, d.name, "tasks"));
-	} catch {
-		return [];
-	}
+export function subagentSessionRoot(parentSessionFile: string | null | undefined): string | null {
+	if (!parentSessionFile) return null;
+	const base = path.basename(parentSessionFile, ".jsonl");
+	if (!base) return null;
+	return path.join(path.dirname(parentSessionFile), base);
 }
 
 /**
- * Resolve o `.output` do worker ATIVO. **@tintinweb NÃO streama o `agentId` no update do agent
- * FOREGROUND** (só no background — ver index.ts streamUpdate), então o caminho exato quase nunca
- * está disponível ao vivo. Caminho: (1) exato por agentId quando conhecido; (2) senão, o `.output`
- * MAIS RECENTE (mtime) na pasta `tasks/` da sessão — a banda é singular (KG0), o mais fresco é o
- * worker vivo; (3) se o sessionId for desconhecido, varre qualquer sessão do cwd. null se nada. PURO.
+ * Resolve o `session.jsonl` do child ATIVO sob a session-root do parent. Caminho: (1) com runId
+ * conhecido (async), só `<root>/<runId>`; (2) senão o `session.jsonl` MAIS RECENTE (mtime) de
+ * qualquer `<root>/<run>/<child>` — a banda é singular (KG0), o mais fresco é o child vivo.
+ * Memo curto (500ms): corre a cada frame do TUI. null se nada.
  */
 const resolveMemo = new Map<string, { at: number; file: string | null }>();
 const RESOLVE_MEMO_MS = 500;
 
-export function resolveAgentOutputFile(cwd: string, sessionId: string | null | undefined, agentId: string | null | undefined): string | null {
-	const uid = process.getuid?.() ?? 0;
-	const root = path.join(os.tmpdir(), `pi-subagents-${uid}`, encodeCwd(cwd));
-	// Memo curto (500ms): isto corre A CADA FRAME do TUI e o scan estata todos os .output de todas
-	// as sessões — sem memo, o custo cresce com o histórico de subagents.
-	const memoKey = `${root}|${sessionId ?? ""}|${agentId ?? ""}`;
+export function resolveSubagentSessionFile(rootDir: string, runId?: string | null): string | null {
+	const memoKey = `${rootDir}|${runId ?? ""}`;
 	const memo = resolveMemo.get(memoKey);
 	if (memo && Date.now() - memo.at < RESOLVE_MEMO_MS) return memo.file;
 	const remember = (file: string | null): string | null => {
@@ -143,76 +118,127 @@ export function resolveAgentOutputFile(cwd: string, sessionId: string | null | u
 		resolveMemo.set(memoKey, { at: Date.now(), file });
 		return file;
 	};
-	if (sessionId && agentId) {
-		const exact = path.join(root, sessionId, "tasks", `${agentId}.output`);
+	const runDirs: string[] = [];
+	if (runId) {
+		runDirs.push(path.join(rootDir, runId));
+	} else {
 		try {
-			if (fs.statSync(exact).isFile()) return remember(exact);
+			for (const d of fs.readdirSync(rootDir, { withFileTypes: true })) {
+				if (d.isDirectory()) runDirs.push(path.join(rootDir, d.name));
+			}
 		} catch {
-			/* cai pro scan por mtime */
+			return remember(null);
 		}
 	}
-	const dirs = sessionId ? [path.join(root, sessionId, "tasks")] : sessionTasksDirs(root);
 	let best: { p: string; m: number } | null = null;
-	for (const dir of dirs) {
-		let files: string[];
+	for (const runDir of runDirs) {
+		let children: fs.Dirent[];
 		try {
-			files = fs.readdirSync(dir).filter((f) => f.endsWith(".output"));
+			children = fs.readdirSync(runDir, { withFileTypes: true });
 		} catch {
 			continue;
 		}
-		for (const f of files) {
-			const p = path.join(dir, f);
+		for (const c of children) {
+			if (!c.isDirectory()) continue;
+			const p = path.join(runDir, c.name, "session.jsonl");
 			try {
 				const m = fs.statSync(p).mtimeMs;
 				if (!best || m > best.m) best = { p, m };
 			} catch {
-				/* skip */
+				/* sem session.jsonl neste subdir — skip */
 			}
 		}
 	}
 	return remember(best?.p ?? null);
 }
 
+/** Shape mínima do status.json de um run async (subset do AsyncStatus do provider). */
+interface AsyncStatusJson {
+	state?: unknown;
+	currentTool?: unknown;
+	toolCount?: unknown;
+	totalTokens?: { total?: unknown } | null;
+	sessionFile?: unknown;
+	steps?: Array<Record<string, unknown>>;
+}
+
+const statusCache = new Map<string, { key: string; value: AsyncStatusLite | null }>();
+
 /**
- * Transcript nativo do SUBAGENT @tintinweb (o análogo do `tcT`/`dG0` do Droid 08a §6): lê o
- * `.output` JSONL que o @tintinweb streama AO VIVO (flush por turn_end), READ-ONLY (seguro num
- * ficheiro que o subagent ainda escreve), e folda com o `foldTranscript` (colapsa toolCall+toolResult).
- * Cada linha é `{ type, message, agentId, ... }` — extraímos `.message` (a mensagem pi). Self-contido
- * (fs + JSON + foldTranscript, SEM o pacote pi). Cacheado por mtime/size. O ficheiro é resolvido por
- * `resolveAgentOutputFile` (exato por agentId, ou o mais recente da sessão — o agentId não vem no
- * stream foreground). null quando não há ficheiro → o caller cai pro fallback do recentActivity.
+ * Lê o `status.json` de um run ASYNC do pi-subagents (asyncDir dos eventos/details) → a shape
+ * lite que o live-agents refresca (state/currentTool/toolCount/tokens/steps/sessionFile).
+ * Cacheado por mtime/size; null em falha/ausência (run recém-aceito, 1º frame).
  */
-export function readAgentOutputEntries(cwd: string, sessionId: string | null | undefined, agentId: string | null | undefined): WorkerEntry[] | null {
-	const file = resolveAgentOutputFile(cwd, sessionId, agentId);
-	if (!file) return null;
+export function readAsyncStatusLite(asyncDir: string): AsyncStatusLite | null {
+	const file = path.join(asyncDir, "status.json");
 	let st: fs.Stats;
 	try {
 		st = fs.statSync(file);
 	} catch {
-		return null; // ainda não escrito (1º frame) → fallback
+		return null;
 	}
 	const key = `${st.mtimeMs}:${st.size}`;
-	const hit = entryCache.get(file);
-	if (hit && hit.key === key) return hit.entries;
+	const hit = statusCache.get(file);
+	if (hit && hit.key === key) return hit.value;
+	let value: AsyncStatusLite | null = null;
 	try {
-		const content = fs.readFileSync(file, "utf8");
-		const messages: unknown[] = [];
-		for (const line of content.split("\n")) {
-			const t = line.trim();
-			if (!t) continue;
-			try {
-				const o = JSON.parse(t) as { message?: unknown };
-				if (o.message) messages.push(o.message);
-			} catch {
-				// linha parcial (ficheiro a ser escrito) — pula (read-only, tolerante)
-			}
-		}
-		const entries = foldTranscript(messages as Parameters<typeof foldTranscript>[0]);
-		cacheSet(file, { key, entries });
-		return entries;
+		const o = JSON.parse(fs.readFileSync(file, "utf8")) as AsyncStatusJson;
+		value = {
+			state: typeof o.state === "string" ? o.state : "running",
+			currentTool: typeof o.currentTool === "string" ? o.currentTool : undefined,
+			toolCount: typeof o.toolCount === "number" ? o.toolCount : undefined,
+			tokens: typeof o.totalTokens?.total === "number" ? o.totalTokens.total : undefined,
+			sessionFile: typeof o.sessionFile === "string" ? o.sessionFile : undefined,
+			steps: Array.isArray(o.steps) ? o.steps : undefined,
+		};
 	} catch {
-		return null; // ficheiro parcial/erro → fallback
+		value = null; // parcial/corrompido — tenta de novo no próximo mtime
 	}
+	if (statusCache.size > 16) statusCache.clear();
+	statusCache.set(file, { key, value });
+	return value;
+}
+
+/** sessionFile de um step do status.json (prefere o step running; senão o último com ficheiro). */
+function stepSessionFile(st: AsyncStatusLite): string | null {
+	if (!st.steps) return null;
+	const running = st.steps.find((s) => String((s as Record<string, unknown>).status ?? "") === "running");
+	const pick = (s: unknown): string | null => {
+		const f = (s as Record<string, unknown> | undefined)?.sessionFile;
+		return typeof f === "string" && f ? f : null;
+	};
+	if (running) {
+		const f = pick(running);
+		if (f) return f;
+	}
+	for (let i = st.steps.length - 1; i >= 0; i--) {
+		const f = pick(st.steps[i]);
+		if (f) return f;
+	}
+	return null;
+}
+
+/**
+ * Transcript nativo do SUBAGENT pi-subagents (o análogo do `tcT`/`dG0` do Droid 08a §6): o child
+ * é uma sessão pi REAL — lemos o `session.jsonl` dele com o parser nativo (readNativeSessionFile,
+ * READ-ONLY, cacheado por mtime). Resolução: run ASYNC → `sessionFile` do status.json (root ou
+ * step); FOREGROUND → o session.jsonl mais recente sob a session-root do parent (o provider não
+ * expõe o runId nos partials). null quando nada existe → o caller cai pro recentActivity.
+ */
+export function readLiveAgentEntries(parentSessionFile: string | null | undefined, agent: { runId?: string; asyncDir?: string }): WorkerEntry[] | null {
+	if (agent.asyncDir) {
+		const st = readAsyncStatusLite(agent.asyncDir);
+		const file = st ? (st.sessionFile ?? stepSessionFile(st)) : null;
+		if (file) {
+			const entries = readNativeSessionFile(file);
+			if (entries && entries.length > 0) return entries;
+		}
+	}
+	const root = subagentSessionRoot(parentSessionFile);
+	if (!root) return null;
+	const file = resolveSubagentSessionFile(root, agent.runId ?? null);
+	if (!file) return null;
+	return readNativeSessionFile(file);
 }
 
 /**

@@ -16,7 +16,12 @@
     ],
     "skills": [
       "./skills"
-    ]
+    ],
+    "subagents": {
+      "agents": [
+        "./agents"
+      ]
+    }
   },
   "scripts": {
     "test": "node --experimental-strip-types --test test/*.test.ts",

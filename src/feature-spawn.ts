@@ -27,10 +27,10 @@ export function resolvePiBin(): string {
  * Tasks editam código + puxam cada task (next_task) + chamam EndFeatureRun; ship-gates também
  * spawnam reviewers e precisam do store_delivery (deliver grava o record que abre a Delivery tab
  * e o merge gate humano). ATENÇÃO: `--tools` é allow-list DURA e case-sensitive do pi core — o
- * nome do tool de subagents é `Agent` (+ get_subagent_result/steer_subagent p/ background);
- * "subagent" não existe e era silenciosamente filtrado (reviewers não spawnavam).
+ * provider de subagents (pi-subagents) registra o tool `subagent` (execução + status/steer/stop
+ * via `action`); um nome errado aqui é silenciosamente filtrado (reviewers não spawnam).
  */
-const SUBAGENT_TOOLS = "Agent,get_subagent_result,steer_subagent";
+const SUBAGENT_TOOLS = "subagent";
 const CORE_TOOLS = "read,Read,grep,find,ls,bash,Bash,edit,Edit,write,Write,exec_command,write_stdin,apply_patch,exec,wait";
 const TOOLS_TASK = `${CORE_TOOLS},next_task,EndFeatureRun`;
 const TOOLS_GATE = `${CORE_TOOLS},${SUBAGENT_TOOLS},store_delivery,EndFeatureRun`;

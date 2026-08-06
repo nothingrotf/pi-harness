@@ -147,7 +147,7 @@ function nextActionFor(run: FeatureRun): string {
 					"  (c) STOP — return to the user with the open findings if the feature is genuinely not converging.",
 				].join("\n");
 			}
-			return "Next: analyze the handoff (delegate root-cause to Agent subagents), then call run_feature again — with fixTasks:[…] if a fix is needed (inserted above the ship gate). Dispatch fixes for BLOCKING findings only — non-blocking findings are backlog, never a fix task.";
+			return "Next: analyze the handoff (delegate root-cause to `subagent` children), then call run_feature again — with fixTasks:[…] if a fix is needed (inserted above the ship gate). Dispatch fixes for BLOCKING findings only — non-blocking findings are backlog, never a fix task.";
 		case "paused":
 			switch (run.pauseReason) {
 				case "usage_limit":

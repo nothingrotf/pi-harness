@@ -3,8 +3,8 @@
  * vivo no terminal + "Plan · X/5"). Em vez de spawnar `pi --print` e parsear num
  * widget custom, a gente manda o modelo rodar a auditoria/fix NA PR\u00d3PRIA SESS\u00c3O.
  *
- * ADAPTATIVO: as mensagens s\u00f3 instruem usar `todo` (rpiv-todo) e `Agent`
- * (@tintinweb/pi-subagents) quando esses tools est\u00e3o ATIVOS na sess\u00e3o (detectado via
+ * ADAPTATIVO: as mensagens s\u00f3 instruem usar `todo` (rpiv-todo) e `subagent`
+ * (pi-subagents) quando esses tools est\u00e3o ATIVOS na sess\u00e3o (detectado via
  * `pi.getActiveTools()` no extension). Se faltarem, degrada pra in-session.
  * Determinismo onde importa fica no `store_agent_readiness_report`.
  */
@@ -12,7 +12,7 @@
 export interface DispatchTools {
 	/** rpiv-todo (`todo`) ativo? \u2192 cria o Plan (overlay vivo, sobrevive /reload). */
 	todo?: boolean;
-	/** @tintinweb/pi-subagents (`Agent`) ativo? \u2192 isola cada worker/fix/review num subagente fresco. */
+	/** pi-subagents (`subagent`) ativo? \u2192 isola cada worker/fix/review num subagente fresco. */
 	subagent?: boolean;
 	/** rpiv-advisor (`advisor`) ativo? \u2192 escala a verifica\u00e7\u00e3o pra um modelo mais forte (ship gate). */
 	advisor?: boolean;
@@ -64,7 +64,7 @@ export function buildFixDispatch(args: string, tools: DispatchTools = {}): strin
 	const todoStart = tools.todo ? " mark its todo in_progress;" : "";
 	const todoDone = tools.todo ? " then mark the todo completed." : "";
 	const isolate = tools.subagent
-		? " For isolation, delegate each fix to a fresh `Agent` (subagent_type: harness-readiness-remediator)."
+		? " For isolation, delegate each fix to a fresh subagent: `subagent({ agent: \"harness-readiness-remediator\", task: \"...\", async: false })`."
 		: "";
 	return [
 		`Fix ${scope}, live in this session.`,
