@@ -51,6 +51,7 @@ import { agentsFromArgs, agentsFromDetails, clearAllLiveAgents, clearLiveAgents,
 import { readAsyncStatusLite } from "../session-read.ts";
 import { buildWorkerTurnMessage, dedupeTurnMessage, readTurnContext } from "../context-inject.ts";
 import { evaluateGuard, type GuardScope } from "../guards.ts";
+import { GATE_ALLOWED_AGENTS, ORCHESTRATOR_ANALYSIS_AGENTS, syncCapabilityCeiling } from "../capability-ceiling.ts";
 import { clearMode, liveLockedFeature, loadMode, saveMode } from "../mode-store.ts";
 import { listRunIds } from "../runs.ts";
 
@@ -912,6 +913,18 @@ export default function registerHarnessExtension(pi: ExtensionAPI): void {
 			return { message: { customType: "harness-turn-context", content, display: false } };
 		});
 	}
+	// F3 — capability ceiling (pi-subagents): allowlist de agents imposta ANTES do spawn, por
+	// sessão, sincronizada a cada turno (idempotente). Ship-gate → reviewers/validators do
+	// harness; orchestrator em run/ship → análise apenas (nada edit-capable); fora disso → sem teto.
+	pi.on("before_agent_start", (_event, ctx) => {
+		const sid = ctx.sessionManager?.getSessionId?.();
+		if (workerFeature) {
+			syncCapabilityCeiling(sid, workerKind === "ship-gate" ? GATE_ALLOWED_AGENTS : null);
+			return;
+		}
+		const constrain = mode.active && (mode.phase === "run" || mode.phase === "ship");
+		syncCapabilityCeiling(sid, constrain ? ORCHESTRATOR_ANALYSIS_AGENTS : null);
+	});
 	// F2 (doc 09 §3.2): guards programáticos — as regras que eram prosa viram `{block, reason}`
 	// no tool_call. Worker: contract.md FROZEN, plan/status tool-owned, AGENTS.md do repo, merge
 	// humano. Orchestrator (run/ship): nunca implementa — escrita fora de .harness/ → fixTasks.
