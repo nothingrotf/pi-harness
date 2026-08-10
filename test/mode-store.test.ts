@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { clearMode, liveLockedFeature, loadMode, readRunLockPid, renameModePointer, saveMode } from "../src/mode-store.ts";
+import { clearMode, liveLockedFeature, loadMode, readRunLockPid, renameModePointer, resolveSessionMode, saveMode } from "../src/mode-store.ts";
 import { idleMode } from "../src/mode.ts";
 
 function tmp(): string {
@@ -97,4 +97,16 @@ test("liveLockedFeature: não troca à toa — se `prefer` está vivo, mantém-n
 	// sem prefer (ou prefer morto) → primeiro vivo da lista.
 	assert.equal(liveLockedFeature(d, ["a", "b"], { pidAlive: () => true }), "a");
 	assert.equal(liveLockedFeature(d, ["a", "b"], { prefer: "zzz", pidAlive: () => true }), "a");
+});
+
+
+test("resolveSessionMode: startup não restaura um ponteiro sem run vivo", () => {
+	const restored = { active: true as const, featureId: "stale", phase: "run" as const };
+	assert.equal(resolveSessionMode("startup", restored, null), null);
+});
+
+test("resolveSessionMode: reload preserva o modo e um run vivo ganha do ponteiro", () => {
+	const restored = { active: true as const, featureId: "stale", phase: "ship" as const };
+	assert.deepEqual(resolveSessionMode("reload", restored, null), restored);
+	assert.deepEqual(resolveSessionMode("startup", restored, "live"), { active: true, featureId: "live", phase: "run" });
 });

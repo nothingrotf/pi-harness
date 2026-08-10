@@ -50,6 +50,12 @@ export function loadMode(cwd: string): PersistedMode | null {
 	return null;
 }
 
+export function resolveSessionMode(reason: string, restored: PersistedMode | null, liveFeatureId: string | null): PersistedMode | null {
+	if (liveFeatureId) return { active: true, featureId: liveFeatureId, phase: "run" };
+	if (reason === "reload") return restored;
+	return null;
+}
+
 /** Rename do run (picker Ctrl+R): se o ponteiro aponta pro id antigo, segue o novo. Best-effort. */
 export function renameModePointer(cwd: string, oldId: string, newId: string): void {
 	try {

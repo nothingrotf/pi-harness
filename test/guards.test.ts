@@ -52,5 +52,7 @@ test("orchestrator (run/ship): nunca implementa — escrita fora de .harness/ �
 	assert.match(v?.reason ?? "", /fixTasks/);
 	assert.ok(evaluateGuard({ toolName: "write", path: "README.md" }, orch));
 	assert.equal(evaluateGuard({ toolName: "write", path: ".harness/runs/feat-a/feature.md" }, orch), null, "shared state do harness continua livre");
+	assert.equal(evaluateGuard({ toolName: "write", path: "/tmp/report.txt" }, orch), null, "artefato fora do repo continua livre");
+	assert.equal(evaluateGuard({ toolName: "edit", path: "../other-repo/src/app.ts" }, orch), null, "outro repo continua livre");
 	assert.equal(evaluateGuard({ toolName: "bash", command: "git log" }, orch), null, "análise via bash livre");
 });

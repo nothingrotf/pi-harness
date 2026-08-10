@@ -53,6 +53,11 @@ function underHarness(cwd: string, p: string): boolean {
 	return norm(cwd, p).startsWith(path.join(cwd, ".harness") + path.sep);
 }
 
+function underRepo(cwd: string, p: string): boolean {
+	const rel = path.relative(cwd, norm(cwd, p));
+	return rel !== "" && rel !== ".." && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel);
+}
+
 /** Redirecionamento de escrita pro contract.md via bash (>, >>, tee, sed -i) — evasão do guard. */
 function bashTargetsContract(command: string): boolean {
 	if (!/contract\.md/.test(command)) return false;
@@ -91,7 +96,7 @@ export function evaluateGuard(call: GuardCall, scope: GuardScope): GuardVerdict 
 	}
 	// orchestrator: NUNCA implementa (doc 09 §3.2). Escrita fora de .harness/ durante run/ship →
 	// redirect pro caminho certo (fixTasks). Leitura/análise continuam livres.
-	if (WRITE_TOOLS.has(call.toolName) && call.path && !underHarness(scope.cwd, call.path)) {
+	if (WRITE_TOOLS.has(call.toolName) && call.path && underRepo(scope.cwd, call.path) && !underHarness(scope.cwd, call.path)) {
 		return { block: true, reason: "You are the ORCHESTRATOR — you never implement. Dispatch this change as a fix task: call run_feature with fixTasks:[…] (it runs in a worker session, above the ship gate). Writes under .harness/ remain allowed." };
 	}
 	return null;

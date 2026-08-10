@@ -52,7 +52,7 @@ import { readAsyncStatusLite } from "../session-read.ts";
 import { buildWorkerTurnMessage, dedupeTurnMessage, readTurnContext } from "../context-inject.ts";
 import { evaluateGuard, type GuardScope } from "../guards.ts";
 import { GATE_ALLOWED_AGENTS, ORCHESTRATOR_ANALYSIS_AGENTS, syncCapabilityCeiling } from "../capability-ceiling.ts";
-import { clearMode, liveLockedFeature, loadMode, saveMode } from "../mode-store.ts";
+import { clearMode, liveLockedFeature, loadMode, resolveSessionMode, saveMode } from "../mode-store.ts";
 import { listRunIds } from "../runs.ts";
 
 const STATUS_KEY = "harness";
@@ -1064,8 +1064,9 @@ export default function registerHarnessExtension(pi: ExtensionAPI): void {
 		// Auto-heal: um run.lock com pid VIVO ganha do ponteiro persistido (que congela em multi-feature)
 		// — restaura a feature que está DE FACTO a correr, não a última tocada por um comando.
 		const live = liveLockedFeature(ctx.cwd, listRunIds(ctx.cwd), { prefer: restored?.featureId });
-		const target = live ?? restored?.featureId;
-		const phase = live ? "run" : (restored?.phase ?? "run");
+		const resolved = resolveSessionMode(event.reason, restored, live);
+		const target = resolved?.featureId;
+		const phase = resolved?.phase ?? "run";
 		if (target && readPlan(ctx.cwd, target)) {
 			mode.active = true;
 			mode.featureId = target;
