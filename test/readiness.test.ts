@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import {
 	buildGateModel,
 	buildSnapshot,
@@ -118,6 +119,15 @@ test("levelBar / ratioBar", () => {
 test("validateReport: report cheio é válido; cloudOnly como null é aceito", () => {
 	const r = validateReport(fullReport(1));
 	assert.ok(r.ok, `esperava válido, issues: ${r.issues.join(" | ")}`);
+});
+
+test("validateReport: feature flags são opcionais", () => {
+	const report = fullReport(1);
+	report.evals.feature_flag_infrastructure = { num: null, den: 1, rationale: "not used by this repository" };
+	const result = validateReport(report);
+	assert.ok(result.ok, `esperava válido, issues: ${result.issues.join(" | ")}`);
+	const criteria = JSON.parse(readFileSync(new URL("../skills/harness-readiness-audit/criteria.json", import.meta.url), "utf8"));
+	assert.equal(criteria.find((criterion: { id: string }) => criterion.id === "feature_flag_infrastructure")?.isSkippable, true);
 });
 
 test("validateReport: app-scope com den=N", () => {

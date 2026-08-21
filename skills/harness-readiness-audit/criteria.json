@@ -356,8 +356,8 @@
     "category": "build",
     "level": 4,
     "scope": "repository",
-    "isSkippable": false,
-    "instructions": "Feature flag infrastructure \u2013 LaunchDarkly, Statsig, Unleash, GrowthBook, or custom feature flag system is configured. Enables agents to ship changes behind toggles, reducing risk of agent-authored code affecting all users immediately."
+    "isSkippable": true,
+    "instructions": "Feature flag infrastructure \u2013 Check only repositories that already use feature flags. LaunchDarkly, Statsig, Unleash, GrowthBook, or a custom feature flag system satisfies this criterion. Skip repositories without existing feature flags. Do not recommend or create feature flag infrastructure solely to satisfy readiness."
   },
   {
     "id": "release_notes_automation",

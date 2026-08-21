@@ -203,3 +203,5 @@ rollback_automation, privacy_compliance
 ```
 
 (Criteria marked `isSkippable` in criteria.json may also be `null` when genuinely N/A.)
+
+For `feature_flag_infrastructure`, emit `num: null` when the repository does not already use feature flags. Do not recommend new feature flag infrastructure.

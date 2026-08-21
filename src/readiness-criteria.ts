@@ -119,7 +119,7 @@ export const READINESS_CRITERIA: readonly Criterion[] = [
 	c("build_performance_tracking", "Build Performance Tracking", "build", 4, "repository", true, true),
 	c("deployment_frequency", "Deployment Frequency", "build", 4, "repository", true, true),
 	c("fast_ci_feedback", "Fast CI Feedback", "build", 4, "repository", true, true),
-	c("feature_flag_infrastructure", "Feature Flag Infrastructure", "build", 4, "repository", false),
+	c("feature_flag_infrastructure", "Feature Flag Infrastructure", "build", 4, "repository", true),
 	c("heavy_dependency_detection", "Heavy Dependency Detection", "build", 4, "application", true),
 	c("progressive_rollout", "Progressive Rollout", "build", 4, "repository", true, true),
 	c("rollback_automation", "Rollback Automation", "build", 4, "repository", true, true),
